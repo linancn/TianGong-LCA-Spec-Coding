@@ -3,22 +3,10 @@ name = "tiangong-lca-spec"
 version = "0.1.0"
 description = "Structured orchestration pipeline for Tiangong LCA spec coding."
 requires-python = ">=3.12"
-dependencies = [
-    "httpx>=0.27",
-    "pydantic>=2.6",
-    "pydantic-settings>=2.1",
-    "tenacity>=8.2",
-    "structlog>=24.1",
-    "langchain-core>=0.1.35",
-    "langgraph>=0.1.9",
-    "python-dotenv>=1.0",
-]
+dependencies = ["httpx>=0.28.1", "pydantic>=2.12.2", "pydantic-settings>=2.11.0", "tenacity>=9.1.2", "structlog>=25.4.0", "langchain-core>=0.3.79", "langgraph>=0.6.10", "python-dotenv>=1.1.1"]
 
 [dependency-groups]
-dev = [
-    "black>=24.3",
-    "ruff>=0.3",
-]
+dev = ["black>=25.9.0", "ruff>=0.14.1"]
 
 [build-system]
 requires = ["hatchling>=1.25"]
