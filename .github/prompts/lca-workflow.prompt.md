@@ -1,156 +1,139 @@
-# 天工 LCA 规范编码工作流（Python 实现草案）
+# 天工 LCA 规范编码工作流（uv + LangGraph 实施准则）
 
-本说明将原有的 Dify 工作流拆解为可直接用 Python 编排的可执行组件，约束输入输出结构、算法步骤与错误处理策略，便于在仓库内完成 spec coding。
+本说明同步仓库当前实现：利用 `uv` 管理依赖、LangGraph 编排多阶段 Agent 工作流，并通过 `tiangong_lca_spec` 包暴露统一接口。内容覆盖环境要求、模块拆分、数据结构、格式化规范与后续扩展建议。
 
-## 1. 架构概览
-- 建议实现一个 Python Orchestrator（脚本或包入口），依次调用四个阶段化模块：
-  1. `flow_search`：面向远程 LCA 数据库的流检索。
-  2. `flow_alignment`：将文献 exchange 与数据库候选流对齐。
-  3. `process_extraction`：从文献构建完整的 ILCD `processDataSets` 并融合匹配结果。
-  4. `tidas_validation`：调用 TIDAS 服务校验最终 JSON。
-- 每个阶段定义清晰的函数接口与数据模型（建议使用 `dataclasses` 或 Pydantic），禁止依赖 Dify 节点 ID。
-- 模块间通过结构化对象传递数据，输入/输出一律使用 UTF-8 JSON，可直接序列化落盘或作为下游调用参数。
+## 1. 环境与工具
+- **Python**：>= 3.12（可通过 `uv toolchain` 安装）；仓库默认解释器路径位于 `.venv/`。
+- **包管理**：运行 `uv sync` 初始化运行依赖，`uv sync --group dev` 同步开发工具。支持通过 `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple` 使用清华镜像。
+- **主要依赖**：`httpx`, `pydantic`, `pydantic-settings`, `tenacity`, `structlog`, `langchain-core`, `langgraph`, `python-dotenv`。
+- **构建体系**：`hatchling` 负责构建编辑/发行版；`pyproject.toml` 已在 `[tool.hatch.build.targets.wheel]` 中声明 `src/tiangong_lca_spec` 为打包目录。
+- **代码规范**：
+  - Formatter：`black`（`line-length=100`, `target-version=py312`）。
+  - Linter：`ruff`（`target-version=py312`, 规则集 `E/F/I`）。
+  - 运行方式：`uv run black src/tiangong_lca_spec`、`uv run ruff check`。
 
-### 1.1 推荐数据结构
+## 2. 包结构概览（src/tiangong_lca_spec）
+- `core/`
+  - `config.py`：`pydantic-settings` 驱动的 `Settings`，集中管理 MCP/TIDAS 基础配置、重试与并发策略、缓存目录、日志等级。
+  - `exceptions.py`：`SpecCodingError` 及子类（`FlowSearchError`, `FlowAlignmentError`, `ProcessExtractionError`, `TidasValidationError`）。
+  - `models.py`：核心 dataclass（`FlowQuery`, `FlowCandidate`, `UnmatchedFlow`, `ProcessDataset`, `TidasValidationFinding`, `WorkflowResult`, `SettingsProfile`）。
+  - `logging.py`：`structlog` JSON 日志初始化与 logger 工厂。
+  - `json_utils.py`：剥离 `<think>`、去除 Markdown 代码块、括号平衡截断等 JSON 清洗能力。
+- `flow_search/`
+  - `client.py`：`httpx` + `tenacity` MCP 调用封装，按设置自动挂载鉴权。
+  - `service.py`：缓存的高层搜索服务；负责候选过滤、封装 `UnmatchedFlow`。
+  - `validators.py`：名称相似度、地理匹配等本地校验逻辑。
+- `flow_alignment/`：`FlowAlignmentService` 使用 `ThreadPoolExecutor` 按并发配置批量搜索，并返回 matched/unmatched 及 `origin_exchanges`。
+- `process_extraction/`
+  - `preprocess.py`：解析 Markdown JSON、剔除参考文献/附录、长度裁剪。
+  - `extractors.py`：定义 LLM 协议、抽取/分类/地理规范化 prompt。
+  - `service.py`：LangGraph pipeline（extract_sections -> classify_process -> normalize_location -> finalize）。
+  - `merge.py`：整合匹配结果、补写 `referenceToFlowDataSet`、推断功能单位。
+- `tidas_validation/`：MCP `Tidas_Data_Validate_Tool` 调用封装，转化为 `TidasValidationFinding`。
+- `orchestrator/`：`WorkflowOrchestrator` LangGraph 工作流（preprocess → extract → align → merge → validate → finalize），输出 `WorkflowResult`。
+
+## 3. 核心数据结构（tiangong_lca_spec.core.models）
 ```python
-@dataclass
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Literal
+
+@dataclass(slots=True, frozen=True)
 class FlowQuery:
     exchange_name: str
-    description: str
-    process_name: str
-    paper_md: str
+    description: str | None = None
+    process_name: str | None = None
+    paper_md: str | None = None
 
-@dataclass
+@dataclass(slots=True)
 class FlowCandidate:
     uuid: str | None
     base_name: str
-    treatment_standards_routes: str | None
-    mix_and_location_types: str | None
-    flow_properties: str | None
-    version: str | None
-    general_comment: str | None
-    geography: dict | None
-    classification: list[dict] | None
-    reasoning: str
+    treatment_standards_routes: str | None = None
+    mix_and_location_types: str | None = None
+    flow_properties: str | None = None
+    version: str | None = None
+    general_comment: str | None = None
+    geography: Mapping[str, Any] | None = None
+    classification: list[Mapping[str, Any]] | None = None
+    reasoning: str = ""
 
-@dataclass
+@dataclass(slots=True)
 class UnmatchedFlow:
     base_name: str
-    general_comment: str | None
-    status: Literal["requires_creation"]
-    process_name: str
+    general_comment: str | None = None
+    status: Literal["requires_creation"] = "requires_creation"
+    process_name: str | None = None
 
-@dataclass
+@dataclass(slots=True)
 class ProcessDataset:
-    process_information: dict
-    modelling_and_validation: dict
-    administrative_information: dict
-    exchanges: list[dict]
+    process_information: dict[str, Any]
+    modelling_and_validation: dict[str, Any]
+    administrative_information: dict[str, Any]
+    exchanges: list[dict[str, Any]] = field(default_factory=list)
+
+@dataclass(slots=True)
+class WorkflowResult:
+    process_datasets: list[ProcessDataset]
+    alignment: list[dict[str, Any]]
+    validation_report: list[TidasValidationFinding]
 ```
 
-## 2. Flow Search 模块（原阶段 2）
-- **接口**：`search_flows(query: FlowQuery) -> tuple[list[FlowCandidate], list[UnmatchedFlow]]`
-- **职责**：
-  1. 调用 MCP HTTP API（`https://lcamcp.tiangong.earth/mcp`），发送 `exchange_name` 为核心的查询；推荐封装在 `flow_search.client` 中，统一鉴权头、超时、重试策略。
-  2. 对响应结果执行本地校验：名称相似度、描述关键词匹配、单位与 flow property 一致性、地理匹配等（可将规则独立为 `validators.py`）。
-  3. 将通过校验的记录序列化为 `FlowCandidate`；未通过的记录以 `UnmatchedFlow(status="requires_creation")` 形式保留。
-- **实现要点**：
-  - 解析响应时先剥离 `<think>`、Markdown 代码块，再做括号配对确保 `json.loads` 成功；对双重编码字符串执行两次解码尝试。
-  - 对空结果或 API 错误抛出自定义异常（如 `FlowSearchError`），由 orchestrator 决定回退策略。
-  - 详细记录日志：请求参数、筛选理由、最终候选数。
+## 4. Flow Search 模块
+- 接口：`search_flows(query) -> tuple[list[FlowCandidate], list[UnmatchedFlow]]`。
+- 关键点：
+  1. `FlowSearchClient` 提供请求 head、超时、指数退避重试，统一调用 `json_utils.parse_json_response` 解析。
+  2. `FlowSearchService` 过滤低相似度候选，并将被过滤项记录为 `UnmatchedFlow`；结果写入 LRU 缓存。
+  3. 遇到网络或解析问题抛出 `FlowSearchError`；日志记录请求参数与过滤原因。
 
-## 3. Flow Alignment 模块（原阶段 3）
-- **接口**：`align_exchanges(process_dataset: dict, paper_md: str) -> dict`
-  - `process_dataset` 至少包含 `processInformation` 与 `exchanges.exchange`。
-  - 返回结构建议：
-    ```python
-    {
-        "process_name": str,
-        "matched_flows": list[FlowCandidate],
-        "unmatched_flows": list[UnmatchedFlow]
-    }
-    ```
-- **算法步骤**：
-  1. 遍历 `exchanges.exchange`，抽取 `exchangeName`、`exchangeDirection`、`generalComment1` 生成 `FlowQuery` 列表。
-  2. 对每个 `FlowQuery` 调用 `flow_search.search_flows`。若无命中，按 `UnmatchedFlow` 记录。
-  3. 汇总所有结果，构造 `exchangeName -> FlowCandidate` 映射，供 `process_extraction` 合并。
-- **实现提示**：
-  - 非列表的 `exchange` 自动包装为单元素列表。
-  - 支持批量/并行：可在 orchestrator 通过线程池或异步调度执行多个 `FlowQuery`。
-  - 输出结果应将原始 exchange 信息一并返回，避免重复解析。
+## 5. Flow Alignment 模块
+- 接口：`FlowAlignmentService.align_exchanges(process_dataset, paper_md)`。
+- 流程：
+  1. 解析 `processInformation` / `exchanges`，兼容 `exchange_list`。
+  2. 依照 `Settings.profile.concurrency` 用线程池并行发起 flow search。
+  3. 汇总 `matched_flows`、`unmatched_flows`、`origin_exchanges`，并保留失败的异常信息。
+- 失败的搜索会自动降级成 `UnmatchedFlow`，并写日志 `flow_alignment.exchange_failed`。
 
-## 4. Process Extraction 模块（原阶段 6）
-- **目标**：给定 LCA 文献 Markdown（通常是段落数组组成的 JSON 字符串），产出完整的 `ProcessDataset` 列表，并融合数据库匹配结果与原始 exchange。
-- **主要函数**：
-  1. `preprocess_paper(md_json: str) -> str`
-     - 解析 JSON，拼接正文，移除参考文献/附录，限制长度（默认 ≤120000 字符）。
-  2. `extract_sections(clean_text: str) -> dict`
-     - 可通过 LLM 或规则分别生成：
-       - `process_information`
-       - `administrative_information`
-       - `modelling_and_validation`
-       - `exchange_list`
-       - `notes`（可选，用于记录子过程、数据缺口）
-  3. `classify_process(process_info: dict) -> dict`
-     - 基于本地 ISIC 枚举表匹配 1–4 层分类；返回 `[{ "@level": "...", "@classId": "...", "#text": "..." }, ...]`。
-  4. `normalize_location(process_info: dict) -> dict`
-     - 首先匹配宏观区域（GLO、RER 等）；若落在中国，再细分省市（CN-XX 枚举）；返回 `{"code": "...", "description": "..."}`。
-  5. `merge_results(process_blocks: list[dict], matched_lookup: dict[str, list[FlowCandidate]], origin_exchanges: dict[str, list[dict]]) -> list[ProcessDataset]`
-     - 以 `processInformation.dataSetInformation.name` 为键，整合流程信息、模型信息、行政信息、匹配流结果与原始 exchange。
-- **合并策略**：
-  - `matched_lookup` 由 `align_exchanges` 提供，键为 exchange 名称或 process 名称；在 `merge_results` 中根据实际需求选择索引方式。
-  - 对匹配到 UUID 的流补写 `referenceToFlowDataSet`，缺失项保留占位字段并在 `UnmatchedFlow` 列表中追踪。
-  - `determine_functional_unit` 根据首个非废弃输出（排除 `waste`、`flue gas` 等关键词），组合 `resultingAmount + unit + exchangeName`。
-- **异常处理**：
-  - 所有 JSON 响应先去除 `<think>` 与 ```json 包裹，再使用括号计数截取有效对象。
-  - 对 LL M 返回结果、分类/地理命中失败抛出显式异常，以便 orchestrator 选择重试或人工介入。
+## 6. Process Extraction 模块
+- 预处理：`preprocess_paper` 聚合 markdown 段落、剔除 `<think>` 与参考文献、限制最大长度。
+- LangGraph 节点：
+  - `extract_sections`：依赖注入的 LLM（实现 `LanguageModelProtocol`）输出流程信息、行政信息、模型信息和 `exchange_list`。
+  - `classify_process`：补写 ISIC 分类并挂载至 `classificationInformation.classification`。
+  - `normalize_location`：更新 `process_information.geography`。
+  - `finalize`：生成 `process_blocks`，同时保留 `exchange_list` 与 `{"exchange": ...}` 结构。
+- 合并：`merge_results` 将匹配流写回 exchange 并添加 `matchingDetail`；`determine_functional_unit` 选取首个非废弃输出构建功能单位字符串。
 
-## 5. TIDAS Validation 模块（原阶段 10）
-- **接口**：`validate_with_tidas(process_datasets: list[ProcessDataset]) -> list[dict]`
-- **流程**：
-  1. 将 `ProcessDataset` 序列化为符合 TIDAS 输入要求的 JSON。
-  2. 通过 MCP HTTP（`http://192.168.1.140:9278/mcp`）调用 `Tidas_Data_Validate_Tool`，传入 JSON 文本。
-  3. 解析返回值为结构化报告（字段：`severity`、`message`、`path`、`suggestion` 等）。
-  4. 失败时抛出 `TidasValidationError`，可选择重试/降级。
+## 7. TIDAS Validation 模块
+- 接口：`validate_with_tidas(process_datasets)`。
+- 步骤：
+  1. 将 `ProcessDataset` 转换为字典，按照 MCP 协议调用 `Tidas_Data_Validate_Tool`。
+  2. 解析结果并映射为 `TidasValidationFinding`（`severity`, `message`, `path`, `suggestion`）。
+  3. 所有异常统一抛出 `TidasValidationError`；日志包含批次数与状态。
 
-## 6. Orchestrator 运行示例
-```python
-def run_pipeline(paper_path: Path) -> None:
-    raw_md_json = paper_path.read_text(encoding="utf-8")
-    clean_text = preprocess_paper(raw_md_json)
-    process_blocks = extract_sections(clean_text)
+## 8. Orchestrator 工作流
+- 入口：`WorkflowOrchestrator`，支持 `run(paper_md_json)` 与 `run_from_path(path)`。
+- 节点顺序：`preprocess` → `extract_processes` → `align_flows` → `merge_datasets` → `validate` → `finalize`。
+- `WorkflowState` 使用 `TypedDict` 管理中间状态；`__enter__` / `__exit__` 提供上下文管理以关闭线程池与 TIDAS 客户端。
+- 输出：`WorkflowResult` 包含最终 `process_datasets`、对齐详情与 TIDAS 报告，便于落盘或进一步处理。
 
-    alignment_results = []
-    for block in process_blocks:
-        alignment = align_exchanges(block, clean_text)
-        alignment_results.append(alignment)
+## 9. 测试与可靠性建议
+- **单元测试重点**：
+  - `json_utils` 的清洗/解析逻辑（含 `<think>`、双重转义、括号截断）。
+  - `FlowSearchService` 过滤与缓存行为（Mock MCP 响应）。
+  - `FlowAlignmentService` 并发降级策略。
+  - `merge_results` 在缺失候选、功能单位推断失败时的容错。
+  - LangGraph 节点，通过注入 Fake LLM 验证状态流转。
+- **集成测试**：构造最小 Markdown JSON 驱动完整 orchestrator，断言输出 schema 与错误分支。
+- **可观测性**：启用 `configure_logging` 输出 JSON 日志，建议在 orchestrator 入口记录 `settings.profile`、输入文档 ID 等上下文。
 
-    matched_lookup = {
-        result["process_name"]: result["matched_flows"]
-        for result in alignment_results
-    }
-    origin_exchanges = {
-        result["process_name"]: block["exchanges"]["exchange"]
-        for result, block in zip(alignment_results, process_blocks)
-    }
+## 10. 目录与后续迭代
+- `src/tiangong_lca_spec/core`: 配置、日志、模型、通用工具。
+- `src/tiangong_lca_spec/flow_search`: MCP 查询与候选过滤。
+- `src/tiangong_lca_spec/flow_alignment`: 交换量与流对齐。
+- `src/tiangong_lca_spec/process_extraction`: 文献解析与结果合并。
+- `src/tiangong_lca_spec/tidas_validation`: TIDAS 校验封装。
+- `src/tiangong_lca_spec/orchestrator`: LangGraph orchestrator。
 
-    final_datasets = merge_results(process_blocks, matched_lookup, origin_exchanges)
-    validation_report = validate_with_tidas(final_datasets)
-
-    write_outputs(final_datasets, validation_report)
-```
-- `write_outputs` 负责落盘 JSON、校验报告与日志（建议保存到 `artifacts/`）。
-- 通过配置文件管理 API URL、鉴权、批处理上限等参数；可使用 `pydantic.BaseSettings` 或 `dotenv`。
-
-## 7. 实施与测试建议
-- 为每个模块编写独立的单元测试，覆盖：
-  - JSON 清洗函数对 `<think>`、双重编码、空结果的处理。
-  - 分类与地理匹配遇到未知值时的降级逻辑。
-  - `merge_results` 在缺少 `FlowCandidate`、功能单位推断失败时的行为（应提供默认值或错误提示）。
-- 抽象 HTTP 客户端接口，便于在测试中使用 Mock。
-- 优先实现纯函数部分，再集成外部调用，降低调试复杂度。
-
-## 8. 目录与下一步
-1. 在 `src/` 下建立 `flow_search/`, `flow_alignment/`, `process_extraction/`, `tidas_validation/`, `orchestrator/` 等模块目录，并在 `__init__.py` 暴露公共接口。
-2. 整理配置与密钥管理方案（环境变量或 `.env`），避免在代码中硬编码令牌。
-3. 根据业务需求逐步补充日志、缓存、并发、失败重试等横切能力。
+**下一步建议**：
+1. 在 `tiangong_lca_spec/orchestrator` 中补充 CLI 或 demo 模块，方便 `uv run python -m tiangong_lca_spec.orchestrator.workflow_demo` 快速体验。
+2. 将 MCP/TIDAS 客户端抽象为接口或协议，实现本地 Mock 以支持 CI 离线测试。
+3. 按需扩展缓存、断点恢复、指标上报等横切能力，并考虑将 `WorkflowResult` 与日志落盘至 `artifacts/`。
