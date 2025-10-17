@@ -86,7 +86,7 @@ class MCPToolClient:
             return None
         try:
             return parse_json_response(raw_text)
-        except SpecCodingError as exc:
+        except SpecCodingError:
             LOGGER.error(
                 "mcp_tool_client.json_parse_failed",
                 server=server_name,

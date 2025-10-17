@@ -69,11 +69,7 @@ class TidasClient:
         if isinstance(raw, list):
             return [item for item in raw if isinstance(item, dict)]
         if isinstance(raw, dict):
-            findings = (
-                raw.get("findings")
-                or raw.get("results")
-                or raw.get("validation_findings")
-            )
+            findings = raw.get("findings") or raw.get("results") or raw.get("validation_findings")
             if isinstance(findings, list):
                 return [item for item in findings if isinstance(item, dict)]
         LOGGER.warning("tidas_validation.unexpected_payload", payload_type=type(raw).__name__)
