@@ -31,8 +31,8 @@ class TidasClient:
             "Content-Type": "application/json",
             "User-Agent": "tiangong-lca-spec/0.1",
         }
-        if self._settings.mcp_api_key:
-            headers["Authorization"] = f"Bearer {self._settings.mcp_api_key}"
+        if self._settings.tidas_api_key:
+            headers["Authorization"] = f"Bearer {self._settings.tidas_api_key}"
         return headers
 
     @retry(
