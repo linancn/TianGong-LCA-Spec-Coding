@@ -18,8 +18,8 @@ from tiangong_lca_spec.core.models import (
 )
 from tiangong_lca_spec.flow_alignment import FlowAlignmentService
 from tiangong_lca_spec.process_extraction import ProcessExtractionService, preprocess_paper
-from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
 from tiangong_lca_spec.process_extraction.extractors import LanguageModelProtocol
+from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 LOGGER = get_logger(__name__)
