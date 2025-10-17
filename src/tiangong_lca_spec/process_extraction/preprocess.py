@@ -9,7 +9,9 @@ from typing import Iterable
 from tiangong_lca_spec.core.exceptions import ProcessExtractionError
 
 THINK_PATTERN = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
-SECTION_PATTERN = re.compile(r"^(#+\s*)(references|appendix|acknowledgements)\b.*", flags=re.IGNORECASE | re.MULTILINE)
+SECTION_PATTERN = re.compile(
+    r"^(#+\s*)(references|appendix|acknowledgements)\b.*", flags=re.IGNORECASE | re.MULTILINE
+)
 
 
 def preprocess_paper(md_json: str, max_length: int = 120_000) -> str:

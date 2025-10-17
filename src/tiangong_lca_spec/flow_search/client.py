@@ -19,7 +19,9 @@ LOGGER = get_logger(__name__)
 class FlowSearchClient:
     """Thin wrapper around the MCP flow search API."""
 
-    def __init__(self, settings: Settings | None = None, *, client: httpx.Client | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, *, client: httpx.Client | None = None
+    ) -> None:
         self._settings = settings or get_settings()
         self._client = client or httpx.Client(
             base_url=str(self._settings.mcp_base_url),

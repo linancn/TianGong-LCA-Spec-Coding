@@ -14,8 +14,7 @@ LOGGER = get_logger(__name__)
 class LanguageModelProtocol(Protocol):
     """Minimal protocol required from language models used in the pipeline."""
 
-    def invoke(self, input_data: dict[str, Any]) -> Any:
-        ...
+    def invoke(self, input_data: dict[str, Any]) -> Any: ...
 
 
 SECTION_PROMPT = (

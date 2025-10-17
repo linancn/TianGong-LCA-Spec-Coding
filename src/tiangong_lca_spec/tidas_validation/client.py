@@ -16,7 +16,9 @@ LOGGER = get_logger(__name__)
 
 
 class TidasClient:
-    def __init__(self, settings: Settings | None = None, *, client: httpx.Client | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, *, client: httpx.Client | None = None
+    ) -> None:
         self._settings = settings or get_settings()
         self._client = client or httpx.Client(
             base_url=str(self._settings.tidas_base_url),

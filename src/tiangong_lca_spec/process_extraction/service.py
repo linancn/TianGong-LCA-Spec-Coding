@@ -10,7 +10,12 @@ from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import ProcessExtractionError
 from tiangong_lca_spec.core.logging import get_logger
 
-from .extractors import LanguageModelProtocol, LocationNormalizer, ProcessClassifier, SectionExtractor
+from .extractors import (
+    LanguageModelProtocol,
+    LocationNormalizer,
+    ProcessClassifier,
+    SectionExtractor,
+)
 
 LOGGER = get_logger(__name__)
 

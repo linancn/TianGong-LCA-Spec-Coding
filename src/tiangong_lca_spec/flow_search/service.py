@@ -18,7 +18,9 @@ LOGGER = get_logger(__name__)
 class FlowSearchService:
     """High-level facade responsible for flow lookup and validation."""
 
-    def __init__(self, settings: Settings | None = None, *, client: FlowSearchClient | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, *, client: FlowSearchClient | None = None
+    ) -> None:
         self._settings = settings or get_settings()
         self._client = client or FlowSearchClient(self._settings)
 

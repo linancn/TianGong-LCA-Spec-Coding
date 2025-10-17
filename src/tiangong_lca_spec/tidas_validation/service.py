@@ -15,7 +15,9 @@ LOGGER = get_logger(__name__)
 
 
 class TidasValidationService:
-    def __init__(self, settings: Settings | None = None, *, client: TidasClient | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, *, client: TidasClient | None = None
+    ) -> None:
         self._settings = settings or get_settings()
         self._client = client or TidasClient(self._settings)
 

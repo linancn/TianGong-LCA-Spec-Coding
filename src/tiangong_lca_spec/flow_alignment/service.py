@@ -29,7 +29,9 @@ class FlowAlignmentService:
         self._profile = self._settings.profile
         self._flow_search = flow_search_fn or search_flows
 
-    def align_exchanges(self, process_dataset: dict[str, Any], paper_md: str | None = None) -> dict[str, Any]:
+    def align_exchanges(
+        self, process_dataset: dict[str, Any], paper_md: str | None = None
+    ) -> dict[str, Any]:
         try:
             exchanges = list(self._iter_exchanges(process_dataset))
         except KeyError as exc:
@@ -58,7 +60,9 @@ class FlowAlignmentService:
                     unmatched.extend(misses)
                 origin_exchanges.setdefault(exchange_name, []).append(exchange)
             except Exception as exc:  # pylint: disable=broad-except
-                LOGGER.error("flow_alignment.exchange_failed", exchange=exchange_name, error=str(exc))
+                LOGGER.error(
+                    "flow_alignment.exchange_failed", exchange=exchange_name, error=str(exc)
+                )
                 unmatched.append(
                     UnmatchedFlow(
                         base_name=exchange_name,
@@ -76,7 +80,9 @@ class FlowAlignmentService:
             "origin_exchanges": origin_exchanges,
         }
 
-    def _submit_exchange(self, exchange: dict[str, Any], process_name: str | None, paper_md: str | None):
+    def _submit_exchange(
+        self, exchange: dict[str, Any], process_name: str | None, paper_md: str | None
+    ):
         query = FlowQuery(
             exchange_name=self._safe_exchange_name(exchange),
             description=exchange.get("generalComment1")
@@ -112,7 +118,9 @@ class FlowAlignmentService:
             or process_dataset.get("process_information")
             or {}
         )
-        data_info = process_info.get("dataSetInformation") or process_info.get("data_set_information") or {}
+        data_info = (
+            process_info.get("dataSetInformation") or process_info.get("data_set_information") or {}
+        )
         return data_info.get("name") or process_dataset.get("process_name")
 
     @staticmethod

@@ -17,10 +17,14 @@
    ```bash
    uv sync
    ```
-   `uv` 会读取 `pyproject.toml`，在 `.venv/` 下创建隔离的虚拟环境并安装所有依赖。
+   `uv` 会读取 `pyproject.toml`，在 `.venv/` 下创建隔离的虚拟环境并安装所有运行依赖。
    如果需要使用清华 PyPI 镜像源，也可使用一次性的命令前缀：
    ```bash
    UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple uv sync
+   ```
+   若希望同时安装开发工具（如 Black、Ruff），可执行：
+   ```bash
+   uv sync --group dev
    ```
 
 2. **激活虚拟环境**
@@ -36,6 +40,10 @@
    ```bash
    uv run ruff check
    ```
+   自动格式化代码：
+   ```bash
+   uv run black src/tiangong_lca_spec
+   ```
 
 4. **执行流程编排示例（需自行实现 LLM 客户端后）**
    ```bash
@@ -46,6 +54,7 @@
 ### uv 常用命令速查
 
 - `uv sync --frozen`：按照 `pyproject.lock`（若存在）进行可重复安装。
+- `uv sync --group dev`：安装包含 Black、Ruff 等开发依赖的虚拟环境。
 - `uv add <package>`：添加新依赖并自动更新 `pyproject.toml`。
 - `uv run <cmd>`：在虚拟环境里执行命令，免去显式激活。
 - `uv pip list`：查看虚拟环境内安装的包。
