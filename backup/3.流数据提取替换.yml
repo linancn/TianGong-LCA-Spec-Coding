@@ -1,0 +1,471 @@
+app:
+  description: 从文献中提取流信息，通过MCP调用工具，获取数据库中每条流的完整信息（如有），替换成数据库中已有流的信息
+  icon: star-struck
+  icon_background: '#FFEAD5'
+  mode: workflow
+  name: 3.流数据提取替换
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.4.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 100
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10000
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: code
+      id: 1757741349221-source-1759987804924-target
+      selected: false
+      source: '1757741349221'
+      sourceHandle: source
+      target: '1759987804924'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: iteration
+      id: 1759987804924-source-1760100605890-target
+      selected: false
+      source: '1759987804924'
+      sourceHandle: source
+      target: '1760100605890'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1760100605890'
+        sourceType: iteration-start
+        targetType: code
+      id: 1760100605890start-source-1760100609048-target
+      selected: false
+      source: 1760100605890start
+      sourceHandle: source
+      target: '1760100609048'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInLoop: false
+        sourceType: iteration
+        targetType: end
+      id: 1760100605890-source-1757749352418-target
+      selected: false
+      source: '1760100605890'
+      sourceHandle: source
+      target: '1757749352418'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1760100605890'
+        sourceType: code
+        targetType: tool
+      id: 1760100609048-source-1760407830428-target
+      source: '1760100609048'
+      sourceHandle: source
+      target: '1760407830428'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: 开始
+        type: start
+        variables:
+        - label: merge
+          max_length: null
+          options: []
+          required: true
+          type: paragraph
+          variable: merge
+        - label: paper
+          max_length: null
+          options: []
+          required: true
+          type: paragraph
+          variable: paper
+      height: 115
+      id: '1757741349221'
+      position:
+        x: 30
+        y: 247
+      positionAbsolute:
+        x: 30
+        y: 247
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        outputs:
+        - value_selector:
+          - '1760100605890'
+          - output
+          value_type: array[object]
+          variable: cases
+        selected: false
+        title: 结束
+        type: end
+      height: 89
+      id: '1757749352418'
+      position:
+        x: 1488.4426261999006
+        y: 247
+      positionAbsolute:
+        x: 1488.4426261999006
+        y: 247
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: "import json\nfrom typing import Dict, Any, List\n\ndef main(arg1: str)\
+          \ -> Dict[str, Any]:\n    \"\"\"\n    此代码用于修复双重编码的JSON，并同时提取：\n    1. 'process_name'：作为独立的输出字段。\n\
+          \    2. 'exchange' 列表：处理后作为适配循环节点的字符串数组。\n    \"\"\"\n    # 步骤 1: 健壮地解码，获取原始数据对象\n\
+          \    data = arg1\n    try:\n        # 尝试进行两次解码\n        intermediate_string\
+          \ = json.loads(data)\n        data = json.loads(intermediate_string)\n \
+          \   except (json.JSONDecodeError, TypeError):\n        # 如果双重解码失败，尝试进行单次解码\n\
+          \        try:\n            data = json.loads(data)\n        except json.JSONDecodeError\
+          \ as final_e:\n            raise ValueError(f\"输入字符串无法被解析为有效的JSON。错误: {final_e}\"\
+          )\n    \n    # 步骤 2: 【新增】提取 process_name\n    # 安全地通过多层 .get() 来访问嵌套的 'name'\
+          \ 字段\n    process_info = data.get(\"processInformation\", {})\n    dataset_info\
+          \ = process_info.get(\"dataSetInformation\", {})\n    process_name = dataset_info.get(\"\
+          name\", \"未找到名称\") # 如果找不到，则返回一个默认值\n\n    # 步骤 3: 提取需要循环的 'exchange' 列表\n\
+          \    exchanges_object = data.get(\"exchanges\", {})\n    exchange_list =\
+          \ []\n    if exchanges_object and isinstance(exchanges_object, dict):\n\
+          \        exchange_list = exchanges_object.get(\"exchange\", [])\n    \n\
+          \    if not isinstance(exchange_list, list):\n        exchange_list = [exchange_list]\n\
+          \n    # 步骤 4: 将 'exchange' 列表中的每个元素转换为独立的JSON字符串\n    output_array_for_result\
+          \ = [json.dumps(item, ensure_ascii=False) for item in exchange_list]\n \
+          \   \n    # 步骤 5: 构建包含两个输出字段的最终返回结果\n    return {\n        \"result\": output_array_for_result,\n\
+          \        \"process_name\": process_name\n    }"
+        code_language: python3
+        desc: ''
+        outputs:
+          process_name:
+            children: null
+            type: string
+          result:
+            children: null
+            type: array[string]
+        selected: false
+        title: 代码执行
+        type: code
+        variables:
+        - value_selector:
+          - '1757741349221'
+          - merge
+          value_type: string
+          variable: arg1
+      height: 53
+      id: '1759987804924'
+      position:
+        x: 352.23787435318945
+        y: 247
+      positionAbsolute:
+        x: 352.23787435318945
+        y: 247
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        error_handle_mode: terminated
+        height: 232
+        is_parallel: false
+        iterator_input_type: array[string]
+        iterator_selector:
+        - '1759987804924'
+        - result
+        output_selector:
+        - '1760407830428'
+        - json
+        output_type: array[object]
+        parallel_nums: 10
+        selected: true
+        start_node_id: 1760100605890start
+        title: 迭代
+        type: iteration
+        width: 690
+      height: 232
+      id: '1760100605890'
+      position:
+        x: 692.8182535036625
+        y: 247
+      positionAbsolute:
+        x: 692.8182535036625
+        y: 247
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 690
+      zIndex: 1
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1760100605890start
+      parentId: '1760100605890'
+      position:
+        x: 24
+        y: 68
+      positionAbsolute:
+        x: 716.8182535036625
+        y: 315
+      selectable: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        code: "import json\nfrom typing import Dict, Any\n\ndef main(arg1: str) ->\
+          \ Dict[str, Any]:\n    \"\"\"\n    此代码接收单个 exchange 对象的JSON字符串，\n    从中提取并组合所需字段，\n\
+          \    最后返回一个包含这些新字段的【字符串】。\n    \"\"\"\n    # 步骤 1: 解码输入的JSON字符串，得到数据字典\n\
+          \    data = {}\n    try:\n        data = json.loads(arg1)\n    except (json.JSONDecodeError,\
+          \ TypeError) as e:\n        raise ValueError(f\"输入 arg1 无法被解析为有效的JSON对象。错误:\
+          \ {e}\")\n\n    # 步骤 2: 提取并转换所需字段\n    exchange_name = data.get(\"exchangeName\"\
+          , \"\")\n    direction = data.get(\"exchangeDirection\", \"\")\n    comment\
+          \ = data.get(\"generalComment1\", \"\")\n    \n    desc_parts = []\n   \
+          \ if direction:\n        desc_parts.append(direction)\n    if comment:\n\
+          \        desc_parts.append(comment)\n    description = \": \".join(desc_parts)\n\
+          \n    # 步骤 3: 构建最终的输出对象\n    output_dict = {\n        \"exchangeName\":\
+          \ exchange_name,\n        \"desc\": description\n    }\n    \n    # 步骤 4:\
+          \ 【关键改动】将输出对象序列化为JSON字符串\n    # 以满足Dify节点输出变量为字符串(String)类型的要求\n    final_output_string\
+          \ = json.dumps(output_dict, ensure_ascii=False)\n    \n    # 步骤 5: 返回字符串结果\n\
+          \    return {\"result\": final_output_string}"
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1760100605890'
+        outputs:
+          result:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行 4
+        type: code
+        variables:
+        - value_selector:
+          - '1760100605890'
+          - item
+          value_type: string
+          variable: arg1
+      height: 53
+      id: '1760100609048'
+      parentId: '1760100605890'
+      position:
+        x: 128
+        y: 69.10835560215298
+      positionAbsolute:
+        x: 820.8182535036625
+        y: 316.108355602153
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        desc: ''
+        isInIteration: true
+        isInLoop: false
+        is_team_authorization: true
+        iteration_id: '1760100605890'
+        output_schema: null
+        paramSchemas:
+        - auto_generate: null
+          default: null
+          form: form
+          human_description:
+            en_US: ''
+            ja_JP: ''
+            pt_BR: ''
+            zh_Hans: ''
+          label:
+            en_US: flow_name
+            ja_JP: flow_name
+            pt_BR: flow_name
+            zh_Hans: flow_name
+          llm_description: ''
+          max: null
+          min: null
+          name: flow_name
+          options: []
+          placeholder:
+            en_US: ''
+            ja_JP: ''
+            pt_BR: ''
+            zh_Hans: ''
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: form
+          human_description:
+            en_US: ''
+            ja_JP: ''
+            pt_BR: ''
+            zh_Hans: ''
+          label:
+            en_US: paper
+            ja_JP: paper
+            pt_BR: paper
+            zh_Hans: paper
+          llm_description: ''
+          max: null
+          min: null
+          name: paper
+          options: []
+          placeholder:
+            en_US: ''
+            ja_JP: ''
+            pt_BR: ''
+            zh_Hans: ''
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: ''
+            ja_JP: ''
+            pt_BR: ''
+            zh_Hans: ''
+          label:
+            en_US: process_name
+            ja_JP: process_name
+            pt_BR: process_name
+            zh_Hans: process_name
+          llm_description: ''
+          max: null
+          min: null
+          name: process_name
+          options: []
+          placeholder:
+            en_US: ''
+            ja_JP: ''
+            pt_BR: ''
+            zh_Hans: ''
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        params:
+          flow_name: ''
+          paper: ''
+          process_name: ''
+        provider_id: 39a8ea73-ae07-4642-a187-24a61da5ff39
+        provider_name: MCP_flows
+        provider_type: workflow
+        selected: false
+        title: MCP_flows
+        tool_configurations:
+          flow_name:
+            type: mixed
+            value: '{{#1760100609048.result#}}'
+          paper:
+            type: mixed
+            value: '{{#1757741349221.paper#}}'
+        tool_description: 调用MCP提取数据库里的flow
+        tool_label: MCP_flows
+        tool_name: Find_flow_id
+        tool_node_version: '2'
+        tool_parameters:
+          process_name:
+            type: mixed
+            value: '{{#1759987804924.process_name#}}'
+        type: tool
+      height: 115
+      id: '1760407830428'
+      parentId: '1760100605890'
+      position:
+        x: 431
+        y: 69.10835560215298
+      positionAbsolute:
+        x: 1123.8182535036626
+        y: 316.108355602153
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    viewport:
+      x: 137.78805295763186
+      y: 382.5575800824761
+      zoom: 0.639739060267288

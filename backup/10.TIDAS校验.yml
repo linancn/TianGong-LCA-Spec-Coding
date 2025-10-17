@@ -1,0 +1,227 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  mode: workflow
+  name: 10.TIDAS校验
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.4.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 100
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10000
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: agent
+        targetType: end
+      id: 1760436925961-source-1760499149028-target
+      selected: false
+      source: '1760436925961'
+      sourceHandle: source
+      target: '1760499149028'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: document-extractor
+      id: 1760436918762-source-1760578387518-target
+      source: '1760436918762'
+      sourceHandle: source
+      target: '1760578387518'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: document-extractor
+        targetType: agent
+      id: 1760578387518-source-1760436925961-target
+      source: '1760578387518'
+      sourceHandle: source
+      target: '1760436925961'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: 开始
+        type: start
+        variables:
+        - allowed_file_extensions:
+          - .json
+          allowed_file_types:
+          - custom
+          allowed_file_upload_methods:
+          - local_file
+          - remote_url
+          label: final_process_json
+          max_length: null
+          options: []
+          required: true
+          type: file
+          variable: final_process_json
+      height: 89
+      id: '1760436918762'
+      position:
+        x: 544.4251368427006
+        y: 282
+      positionAbsolute:
+        x: 544.4251368427006
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        agent_parameters:
+          mcp_servers_config:
+            type: constant
+            value: "{\n  \"Tidas_Data_Validate\": {\n    \"transport\": \"streamable_http\"\
+              ,\n    \"url\": \"http://192.168.1.140:9278/mcp\",\n    \"headers\"\
+              : {\n      \"Authorization\": \"Bearer eyJlbWFpbCI6IjIyMzAwMDg3QG11Yy5lZHUuY24iLCJwYXNzd29yZCI6IiFxZCZINDIxIn0=\"\
+              \n    }\n  }\n}"
+          model:
+            type: constant
+            value:
+              completion_params:
+                enable_stream: false
+              mode: chat
+              model: gpt-5-mini
+              model_type: llm
+              provider: langgenius/openai/openai
+              type: model-selector
+          query:
+            type: constant
+            value: '1. 使用{{#1760578387518.text#}}作为 `query` 参数，调用 `Tidas_Data_Validate_Tool`。
+
+              2. 返回校验结果'
+        agent_strategy_label: FunctionCalling (支持 MCP 工具)
+        agent_strategy_name: mcp_sse_function_calling
+        agent_strategy_provider_name: junjiem/mcp_see_agent/mcp_see_agent
+        desc: ''
+        meta:
+          minimum_dify_version: null
+          version: 0.0.1
+        output_schema: null
+        plugin_unique_identifier: junjiem/mcp_see_agent:0.2.4@82caf96890992e9dec2c43c3fac82bfce8bd18a41de7c2b6948151b2d7f7b7a2
+        selected: false
+        title: Agent
+        tool_node_version: '2'
+        type: agent
+      height: 145
+      id: '1760436925961'
+      position:
+        x: 1254.9371608997753
+        y: 282
+      positionAbsolute:
+        x: 1254.9371608997753
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        outputs:
+        - value_selector:
+          - '1760436925961'
+          - json
+          value_type: array[object]
+          variable: validate
+        selected: false
+        title: 结束
+        type: end
+      height: 89
+      id: '1760499149028'
+      position:
+        x: 1586
+        y: 282
+      positionAbsolute:
+        x: 1586
+        y: 282
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: ''
+        is_array_file: false
+        selected: false
+        title: 文档提取器
+        type: document-extractor
+        variable_selector:
+        - '1760436918762'
+        - final_process_json
+      height: 93
+      id: '1760578387518'
+      position:
+        x: 896.610273158935
+        y: 282
+      positionAbsolute:
+        x: 896.610273158935
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: -129.98327269124252
+      y: 225.63264241933945
+      zoom: 1
