@@ -92,6 +92,8 @@ class ProcessExtractionService:
         if not process_info:
             return state
         geography = self._location_normalizer.run(process_info)
+        if isinstance(geography, str):
+            geography = {"description": geography}
         process_info.setdefault("geography", {}).update(geography)
         state["geography"] = geography
         return state

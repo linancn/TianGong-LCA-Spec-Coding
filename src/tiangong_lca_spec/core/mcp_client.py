@@ -6,8 +6,7 @@ import threading
 from collections.abc import Mapping
 from typing import Any
 
-from anyio import start_blocking_portal
-from anyio.from_thread import BlockingPortal
+from anyio.from_thread import BlockingPortal, start_blocking_portal
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 

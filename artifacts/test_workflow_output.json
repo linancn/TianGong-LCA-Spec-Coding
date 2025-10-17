@@ -1,0 +1,569 @@
+{
+  "process_datasets": [
+    {
+      "process_information": {
+        "name": "Comparative Environmental Assessment of Methanol Production Technologies",
+        "processes_compared": [
+          "Coal Gasification to Methanol (CGTM)",
+          "Coal Coking to Methanol (COTM)",
+          "Natural Gas to Methanol (NGTM)",
+          "Biomass to Methanol (BOTM)",
+          "CO2 Capture to Methanol (CCTM)"
+        ],
+        "boundaries": "Cradle-to-gate (from raw material extraction to methanol production), infrastructure excluded, solid waste (excluding catalyst) to landfill, wastewater processed and reused, flue gases flared or recycled",
+        "functional_unit": "1 tonne of methanol produced",
+        "system_description": {
+          "CGTM": "Four stages: coal mining & cleaning, coal gasification (Texaco slurry, water-gas shift, Rectisol purification, sulfur recovery), methanol synthesis (Cu/ZnO/Al2O3 catalyst), methanol distillation.",
+          "COTM": "Coal mining & handling, coke production (pyrolysis ~1100°C, crude coke oven gas, pollutant removal, reforming reactor), compression, methanol synthesis & distillation.",
+          "NGTM": "Natural gas extraction, acid gas removal, steam reforming, compression, methanol synthesis, recycled syngas, crude methanol distillation.",
+          "BOTM": "Biomass pretreatment (granulation/drying), gasification, WGS to adjust CO/H2, acid gas removal, syngas compression, methanol synthesis, crude methanol refining.",
+          "CCTM": "Water electrolysis for H2 (clean energy), CO2 capture (MEA process, Huaneng demo unit), CO2 electroreduction to methanol, separation, and purification."
+        },
+        "co_products_and_allocation": "Coke and coke oven gas in COTM are handled via energy allocation (allocation factor for coke oven gas: 11.4%).",
+        "excluded_processes": "Post-production use-phase, infrastructure, inputs <1% (with a maximum cutoff 3% per process), waste catalyst replacements.",
+        "classificationInformation": {
+          "classification": [
+            {
+              "@level": 1,
+              "@classId": "C",
+              "#text": "Manufacturing"
+            },
+            {
+              "@level": 2,
+              "@classId": "20",
+              "#text": "Manufacture of chemicals and chemical products"
+            },
+            {
+              "@level": 3,
+              "@classId": "201",
+              "#text": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms"
+            },
+            {
+              "@level": 4,
+              "@classId": "2011",
+              "#text": "Manufacture of basic chemicals"
+            }
+          ]
+        },
+        "geography": {
+          "code": "CN",
+          "description": "Processes for the comparative environmental assessment of methanol production—Coal Gasification to Methanol (CGTM), Coal Coking to Methanol (COTM), Natural Gas to Methanol (NGTM), Biomass to Methanol (BOTM), and CO2 Capture to Methanol (CCTM)—are described for China (ISO 3166-1 alpha-2: CN). Contextual process details (such as CO2 capture via Huaneng demonstration unit and Chinese standard coal gasification/coking technologies) indicate China as the region."
+        }
+      },
+      "modelling_and_validation": {
+        "LCIA_methods": [
+          {
+            "name": "CML2001",
+            "levels": "Midpoint",
+            "impact_categories": [
+              "Global Warming Potential (GWP)",
+              "Abiotic Depletion Potential (ADP)",
+              "Eutrophication Potential (EP)",
+              "Human Toxicity Potential (HTP)",
+              "Ozone Depletion Potential (ODP)",
+              "Photochemical Oxidation Potential (POCP)",
+              "Freshwater Aquatic Ecotoxicity Potential (FAETP)",
+              "Marine Aquatic Ecotoxicity Potential (MAETP)",
+              "Terrestrial Ecotoxicity Potential (TETP)",
+              "Acidification Potential (AP)"
+            ]
+          },
+          {
+            "name": "Eco-indicator 99",
+            "levels": "Endpoint",
+            "impact_categories": [
+              "Ecosystem Quality (Land conversion, Acidification/Eutrophication, Ecotoxicity)",
+              "Human Health (Climate Change, Radiation, Cancer ecotoxicity, Inorganic/Organic Respirable)"
+            ],
+            "damage_units": {
+              "Ecosystem Quality": "PDF·m²·year",
+              "Human Health": "DALY"
+            }
+          }
+        ],
+        "software": "eFootprint",
+        "data_modelling": {
+          "sources": "Mix of actual measurements, literature, public statistics, eFootprint database modeled for Chinese context.",
+          "electricity_profile": "Chinese grid (2022): 66.5% coal, 15.3% hydro, 8.6% wind, 4.8% solar, 4.7% nuclear for all routes except CCTM hydrogen (100% renewables).",
+          "allocation": "Energy allocation for co-products, especially in COTM.",
+          "cut-off_criteria": "Inputs <1% of material/energy flows omitted, maximum 3% per process.",
+          "sensitivity_analysis": "±10% input parameter variation; settings with sensitivity <0.02% excluded; electricity is the most sensitive parameter.",
+          "validation": "Results compared at midpoint and endpoint; simulated/actual data triangulated for legitimacy."
+        },
+        "limitations": [
+          "Early-stage/experimental data for CCTM and some BOTM stages",
+          "Exclusion of infrastructure and use-phase impacts",
+          "Assumes regional/literature averages for some inventory items"
+        ]
+      },
+      "administrative_information": {
+        "authors": null,
+        "year": null,
+        "software_used": "eFootprint",
+        "data_sources": [
+          "Public plant and project data",
+          "Scholarly literature",
+          "Simulated data for unavailable parameters",
+          "eFootprint database (secondary energy, China resource environment models)",
+          "Chinese Cleaner Production Standard for coal mining and processing",
+          "Statistical bulletin (methane leakage, National Bureau of Statistics of China)",
+          "IGCC plant project (NETL, 2010)",
+          "Shanghai Coking and Chemical Company",
+          "Larson and Ren 2003 (simulation data)",
+          "Methanol plants (China National Offshore Oil Corporation Bohai)",
+          "Huaneng Group CO2 capture demo project (Beijing)",
+          "ChemCAD software for CCTM modeling"
+        ],
+        "standards_applied": {
+          "LCA": [
+            "ISO, 2006a",
+            "ISO, 2006b"
+          ]
+        }
+      },
+      "exchanges": [
+        {
+          "CGTM": {
+            "inputs": [
+              {
+                "Electricity": "53.67 kWh"
+              },
+              {
+                "Fresh water": "0.69 t"
+              },
+              {
+                "Hard coal": "1.533 t"
+              },
+              {
+                "Oil": "1.53 kg"
+              },
+              {
+                "HP-steam": "1.77 t"
+              },
+              {
+                "Air": "4348.2 kg"
+              },
+              {
+                "Water": "134.01 t"
+              },
+              {
+                "Ammonia": "0.03 t"
+              },
+              {
+                "NaOH (10%)": "1.0 t"
+              },
+              {
+                "Synthetic gas": "1.23 t"
+              },
+              {
+                "Electricity (methanol production)": "825 kWh"
+              },
+              {
+                "Water (methanol production)": "14.2 kg"
+              }
+            ],
+            "outputs": [
+              {
+                "Hard coal": "1.38 t"
+              },
+              {
+                "Gangue": "153 kg"
+              },
+              {
+                "Methane": "7.64 kg"
+              },
+              {
+                "Synthetic gas": "1.23 t"
+              },
+              {
+                "Slag": "0.15 t"
+              },
+              {
+                "MP-N2": "1523.7 kg"
+              },
+              {
+                "CO2": "1.74 kg"
+              },
+              {
+                "Sulphur": "30 kg"
+              },
+              {
+                "Methanol": "1.00 t"
+              },
+              {
+                "Flue gas": "0.07 t"
+              },
+              {
+                "Effluents": "0.266 t"
+              }
+            ]
+          },
+          "COTM": {
+            "inputs": [
+              {
+                "Coal": "20.3 kg"
+              },
+              {
+                "Electricity": "36.61 kWh"
+              },
+              {
+                "Fresh water": "0.76 t"
+              },
+              {
+                "Kerosene": "0.42 kg"
+              },
+              {
+                "Flotation reagents": "1.8 kg"
+              },
+              {
+                "Washed coal": "1324 kg"
+              },
+              {
+                "COG for heating": "215.80 Nm3"
+              },
+              {
+                "Compressed air": "5.10 Nm3"
+              },
+              {
+                "Electricity (coke production)": "163 MJ"
+              },
+              {
+                "Washing oil": "0.43 kg"
+              },
+              {
+                "Sodium hydroxide": "0.003 kg"
+              },
+              {
+                "Low-pressure steam": "148 kg"
+              },
+              {
+                "Sulfuric acid (aq, 98%)": "10 kg"
+              },
+              {
+                "Fresh water (coke production)": "741 kg"
+              },
+              {
+                "COG": "1968.66 Nm3"
+              },
+              {
+                "Electricity (methanol production)": "678.32 kWh"
+              },
+              {
+                "Medium-pressure steam": "2.25 t"
+              },
+              {
+                "Desalinated water": "1.14 t"
+              },
+              {
+                "Fresh water (methanol production)": "6.19 t"
+              }
+            ],
+            "outputs": [
+              {
+                "Washed coal": "1000 kg"
+              },
+              {
+                "Coal gangue": "200 kg"
+              },
+              {
+                "Methane": "3.42 kg"
+              },
+              {
+                "Coke": "1000 kg"
+              },
+              {
+                "Coke oven gas": "432.35 Nm3"
+              },
+              {
+                "Coal tar": "36 kg"
+              },
+              {
+                "Ammonium sulfate": "13 kg"
+              },
+              {
+                "Raw benzene": "11 kg"
+              },
+              {
+                "Sulfur": "1 kg"
+              },
+              {
+                "Nitrogen oxides": "0.17 kg"
+              },
+              {
+                "Sulphur dioxide": "0.07 kg"
+              },
+              {
+                "Coke tar residue": "0.06 kg"
+              },
+              {
+                "Dust": "0.03 kg"
+              },
+              {
+                "Benzo{a}pyrene": "0.00022 kg"
+              },
+              {
+                "Coal tar pitch residue": "0.0001 kg"
+              },
+              {
+                "Methanol": "1.00 t"
+              },
+              {
+                "Low-pressure steam": "938.40 kg"
+              },
+              {
+                "Exhausted gas": "676.3 m3"
+              }
+            ]
+          },
+          "NGTM": {
+            "inputs": [
+              {
+                "Hard coal": "47.39 kg"
+              },
+              {
+                "Oil": "11.97 kg"
+              },
+              {
+                "Iron": "0.05 kg"
+              },
+              {
+                "Natural gas": "617 Nm3"
+              },
+              {
+                "Fuel natural gas": "20.11 kg"
+              },
+              {
+                "Electricity": "576.40 kWh"
+              },
+              {
+                "Oxygen": "142 Nm3"
+              },
+              {
+                "Desalinated water": "3.60 t"
+              },
+              {
+                "Fresh water": "11.00 t"
+              },
+              {
+                "Sodium hydroxide": "0.20 kg"
+              },
+              {
+                "Trisodium phosphate": "0.15 kg"
+              }
+            ],
+            "outputs": [
+              {
+                "Natural gas": "617 Nm3"
+              },
+              {
+                "CO2": "153 kg"
+              },
+              {
+                "CH4": "5.44 kg"
+              },
+              {
+                "NOx": "0.48 kg"
+              },
+              {
+                "SOx": "0.39 kg"
+              },
+              {
+                "CO": "0.043 kg"
+              },
+              {
+                "PM": "0.025 kg"
+              },
+              {
+                "Methanol": "1.00 t"
+              }
+            ]
+          },
+          "BOTM": {
+            "inputs": [
+              {
+                "Biomass": "1066.7 kg"
+              },
+              {
+                "Diesel": "0.68 kg"
+              },
+              {
+                "Electricity": "21.10 kWh"
+              },
+              {
+                "Oxygen": "800.40 kg"
+              },
+              {
+                "Boiler water": "2128.97 kg"
+              },
+              {
+                "Crude oil": "20.10 kg"
+              },
+              {
+                "Fuel oil": "0.41 kg"
+              },
+              {
+                "Gasoline": "5.58 kg"
+              },
+              {
+                "Diesel (continue)": "3.76 kg"
+              },
+              {
+                "Hydrogen": "136.11 kg"
+              },
+              {
+                "CO": "874.95 kg"
+              },
+              {
+                "CO2": "34.3 kg"
+              },
+              {
+                "Electricity (methanol production)": "217.40 kWh"
+              },
+              {
+                "Water": "10.80 t"
+              },
+              {
+                "Steam": "0.80 t"
+              }
+            ],
+            "outputs": [
+              {
+                "Biomass": "1066.7 kg"
+              },
+              {
+                "Steam": "0.8 t"
+              },
+              {
+                "CO": "874.95 kg"
+              },
+              {
+                "CO2": "34.30 kg"
+              },
+              {
+                "Methanol": "1.00 t"
+              }
+            ]
+          },
+          "CCTM": {
+            "inputs": [
+              {
+                "Deionized water": "2.4 t"
+              },
+              {
+                "Electricity for electrolysis (Bio-IGCC)": "9388.2 kWh"
+              },
+              {
+                "Electricity for electrolysis (PV)": "6124.5 kWh"
+              },
+              {
+                "Electricity for compression (PV)": "793.09 kWh"
+              },
+              {
+                "Recycling water": "89.37 t"
+              },
+              {
+                "CO2 (air in)": "0.91 t"
+              },
+              {
+                "O2 (air in)": "347.61 t"
+              },
+              {
+                "N2 (air in)": "1148.03 t"
+              },
+              {
+                "H2O (air in)": "14.81 t"
+              },
+              {
+                "Natural gas for gas turbine": "0.04 t"
+              },
+              {
+                "Natural gas for calciner": "0.08 t"
+              },
+              {
+                "CaCO3 for preparation": "3.93 t"
+              },
+              {
+                "Water": "3.62 t"
+              },
+              {
+                "KOH, K2CO3 for CO2 adsorber": "2342.31 t"
+              },
+              {
+                "O2 for calcine": "0.34 t"
+              },
+              {
+                "N2 for calcine": "0.02 t"
+              },
+              {
+                "Hydrogen": "220.6 kg"
+              },
+              {
+                "CO2": "1617.4 kg"
+              },
+              {
+                "Electricity (methanol synthesis)": "271.4 kWh"
+              },
+              {
+                "Water (methanol synthesis)": "10.8 t"
+              },
+              {
+                "Steam (methanol synthesis)": "0.8 t"
+              }
+            ],
+            "outputs": [
+              {
+                "Hydrogen": "220.6 kg"
+              },
+              {
+                "Oxygen": "1764.71 kg"
+              },
+              {
+                "CO2 (air out)": "0.24 t"
+              },
+              {
+                "O2 (air out)": "348.39 t"
+              },
+              {
+                "N2 (air out)": "1150.63 t"
+              },
+              {
+                "H2O (air out)": "18.21 t"
+              },
+              {
+                "CO2 (captured)": "1 t"
+              },
+              {
+                "O2 (captured)": "0.014 t"
+              },
+              {
+                "N2": "0.015 t"
+              },
+              {
+                "CaCO3": "0.02 t"
+              },
+              {
+                "Methanol": "1 t"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "alignment": [
+    {
+      "process_name": null,
+      "matched_flows": [],
+      "unmatched_flows": [
+        {
+          "base_name": "unknown_exchange",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": null
+        }
+      ],
+      "origin_exchanges": {}
+    }
+  ],
+  "validation_report": []
+}

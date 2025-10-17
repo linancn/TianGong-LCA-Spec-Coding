@@ -604,7 +604,7 @@ workflow:
         agent_parameters:
           mcp_servers_config:
             type: constant
-            value: "{\n  \"tiangong_lca_remote\": {\n    \"transport\": \"streamable_http\"\
+            value: "{\n  \"TianGong_LCA_Remote\": {\n    \"transport\": \"streamable_http\"\
               ,\n    \"url\": \"https://lcamcp.tiangong.earth/mcp\",\n    \"headers\"\
               : {\n      \"Accept\": \"application/json,text/event-stream\",\n   \
               \   \"Authorization\": \"Bearer eyJlbWFpbCI6IjIyMzAwMDg3QG11Yy5lZHUuY24iLCJwYXNzd29yZCI6IiFxZCZINDIxIn0=\"\
