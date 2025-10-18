@@ -11,6 +11,7 @@ from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import SpecCodingError, TidasValidationError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
+from tiangong_lca_spec.core.json_utils import parse_json_response
 
 LOGGER = get_logger(__name__)
 
@@ -105,11 +106,20 @@ class TidasClient:
         try:
             for attempt in retryer:
                 with attempt:
-                    return self._mcp.invoke_json_tool(
+                    text_content, _ = self._mcp.invoke_tool(
                         self._server_name,
                         self._tool_name,
                         arguments,
                     )
+                    raw_text = _coerce_text(text_content)
+                    if not raw_text:
+                        return None
+                    try:
+                        return parse_json_response(raw_text)
+                    except SpecCodingError as exc:
+                        if "Validation passed" in raw_text:
+                            return []
+                        raise SpecCodingError("Unable to parse TIDAS response") from exc
         except RetryError as exc:
             raise TidasValidationError("TIDAS validation failed after retries") from exc
         except SpecCodingError as exc:
@@ -135,3 +145,11 @@ class TidasClient:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+
+def _coerce_text(content: str | list[str] | None) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        return "\n".join(piece for piece in content if piece)
+    return str(content)

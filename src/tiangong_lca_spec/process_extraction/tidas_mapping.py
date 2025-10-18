@@ -47,7 +47,7 @@ def build_tidas_process_dataset(
         dataset_uuid=dataset_uuid,
     )
     dataset["exchanges"] = _normalise_exchanges(dataset.get("exchanges"))
-    dataset.pop("LCIAResults", None)
+    dataset["LCIAResults"] = _normalise_lcia_results(dataset.get("LCIAResults"))
     return dataset
 
 
@@ -68,6 +68,7 @@ def _normalise_process_information(
     info["quantitativeReference"] = _normalise_quantitative_reference(info.get("quantitativeReference"))
     info["time"] = _normalise_time(info.get("time"))
     info["geography"] = _normalise_geography(info.get("geography"))
+    info["technology"] = _normalise_technology(info.get("technology"))
     if "technology" in info and not info["technology"]:
         info.pop("technology")
     if "mathematicalRelations" in info and not info["mathematicalRelations"]:
@@ -82,6 +83,11 @@ def _normalise_dataset_information(data_info: Any, *, notes: Any | None) -> dict
     if not isinstance(uuid_value, str) or not _is_valid_uuid(uuid_value):
         uuid_value = str(uuid4())
     info["common:UUID"] = uuid_value
+
+    identifier = _stringify(info.get("identifierOfSubDataSet")).strip()
+    if not identifier:
+        identifier = uuid_value
+    info["identifierOfSubDataSet"] = identifier
 
     name_block = info.get("name")
     if isinstance(name_block, str):
@@ -181,21 +187,32 @@ def _normalise_time(section: Any) -> dict[str, Any]:
 
     time_info["common:referenceYear"] = year_value
     time_info.pop("referenceYear", None)
+
+    valid_until = time_info.get("common:dataSetValidUntil")
+    try:
+        valid_until_value = int(valid_until)
+    except (TypeError, ValueError):
+        valid_until_value = year_value + 5 if year_value is not None else 1905
+    time_info["common:dataSetValidUntil"] = valid_until_value
     return time_info
 
 
 def _normalise_geography(section: Any) -> dict[str, Any]:
     geo = _ensure_dict(section)
     block = _ensure_dict(geo.get("locationOfOperationSupplyOrProduction"))
-    code = (
+    raw_code = (
         block.pop("@location", None)
         or block.pop("location", None)
         or geo.pop("code", None)
         or geo.pop("@location", None)
         or DEFAULT_LOCATION
     )
-    description = block.pop("description", None) or geo.pop("description", None) or block.pop(
-        "locationName", None
+    code, code_description = _extract_location_code(raw_code)
+    description = (
+        block.pop("description", None)
+        or geo.pop("description", None)
+        or block.pop("locationName", None)
+        or code_description
     )
     sub_location = block.pop("subLocation", None) or geo.pop("subLocation", None)
 
@@ -206,6 +223,38 @@ def _normalise_geography(section: Any) -> dict[str, Any]:
         normalised_block.setdefault("common:comment", sub_location)
 
     return {"locationOfOperationSupplyOrProduction": normalised_block}
+
+
+def _normalise_technology(section: Any) -> dict[str, Any]:
+    technology = _ensure_dict(section)
+    description = technology.get("technologyDescriptionAndIncludedProcesses")
+    technology["technologyDescriptionAndIncludedProcesses"] = _ensure_multilang(
+        description, fallback="Not specified"
+    )
+    if technology.get("technologicalApplicability"):
+        technology["technologicalApplicability"] = _ensure_multilang(
+            technology.get("technologicalApplicability")
+        )
+    _ensure_reference_field(
+        technology,
+        "referenceToIncludedProcesses",
+        ref_type="process",
+        description="Included process placeholder",
+    )
+    _ensure_reference_field(
+        technology,
+        "referenceToTechnologyPictogramme",
+        ref_type="source",
+        description="Technology pictogram placeholder",
+    )
+    _ensure_reference_field(
+        technology,
+        "referenceToTechnologyFlowDiagrammOrPicture",
+        ref_type="source",
+        description="Technology flow diagram placeholder",
+    )
+    technology.setdefault("common:other", "Generated placeholder")
+    return technology
 
 
 def _normalise_exchanges(section: Any) -> dict[str, Any]:
@@ -244,6 +293,28 @@ def _normalise_exchanges(section: Any) -> dict[str, Any]:
         normalised.append(item)
 
     return {"exchange": normalised}
+
+
+def _normalise_lcia_results(section: Any) -> dict[str, Any]:
+    results = _ensure_dict(section)
+    lcia_result = _ensure_dict(results.get("LCIAResult"))
+    mean_amount = lcia_result.get("meanAmount")
+    try:
+        mean_value = float(mean_amount)
+    except (TypeError, ValueError):
+        mean_value = 0.0
+    lcia_result["meanAmount"] = f"{mean_value}"
+    _ensure_reference_field(
+        lcia_result,
+        "referenceToLCIAMethodDataSet",
+        ref_type="method",
+        description="Placeholder LCIA method",
+    )
+    if lcia_result.get("generalComment"):
+        lcia_result["generalComment"] = _ensure_multilang(lcia_result.get("generalComment"))
+    results["LCIAResult"] = lcia_result
+    results.setdefault("common:other", "Generated placeholder")
+    return results
 
 
 def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
@@ -362,6 +433,25 @@ def _normalise_administrative_information(
         publication["registrationAuthority"] = {
             "name": _ensure_multilang("Tiangong LCA Registry"),
         }
+    publication["common:workflowAndPublicationStatus"] = _stringify(
+        publication.get("common:workflowAndPublicationStatus")
+    ) or "Working draft"
+    _ensure_reference_field(
+        publication,
+        "common:referenceToUnchangedRepublication",
+        ref_type="source",
+        description="Original publication",
+    )
+    _ensure_reference_field(
+        publication,
+        "common:referenceToRegistrationAuthority",
+        ref_type="contact",
+        description="Registration authority",
+    )
+    registration_number = _stringify(publication.get("common:registrationNumber")).strip()
+    if not registration_number:
+        registration_number = dataset_uuid or "REG-UNSPECIFIED"
+    publication["common:registrationNumber"] = registration_number
     admin["publicationAndOwnership"] = publication
 
     return admin
@@ -391,6 +481,19 @@ def _ensure_global_reference(
             if isinstance(item, dict) and "@refObjectId" in item:
                 return item
     return _build_reference(ref_type, description)
+
+
+def _ensure_reference_field(
+    container: dict[str, Any],
+    key: str,
+    *,
+    ref_type: str,
+    description: str,
+) -> None:
+    value = container.get(key)
+    if _has_reference(value):
+        return
+    container[key] = _ensure_global_reference(value, ref_type=ref_type, description=description)
 
 
 def _normalise_derivation_status(value: Any) -> str:
@@ -485,3 +588,32 @@ def _extract_flow_name(reference: Any) -> str | None:
             if isinstance(value, str):
                 return value
     return None
+
+
+def _has_reference(value: Any) -> bool:
+    if isinstance(value, dict):
+        return "@refObjectId" in value
+    if isinstance(value, list):
+        return any(isinstance(item, dict) and "@refObjectId" in item for item in value)
+    return False
+
+
+def _extract_location_code(value: Any) -> tuple[str, str | None]:
+    if isinstance(value, str):
+        text = value.strip()
+        return (text or DEFAULT_LOCATION, None)
+    if isinstance(value, dict):
+        fallback_description = _stringify(
+            value.get("description") or value.get("name") or value.get("common:other")
+        ) or None
+        for key in ("code", "@location", "location", "country", "region"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip(), fallback_description
+        return DEFAULT_LOCATION, fallback_description
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            code, desc = _extract_location_code(item)
+            if code:
+                return code, desc
+    return DEFAULT_LOCATION, None
