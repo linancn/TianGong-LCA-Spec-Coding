@@ -177,14 +177,20 @@ def _resolve_base_name(name_block: Any) -> str | None:
     if isinstance(name_block, dict):
         base = name_block.get("baseName")
         if isinstance(base, dict):
-            text = base.get("#text")
+            text = base.get("#text") or base.get("text")
             if text:
                 return text
+            for value in base.values():
+                if isinstance(value, str):
+                    return value
         elif base:
             return str(base)
-        text = name_block.get("#text")
+        text = name_block.get("#text") or name_block.get("text")
         if text:
             return str(text)
+        for value in name_block.values():
+            if isinstance(value, str):
+                return value
     elif isinstance(name_block, list) and name_block:
         return _resolve_base_name(name_block[0])
     elif isinstance(name_block, str):

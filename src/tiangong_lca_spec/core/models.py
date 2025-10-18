@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
@@ -50,12 +51,15 @@ class ProcessDataset:
             build_tidas_process_dataset,
         )
 
-        base_dataset = self.process_data_set or {
-            "processInformation": self.process_information,
-            "modellingAndValidation": self.modelling_and_validation,
-            "administrativeInformation": self.administrative_information,
-            "exchanges": {"exchange": [dict(exchange) for exchange in self.exchanges]},
-        }
+        if self.process_data_set:
+            base_dataset = deepcopy(self.process_data_set)
+        else:
+            base_dataset = {}
+
+        base_dataset["processInformation"] = self.process_information
+        base_dataset["modellingAndValidation"] = self.modelling_and_validation
+        base_dataset["administrativeInformation"] = self.administrative_information
+        base_dataset["exchanges"] = {"exchange": [dict(exchange) for exchange in self.exchanges]}
 
         return build_tidas_process_dataset(
             base_dataset,

@@ -10,6 +10,7 @@ from .exceptions import SpecCodingError
 
 THINK_PATTERN = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
 CODE_BLOCK_PATTERN = re.compile(r"```(?:json)?(.*?)```", flags=re.DOTALL | re.IGNORECASE)
+LINE_COMMENT_PATTERN = re.compile(r"^\s*//.*?$", flags=re.MULTILINE)
 
 
 def strip_think(content: str) -> str:
@@ -25,7 +26,7 @@ def extract_json_blob(content: str) -> str:
 
 
 def parse_json_response(content: str) -> Any:
-    cleaned = extract_json_blob(content)
+    cleaned = strip_json_comments(extract_json_blob(content))
     attempts = [cleaned, cleaned.strip('"'), truncate_to_balanced(cleaned)]
     for candidate in attempts:
         if not candidate:
@@ -54,3 +55,7 @@ def truncate_to_balanced(raw: str) -> str:
         if stack == 0 and brackets == 0 and char in ("}", "]"):
             break
     return "".join(result_chars)
+
+
+def strip_json_comments(raw: str) -> str:
+    return LINE_COMMENT_PATTERN.sub("", raw)

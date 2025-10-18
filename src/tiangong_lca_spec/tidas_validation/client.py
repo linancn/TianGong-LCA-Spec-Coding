@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping
 
 from tenacity import RetryError, Retrying, stop_after_attempt, wait_exponential
@@ -27,17 +28,68 @@ class TidasClient:
         self._mcp = mcp_client or MCPToolClient(self._settings)
 
     def validate(self, datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        arguments: Mapping[str, Any] = {"process_datasets": datasets}
-        LOGGER.info("tidas_validation.request", process_count=len(datasets))
-        try:
-            raw = self._call_with_retry(arguments)
-        except (RetryError, TidasValidationError):
-            raise
-        except Exception as exc:  # pylint: disable=broad-except
-            raise TidasValidationError("TIDAS validation failed") from exc
-
-        findings = self._normalize_results(raw)
+        LOGGER.info("tidas_validation.request", dataset_count=len(datasets))
+        findings: list[dict[str, Any]] = []
+        for index, dataset in enumerate(datasets, start=1):
+            arguments = self._build_arguments(dataset)
+            LOGGER.debug(
+                "tidas_validation.invoke_dataset",
+                dataset_index=index,
+                entity_type=arguments.get("entityType"),
+            )
+            try:
+                raw = self._call_with_retry(arguments)
+            except TidasValidationError as exc:
+                converted = self._extract_findings_from_error(exc)
+                if converted is not None:
+                    findings.extend(converted)
+                    continue
+                raise
+            except Exception as exc:  # pylint: disable=broad-except
+                msg = f"TIDAS validation failed for dataset at index {index}"
+                raise TidasValidationError(msg) from exc
+            normalized = self._normalize_results(raw)
+            findings.extend(normalized)
         LOGGER.info("tidas_validation.response", finding_count=len(findings))
+        return findings
+
+    def _build_arguments(self, dataset: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {
+            "entityType": "process",
+            "data": {"processDataSet": dataset},
+        }
+
+    def _extract_findings_from_error(
+        self,
+        error: TidasValidationError,
+    ) -> list[dict[str, Any]] | None:
+        cause = error.__cause__
+        if not cause:
+            return None
+        message = str(cause)
+        marker = "Validation Errors:"
+        if marker not in message:
+            return None
+        start = message.find("[", message.index(marker))
+        end = message.rfind("]")
+        if start == -1 or end == -1:
+            return None
+        try:
+            payload = json.loads(message[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+        findings: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            findings.append(
+                {
+                    "severity": item.get("severity", "error"),
+                    "message": item.get("message", "TIDAS validation error"),
+                    "path": "/".join(str(part) for part in item.get("path", [])),
+                    "code": item.get("code"),
+                }
+            )
         return findings
 
     def _call_with_retry(self, arguments: Mapping[str, Any]) -> Any:

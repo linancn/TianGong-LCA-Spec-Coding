@@ -1,0 +1,306 @@
+{
+  "process_datasets": [
+    {
+      "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+      "@xmlns": "http://lca.jrc.it/ILCD/Process",
+      "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+      "@version": "1.1.0",
+      "@locations": "../ILCDLocations.xml",
+      "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Process ../../schemas/ILCD_ProcessDataSet.xsd",
+      "processInformation": {
+        "dataSetInformation": {
+          "common:UUID": "c879bcc5-2b92-445a-9352-7e5b9fc15523",
+          "name": {
+            "baseName": {
+              "@xml:lang": "en",
+              "#text": "Methanol production (cradle-to-gate) - Comparative routes in China"
+            },
+            "shortName": "Methanol by CGTM, COTM, NGTM, BOTM, CCTM",
+            "otherNames": [],
+            "treatmentStandardsRoutes": {
+              "@xml:lang": "en",
+              "#text": "Not specified"
+            },
+            "mixAndLocationTypes": {
+              "@xml:lang": "en",
+              "#text": "Unknown mix"
+            }
+          },
+          "identifierOfSubDataSet": null,
+          "common:synonyms": [
+            "CGTM; COTM; NGTM; BOTM; CCTM; Methanol (MeOH) production"
+          ],
+          "complementingProcesses": {},
+          "classificationInformation": {
+            "classification": [
+              {
+                "@level": "1",
+                "@classId": "C",
+                "#text": "Manufacturing"
+              },
+              {
+                "@level": "2",
+                "@classId": "20",
+                "#text": "Manufacture of chemicals and chemical products"
+              },
+              {
+                "@level": "3",
+                "@classId": "201",
+                "#text": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms"
+              },
+              {
+                "@level": "4",
+                "@classId": "2011",
+                "#text": "Manufacture of basic chemicals"
+              }
+            ],
+            "common:classification": {
+              "common:class": [
+                {
+                  "@level": "1",
+                  "@classId": "C",
+                  "#text": "Manufacturing"
+                },
+                {
+                  "@level": "2",
+                  "@classId": "20",
+                  "#text": "Manufacture of chemicals and chemical products"
+                },
+                {
+                  "@level": "3",
+                  "@classId": "201",
+                  "#text": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms"
+                },
+                {
+                  "@level": "4",
+                  "@classId": "2011",
+                  "#text": "Manufacture of basic chemicals"
+                }
+              ]
+            }
+          },
+          "common:generalComment": "Comparative environmental assessment of five methanol production routes in China - Coal Gasification to Methanol (CGTM), Coal Coking to Methanol (COTM), Natural Gas to Methanol (NGTM), Biomass to Methanol (BOTM), and CO2 Capture to Methanol (CCTM). System boundary is cradle-to-gate (raw material extraction to refined methanol). Infrastructure and facility construction are excluded. Key environmental impacts and sensitivity to electricity and energy source are analysed.",
+          "common:other": "",
+          "common:mathematicalRelationsOrReasonsForDataDerivation": {
+            "common:other": "Not specified"
+          },
+          "scope": {
+            "defaultAllocationMethod": "Not specified"
+          },
+          "dataSetOwner": {
+            "nameOfDataSetOwner": {
+              "@xml:lang": "en",
+              "#text": "Unknown owner"
+            }
+          }
+        },
+        "quantitativeReference": {
+          "@type": "Reference flow(s)",
+          "referenceToReferenceFlow": "1",
+          "functionalUnitOrOther": {
+            "functionalUnit": "1 metric tonne (t) refined methanol at factory gate",
+            "@xml:lang": "en"
+          },
+          "common:other": ""
+        },
+        "time": {
+          "common:referenceYear": 2022,
+          "common:dataSetValidUntil": null,
+          "common:timeRepresentativenessDescription": "Foreground process and electricity data represent Chinese methanol production conditions circa 2022. Some processes use historic or modelled data, with pragmatic adaptation to current Chinese grid mix.",
+          "common:other": ""
+        },
+        "geography": {
+          "locationOfOperationSupplyOrProduction": {
+            "@location": "CN"
+          }
+        },
+        "technology": {
+          "technologyDescriptionAndIncludedProcesses": "System boundary is cradle-to-gate: from extraction/production of raw materials through manufacturing of refined, purified methanol. Five routes assessed: 1) CGTM: Coal mining, gasification (Texaco slurry), Rectisol purification, catalytic synthesis, distillation; 2) COTM: Coal mining, coke production (pyrolysis at ~1100°C), coke oven gas reforming and purification, methanol synthesis, distillation; 3) NGTM: Natural gas extraction, desulfurization, steam reforming, synthesis and distillation; 4) BOTM: Biomass pretreatment (drying, pelletising), fluidized bed gasification, WGS, syngas cleaning, catalytic methanol synthesis, distillation; 5) CCTM: Air-CO2 capture (Beijing Huaneng pilot), water electrolysis (renewables), CO2 hydrogenation (electroreduction), methanol purification. By-products recycled or disposed according to Chinese industry norm. Infrastructure excluded.",
+          "referenceToIncludedProcesses": null,
+          "technologicalApplicability": "Applicable for Chinese industrial-scale methanol production, under current and emerging clean energy scenarios (grid average and renewable electricity). BOTM applicable when using local agricultural residues or forestry waste; CCTM at pilot to demonstration scale.",
+          "referenceToTechnologyPictogramme": null,
+          "referenceToTechnologyFlowDiagrammOrPicture": null,
+          "common:other": ""
+        },
+        "mathematicalRelations": {
+          "modelDescription": "Life cycle inventory compiled from published plant data, statistics, and simulation. For multi-output systems (COTM), energy allocation (eFootprint) is applied, e.g. 11.4% allocation for coke oven gas. Small flows (<1% total) may be excluded; total cutoff does not exceed 3%. Environmental impacts computed using eFootprint software, with CML2001 (10 midpoint categories) and Eco-indicator 99 (endpoint) methods.",
+          "variableParameter": {},
+          "common:other": ""
+        },
+        "common:other": ""
+      },
+      "modellingAndValidation": {
+        "LCIMethodAndAllocation": {
+          "typeOfDataSet": "Unit process, black box",
+          "LCIMethodPrinciple": "Attributional",
+          "LCIMethodApproaches": "Allocation - physical causality"
+        },
+        "dataSourcesTreatmentAndRepresentativeness": {
+          "percentageSupplyOrProductionCovered": "0.95",
+          "referenceToDataSource": [
+            {
+              "@type": "source",
+              "@refObjectId": "af5eae97-79ef-471b-8b45-4612cf88db74",
+              "@uri": "https://tiangong.earth/source/af5eae97-79ef-471b-8b45-4612cf88db74",
+              "@version": "01.00.000",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Not specified"
+              }
+            }
+          ]
+        },
+        "completeness": {
+          "completenessProductModel": "No statement"
+        },
+        "validation": {
+          "review": {
+            "@type": "Not reviewed",
+            "scope": {
+              "@name": "Goal and scope definition",
+              "method": {
+                "@name": "Documentation"
+              }
+            }
+          }
+        },
+        "complianceDeclarations": {
+          "compliance": {
+            "common:referenceToComplianceSystem": {
+              "@type": "source",
+              "@refObjectId": "bcf034e9-5f6e-4f59-9770-b0a9911a3c6f",
+              "@uri": "https://tiangong.earth/source/bcf034e9-5f6e-4f59-9770-b0a9911a3c6f",
+              "@version": "01.00.000",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Compliance system"
+              }
+            },
+            "common:approvalOfOverallCompliance": "Not defined",
+            "common:nomenclatureCompliance": "Not defined",
+            "common:methodologicalCompliance": "Not defined",
+            "common:reviewCompliance": "Not defined",
+            "common:documentationCompliance": "Not defined",
+            "common:qualityCompliance": "Not defined"
+          }
+        }
+      },
+      "administrativeInformation": {
+        "common:commissionerAndGoal": {
+          "common:intendedApplications": [
+            "Life cycle assessment study"
+          ],
+          "common:referenceToCommissioner": [
+            {
+              "@type": "contact",
+              "@refObjectId": "9c6e1c5b-e916-49b2-a405-6f1109a8bae2",
+              "@uri": "https://tiangong.earth/contact/9c6e1c5b-e916-49b2-a405-6f1109a8bae2",
+              "@version": "01.00.000",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Commissioning organisation"
+              }
+            }
+          ]
+        },
+        "dataGenerator": {
+          "common:other": "Generated via Tiangong LCA automated workflow"
+        },
+        "dataEntryBy": {
+          "common:timeStamp": "2024-01-01T00:00:00Z",
+          "common:referenceToPersonOrEntityEnteringTheData": {
+            "@type": "contact",
+            "@refObjectId": "3932ab9e-3cde-4f76-abb5-dfd765df0d43",
+            "@uri": "https://tiangong.earth/contact/3932ab9e-3cde-4f76-abb5-dfd765df0d43",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Data entry"
+            }
+          },
+          "common:referenceToDataSetFormat": {
+            "@type": "documentation",
+            "@refObjectId": "51b3f227-74e8-47c8-8144-313b03182036",
+            "@uri": "https://tiangong.earth/documentation/51b3f227-74e8-47c8-8144-313b03182036",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "ILCD 1.1"
+            }
+          }
+        },
+        "publicationAndOwnership": {
+          "common:dateOfLastRevision": "2024-05-01",
+          "common:dataSetVersion": "01.00.000",
+          "common:referenceToPrecedingDataSetVersion": null,
+          "common:permanentDataSetURI": "https://doi.org/your-paper-doi/methanol-LCA-china-2024",
+          "common:workflowAndPublicationStatus": "public",
+          "common:referenceToUnchangedRepublication": null,
+          "common:referenceToRegistrationAuthority": null,
+          "common:registrationNumber": null,
+          "common:referenceToOwnershipOfDataSet": {
+            "@type": "contact",
+            "@refObjectId": "fb4c007b-d245-45dd-a20f-d010f26ba70c",
+            "@uri": "https://tiangong.earth/contact/fb4c007b-d245-45dd-a20f-d010f26ba70c",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Unknown owner"
+            }
+          },
+          "common:copyright": "true",
+          "common:licenseType": "Other",
+          "common:accessRestrictions": "Open access for academic/non-commercial use; reuse subject to journal and authors' conditions.",
+          "common:other": "",
+          "registrationAuthority": {
+            "name": {
+              "@xml:lang": "en",
+              "#text": "Tiangong LCA Registry"
+            }
+          }
+        },
+        "common:other": ""
+      },
+      "exchanges": {
+        "exchange": [
+          {
+            "@dataSetInternalID": "1",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "c09b733d-1686-492e-a7ae-879bfda1e58d",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/c09b733d-1686-492e-a7ae-879bfda1e58d",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Methanol, refined"
+              }
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "1.00",
+            "resultingAmount": "1.00",
+            "dataDerivationTypeStatus": "Unknown derivation",
+            "generalComment": "Reference product for system; valid for all routes (CGTM, COTM, NGTM, BOTM, CCTM)",
+            "common:other": "",
+            "exchangeName": "Methanol, refined"
+          }
+        ]
+      }
+    }
+  ],
+  "alignment": [
+    {
+      "process_name": "Methanol production (cradle-to-gate) - Comparative routes in China",
+      "matched_flows": [],
+      "unmatched_flows": [
+        {
+          "base_name": "Methanol, refined",
+          "general_comment": "Reference product for system; valid for all routes (CGTM, COTM, NGTM, BOTM, CCTM)",
+          "status": "requires_creation",
+          "process_name": "Methanol production (cradle-to-gate) - Comparative routes in China"
+        }
+      ],
+      "origin_exchanges": {}
+    }
+  ],
+  "validation_report": []
+}

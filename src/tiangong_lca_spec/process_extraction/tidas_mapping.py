@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -30,11 +31,23 @@ def build_tidas_process_dataset(
     """Return a normalised deep copy of the provided process dataset."""
 
     dataset = _apply_root_metadata(process_dataset)
+    dataset["@locations"] = BASE_METADATA["@locations"]
     process_information = dataset.setdefault("processInformation", {})
     dataset["processInformation"] = _normalise_process_information(process_information, notes=notes)
-    dataset["modellingAndValidation"] = _ensure_dict(dataset.get("modellingAndValidation"))
-    dataset["administrativeInformation"] = _ensure_dict(dataset.get("administrativeInformation"))
+    dataset_uuid = (
+        dataset["processInformation"]
+        .get("dataSetInformation", {})
+        .get("common:UUID")
+    )
+    dataset["modellingAndValidation"] = _normalise_modelling_and_validation(
+        dataset.get("modellingAndValidation")
+    )
+    dataset["administrativeInformation"] = _normalise_administrative_information(
+        dataset.get("administrativeInformation"),
+        dataset_uuid=dataset_uuid,
+    )
     dataset["exchanges"] = _normalise_exchanges(dataset.get("exchanges"))
+    dataset.pop("LCIAResults", None)
     return dataset
 
 
@@ -65,7 +78,9 @@ def _normalise_process_information(
 def _normalise_dataset_information(data_info: Any, *, notes: Any | None) -> dict[str, Any]:
     info = _ensure_dict(data_info)
 
-    uuid_value = info.get("common:UUID") or str(uuid4())
+    uuid_value = info.get("common:UUID")
+    if not isinstance(uuid_value, str) or not _is_valid_uuid(uuid_value):
+        uuid_value = str(uuid4())
     info["common:UUID"] = uuid_value
 
     name_block = info.get("name")
@@ -107,6 +122,10 @@ def _normalise_dataset_information(data_info: Any, *, notes: Any | None) -> dict
         if isinstance(candidate, list) and candidate:
             classification_info["common:classification"] = {"common:class": candidate}
 
+    classes = classification_info.get("common:classification", {}).get("common:class")
+    if isinstance(classes, list) and len(classes) > 4:
+        classification_info["common:classification"]["common:class"] = classes[:4]
+
     info["classificationInformation"] = classification_info
 
     general_comment = info.get("common:generalComment") or ""
@@ -114,14 +133,34 @@ def _normalise_dataset_information(data_info: Any, *, notes: Any | None) -> dict
     if note_text:
         general_comment = f"{general_comment}\n{note_text}".strip() if general_comment else note_text
     info["common:generalComment"] = general_comment
+
+    info.pop("referenceToExternalDocumentation", None)
+
+    mathematical_relations = info.get("common:mathematicalRelationsOrReasonsForDataDerivation")
+    if not isinstance(mathematical_relations, dict):
+        info["common:mathematicalRelationsOrReasonsForDataDerivation"] = {
+            "common:other": "Not specified"
+        }
+
+    scope = _ensure_dict(info.get("scope"))
+    scope.setdefault("defaultAllocationMethod", "Not specified")
+    info["scope"] = scope
+
+    owner = _ensure_dict(info.get("dataSetOwner"))
+    owner.setdefault("nameOfDataSetOwner", _ensure_multilang("Unknown owner"))
+    info["dataSetOwner"] = owner
     return info
 
 
 def _normalise_quantitative_reference(section: Any) -> dict[str, Any]:
     ref = _ensure_dict(section)
-    ref.setdefault("@type", DEFAULT_REFERENCE_TYPE)
+    ref["@type"] = DEFAULT_REFERENCE_TYPE
     reference_id = ref.get("referenceToReferenceFlow") or DEFAULT_REFERENCE_ID
-    ref["referenceToReferenceFlow"] = str(reference_id)
+    try:
+        numeric_id = int(str(reference_id))
+    except (ValueError, TypeError):
+        numeric_id = int(DEFAULT_REFERENCE_ID)
+    ref["referenceToReferenceFlow"] = str(numeric_id)
     functional_unit = ref.get("functionalUnitOrOther")
     if functional_unit:
         ref["functionalUnitOrOther"] = _to_multilang(functional_unit)
@@ -147,20 +186,26 @@ def _normalise_time(section: Any) -> dict[str, Any]:
 
 def _normalise_geography(section: Any) -> dict[str, Any]:
     geo = _ensure_dict(section)
-    if "locationOfOperationSupplyOrProduction" in geo:
-        return geo
+    block = _ensure_dict(geo.get("locationOfOperationSupplyOrProduction"))
+    code = (
+        block.pop("@location", None)
+        or block.pop("location", None)
+        or geo.pop("code", None)
+        or geo.pop("@location", None)
+        or DEFAULT_LOCATION
+    )
+    description = block.pop("description", None) or geo.pop("description", None) or block.pop(
+        "locationName", None
+    )
+    sub_location = block.pop("subLocation", None) or geo.pop("subLocation", None)
 
-    code = geo.pop("code", None) or geo.pop("@location", None) or DEFAULT_LOCATION
-    description = geo.pop("description", None) or geo.pop("comment", None)
-    sub_location = geo.pop("subLocation", None) or geo.pop("sub_location", None)
-
-    block: dict[str, Any] = {"@location": code}
+    normalised_block: dict[str, Any] = {"@location": code}
     if description:
-        block["descriptionOfRestrictions"] = description
+        normalised_block["common:other"] = description
     if sub_location:
-        block["common:other"] = sub_location
+        normalised_block.setdefault("common:comment", sub_location)
 
-    return {"locationOfOperationSupplyOrProduction": block}
+    return {"locationOfOperationSupplyOrProduction": normalised_block}
 
 
 def _normalise_exchanges(section: Any) -> dict[str, Any]:
@@ -176,16 +221,222 @@ def _normalise_exchanges(section: Any) -> dict[str, Any]:
     normalised: list[dict[str, Any]] = []
     for index, exchange in enumerate(exchanges_iter, start=1):
         item = _ensure_dict(exchange)
-        item.setdefault("@dataSetInternalID", str(index))
-        if "referenceToFlowDataSet" in item:
-            item["referenceToFlowDataSet"] = item["referenceToFlowDataSet"]
-        item.setdefault("exchangeDirection", "Input")
+        item["@dataSetInternalID"] = str(index)
+        item.pop("functionType", None)
+        if not item.get("exchangeName"):
+            name_candidate = _extract_flow_name(item.get("referenceToFlowDataSet"))
+            if not name_candidate:
+                name_candidate = _stringify(item.get("name"))
+            if not name_candidate:
+                name_candidate = _stringify(item.get("generalComment")).split(":")[0]
+            if not name_candidate:
+                name_candidate = f"exchange_{index:06d}"
+            item["exchangeName"] = name_candidate
+        if "name" in item and isinstance(item["name"], dict) and not item["name"].get("#text"):
+            item.pop("name")
+        direction = _stringify(item.get("exchangeDirection")).lower()
+        item["exchangeDirection"] = "Input" if direction != "output" else "Output"
         item.setdefault("meanAmount", "0")
         item.setdefault("resultingAmount", "0")
-        item.setdefault("dataDerivationTypeStatus", "Unknown")
+        item["dataDerivationTypeStatus"] = _normalise_derivation_status(
+            item.get("dataDerivationTypeStatus")
+        )
         normalised.append(item)
 
     return {"exchange": normalised}
+
+
+def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
+    mv_raw = _ensure_dict(section)
+    mv: dict[str, Any] = {}
+
+    mv["LCIMethodAndAllocation"] = {
+        "typeOfDataSet": "Unit process, black box",
+        "LCIMethodPrinciple": "Attributional",
+        "LCIMethodApproaches": "Allocation - physical causality",
+    }
+
+    mv["dataSourcesTreatmentAndRepresentativeness"] = {
+        "percentageSupplyOrProductionCovered": "0.95",
+        "referenceToDataSource": [
+            _ensure_global_reference(
+                mv_raw.get("dataSourcesTreatmentAndRepresentativeness", {}).get("referenceToDataSource"),
+                ref_type="source",
+                description="Not specified",
+            )
+        ],
+    }
+
+    mv["completeness"] = {
+        "completenessProductModel": "No statement",
+    }
+
+    mv["validation"] = {
+        "review": {
+            "@type": "Not reviewed",
+            "scope": {
+                "@name": "Goal and scope definition",
+                "method": {"@name": "Documentation"},
+            },
+        }
+    }
+
+    mv["complianceDeclarations"] = {
+        "compliance": {
+            "common:referenceToComplianceSystem": _ensure_global_reference(
+                mv_raw.get("complianceDeclarations", {}).get("compliance", {}).get("common:referenceToComplianceSystem"),
+                ref_type="source",
+                description="Compliance system",
+            ),
+            "common:approvalOfOverallCompliance": "Not defined",
+            "common:nomenclatureCompliance": "Not defined",
+            "common:methodologicalCompliance": "Not defined",
+            "common:reviewCompliance": "Not defined",
+            "common:documentationCompliance": "Not defined",
+            "common:qualityCompliance": "Not defined",
+        }
+    }
+
+    other = _ensure_dict(mv_raw).get("common:other")
+    if other:
+        mv["common:other"] = other
+    return mv
+
+
+def _normalise_administrative_information(
+    section: Any,
+    *,
+    dataset_uuid: str | None,
+) -> dict[str, Any]:
+    admin = _ensure_dict(section)
+    admin["dataGenerator"] = {
+        "common:other": "Generated via Tiangong LCA automated workflow",
+    }
+
+    admin["common:commissionerAndGoal"] = {
+        "common:intendedApplications": ["Life cycle assessment study"],
+        "common:referenceToCommissioner": [
+            _ensure_global_reference(
+                admin.get("common:commissionerAndGoal", {}).get("common:referenceToCommissioner"),
+                ref_type="contact",
+                description="Commissioning organisation",
+            )
+        ],
+    }
+
+    admin["dataEntryBy"] = {
+        "common:timeStamp": "2024-01-01T00:00:00Z",
+        "common:referenceToPersonOrEntityEnteringTheData": _ensure_global_reference(
+            admin.get("dataEntryBy", {}).get("common:referenceToPersonOrEntityEnteringTheData"),
+            ref_type="contact",
+            description="Data entry",
+        ),
+        "common:referenceToDataSetFormat": _ensure_global_reference(
+            admin.get("dataEntryBy", {}).get("common:referenceToDataSetFormat"),
+            ref_type="documentation",
+            description="ILCD 1.1",
+        ),
+    }
+
+    publication = _ensure_dict(admin.get("publicationAndOwnership"))
+    version_value = _stringify(publication.get("common:dataSetVersion")).strip() or "01.00.000"
+    publication["common:dataSetVersion"] = version_value
+    uri_candidate = _stringify(publication.get("common:permanentDataSetURI")).strip()
+    if not uri_candidate or not uri_candidate.startswith(("http://", "https://")):
+        publication["common:permanentDataSetURI"] = (
+            f"https://tiangong.earth/process/{dataset_uuid}"
+            if dataset_uuid
+            else "https://tiangong.earth/process/unspecified"
+        )
+    publication["common:referenceToOwnershipOfDataSet"] = _ensure_global_reference(
+        publication.get("common:referenceToOwnershipOfDataSet"),
+        ref_type="contact",
+        description="Unknown owner",
+    )
+    publication["common:copyright"] = _normalise_boolean(
+        publication.get("common:copyright")
+    )
+    publication["common:licenseType"] = _normalise_license(publication.get("common:licenseType"))
+    publication.setdefault("common:accessRestrictions", "Public")
+    if not isinstance(publication.get("registrationAuthority"), dict):
+        publication["registrationAuthority"] = {
+            "name": _ensure_multilang("Tiangong LCA Registry"),
+        }
+    admin["publicationAndOwnership"] = publication
+
+    return admin
+
+
+def _build_reference(ref_type: str, description: str) -> dict[str, Any]:
+    identifier = str(uuid4())
+    return {
+        "@type": ref_type,
+        "@refObjectId": identifier,
+        "@uri": f"https://tiangong.earth/{ref_type}/{identifier}",
+        "@version": "01.00.000",
+        "common:shortDescription": _ensure_multilang(description),
+    }
+
+
+def _ensure_global_reference(
+    value: Any,
+    *,
+    ref_type: str,
+    description: str,
+) -> dict[str, Any]:
+    if isinstance(value, dict) and "@refObjectId" in value:
+        return value
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and "@refObjectId" in item:
+                return item
+    return _build_reference(ref_type, description)
+
+
+def _normalise_derivation_status(value: Any) -> str:
+    mapping = {
+        "measured": "Measured",
+        "measured/calculated": "Calculated",
+        "calculated": "Calculated",
+        "estimated": "Estimated",
+        "unknown": "Unknown derivation",
+        "unknown derivation": "Unknown derivation",
+        "missing important": "Missing important",
+        "missing unimportant": "Missing unimportant",
+    }
+    text = _stringify(value).strip().lower()
+    return mapping.get(text, "Unknown derivation")
+
+
+def _normalise_license(value: Any) -> str:
+    allowed = {
+        "free of charge for all users and uses": "Free of charge for all users and uses",
+        "free of charge for some user types or use types": "Free of charge for some user types or use types",
+        "free of charge for members only": "Free of charge for members only",
+        "license fee": "License fee",
+        "other": "Other",
+    }
+    text = _stringify(value).strip().lower()
+    return allowed.get(text, "Other")
+
+
+def _normalise_boolean(value: Any) -> str:
+    text = _stringify(value).strip().lower()
+    if text in {"true", "yes", "1"}:
+        return "true"
+    return "false"
+
+
+def _select_from_enum(value: Any, allowed: list[str], default: str) -> str:
+    text = _stringify(value).strip().lower()
+    for candidate in allowed:
+        if text == candidate.lower():
+            return candidate
+    return default
+
+
+def _is_valid_uuid(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value))
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:
@@ -217,3 +468,20 @@ def _ensure_multilang(value: Any, *, fallback: str | None = None) -> dict[str, A
     if not text:
         text = "Not specified"
     return {"@xml:lang": DEFAULT_LANGUAGE, "#text": text}
+
+
+def _extract_flow_name(reference: Any) -> str | None:
+    if isinstance(reference, dict):
+        if isinstance(reference.get("common:shortDescription"), dict):
+            text = reference["common:shortDescription"].get("#text")
+            if text:
+                return text
+        name = reference.get("name") or reference.get("baseName")
+        if isinstance(name, dict):
+            return name.get("#text") or name.get("text")
+        if isinstance(name, str):
+            return name
+        for value in reference.values():
+            if isinstance(value, str):
+                return value
+    return None

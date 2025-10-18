@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from typing import Any, Iterable
+from uuid import uuid4
 
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 
@@ -12,14 +13,20 @@ def _resolve_base_name(name_block: Any) -> str | None:
     if isinstance(name_block, dict):
         base = name_block.get("baseName")
         if isinstance(base, dict):
-            text = base.get("#text")
+            text = base.get("#text") or base.get("text")
             if text:
                 return text
+            for value in base.values():
+                if isinstance(value, str):
+                    return value
         elif base:
             return str(base)
-        text = name_block.get("#text")
+        text = name_block.get("#text") or name_block.get("text")
         if text:
             return str(text)
+        for value in name_block.values():
+            if isinstance(value, str):
+                return value
     elif isinstance(name_block, list) and name_block:
         return _resolve_base_name(name_block[0])
     elif isinstance(name_block, str):
@@ -86,10 +93,11 @@ def _merge_exchange_candidates(
         base_name = (enriched.get("exchangeName") or enriched.get("name") or "").lower()
         candidate = candidate_map.get(base_name)
         if candidate and candidate.uuid:
-            enriched["referenceToFlowDataSet"] = {
-                "@refObjectId": candidate.uuid,
-                "comment": candidate.general_comment,
-            }
+            enriched["referenceToFlowDataSet"] = _reference_from_candidate(candidate)
+        elif not _has_reference(enriched.get("referenceToFlowDataSet")):
+            enriched["referenceToFlowDataSet"] = _placeholder_reference(
+                enriched.get("exchangeName") or base_name or "Unspecified flow"
+            )
         if candidate:
             enriched.setdefault("matchingDetail", asdict(candidate))
         merged.append(enriched)
@@ -121,3 +129,38 @@ def determine_functional_unit(exchanges: list[dict[str, Any]]) -> str | None:
 def _is_waste(name: str) -> bool:
     waste_keywords = ["waste", "slag", "flue gas", "residue"]
     return any(keyword in name for keyword in waste_keywords)
+
+
+def _reference_from_candidate(candidate: FlowCandidate) -> dict[str, Any]:
+    version = candidate.version or "01.00.000"
+    return {
+        "@type": "flow data set",
+        "@refObjectId": candidate.uuid,
+        "@version": version,
+        "@uri": f"https://tiangong.earth/flows/{candidate.uuid}",
+        "common:shortDescription": _multilang(candidate.base_name or "Matched flow"),
+    }
+
+
+def _placeholder_reference(name: str) -> dict[str, Any]:
+    identifier = str(uuid4())
+    return {
+        "@type": "flow data set",
+        "@refObjectId": identifier,
+        "@version": "00.00.000",
+        "@uri": f"https://tiangong.earth/flows/{identifier}",
+        "common:shortDescription": _multilang(name),
+    }
+
+
+def _has_reference(value: Any) -> bool:
+    if isinstance(value, dict):
+        return "@refObjectId" in value
+    if isinstance(value, list):
+        return all(isinstance(item, dict) and "@refObjectId" in item for item in value)
+    return False
+
+
+def _multilang(text: str) -> dict[str, Any]:
+    label = text or "Unnamed flow"
+    return {"@xml:lang": "en", "#text": label}

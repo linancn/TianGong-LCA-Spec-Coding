@@ -70,7 +70,10 @@ class MCPToolClient:
             tool=tool_name,
             keys=list(payload.keys()),
         )
-        return self._portal.call(tool.ainvoke, dict(payload))
+        result = self._portal.call(tool.ainvoke, dict(payload))
+        if isinstance(result, tuple) and len(result) == 2:
+            return result
+        return result, None
 
     def invoke_json_tool(
         self,

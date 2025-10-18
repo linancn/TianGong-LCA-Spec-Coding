@@ -1,0 +1,313 @@
+✗ Validation failed for Process
+
+Entity Type: Process
+Status: ✗ Invalid
+Description: Process data
+
+Validation Errors:
+[
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "processDataSet",
+      "processInformation",
+      "dataSetInformation",
+      "identifierOfSubDataSet"
+    ],
+    "message": "Invalid input: expected string, received null"
+  },
+  {
+    "expected": "number",
+    "code": "invalid_type",
+    "path": [
+      "processDataSet",
+      "processInformation",
+      "time",
+      "common:dataSetValidUntil"
+    ],
+    "message": "Invalid input: expected number, received null"
+  },
+  {
+    "code": "invalid_union",
+    "errors": [
+      [
+        {
+          "expected": "object",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected object, received null"
+        }
+      ],
+      [
+        {
+          "expected": "array",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected array, received null"
+        }
+      ]
+    ],
+    "path": [
+      "processDataSet",
+      "processInformation",
+      "technology",
+      "referenceToIncludedProcesses"
+    ],
+    "message": "Invalid input"
+  },
+  {
+    "code": "invalid_union",
+    "errors": [
+      [
+        {
+          "expected": "object",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected object, received null"
+        }
+      ],
+      [
+        {
+          "expected": "array",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected array, received null"
+        }
+      ]
+    ],
+    "path": [
+      "processDataSet",
+      "processInformation",
+      "technology",
+      "referenceToTechnologyPictogramme"
+    ],
+    "message": "Invalid input"
+  },
+  {
+    "code": "invalid_union",
+    "errors": [
+      [
+        {
+          "expected": "object",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected object, received null"
+        }
+      ],
+      [
+        {
+          "expected": "array",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected array, received null"
+        }
+      ]
+    ],
+    "path": [
+      "processDataSet",
+      "processInformation",
+      "technology",
+      "referenceToTechnologyFlowDiagrammOrPicture"
+    ],
+    "message": "Invalid input"
+  },
+  {
+    "code": "invalid_union",
+    "errors": [
+      [
+        {
+          "expected": "object",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected object, received null"
+        }
+      ],
+      [
+        {
+          "expected": "array",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected array, received null"
+        }
+      ]
+    ],
+    "path": [
+      "processDataSet",
+      "administrativeInformation",
+      "publicationAndOwnership",
+      "common:referenceToPrecedingDataSetVersion"
+    ],
+    "message": "Invalid input"
+  },
+  {
+    "code": "invalid_union",
+    "errors": [
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Working draft"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Working draft\""
+        }
+      ],
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Final draft for internal review"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Final draft for internal review\""
+        }
+      ],
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Final draft for external review"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Final draft for external review\""
+        }
+      ],
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Data set finalised; unpublished"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Data set finalised; unpublished\""
+        }
+      ],
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Under revision"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Under revision\""
+        }
+      ],
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Withdrawn"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Withdrawn\""
+        }
+      ],
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Data set finalised; subsystems published"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Data set finalised; subsystems published\""
+        }
+      ],
+      [
+        {
+          "code": "invalid_value",
+          "values": [
+            "Data set finalised; entirely published"
+          ],
+          "path": [],
+          "message": "Invalid input: expected \"Data set finalised; entirely published\""
+        }
+      ]
+    ],
+    "path": [
+      "processDataSet",
+      "administrativeInformation",
+      "publicationAndOwnership",
+      "common:workflowAndPublicationStatus"
+    ],
+    "message": "Invalid input"
+  },
+  {
+    "code": "invalid_union",
+    "errors": [
+      [
+        {
+          "expected": "object",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected object, received null"
+        }
+      ],
+      [
+        {
+          "expected": "array",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected array, received null"
+        }
+      ]
+    ],
+    "path": [
+      "processDataSet",
+      "administrativeInformation",
+      "publicationAndOwnership",
+      "common:referenceToUnchangedRepublication"
+    ],
+    "message": "Invalid input"
+  },
+  {
+    "code": "invalid_union",
+    "errors": [
+      [
+        {
+          "expected": "object",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected object, received null"
+        }
+      ],
+      [
+        {
+          "expected": "array",
+          "code": "invalid_type",
+          "path": [],
+          "message": "Invalid input: expected array, received null"
+        }
+      ]
+    ],
+    "path": [
+      "processDataSet",
+      "administrativeInformation",
+      "publicationAndOwnership",
+      "common:referenceToRegistrationAuthority"
+    ],
+    "message": "Invalid input"
+  },
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "processDataSet",
+      "administrativeInformation",
+      "publicationAndOwnership",
+      "common:registrationNumber"
+    ],
+    "message": "Invalid input: expected string, received null"
+  },
+  {
+    "expected": "object",
+    "code": "invalid_type",
+    "path": [
+      "processDataSet",
+      "LCIAResults"
+    ],
+    "message": "Invalid input: expected object, received undefined"
+  }
+]
+
+Please fix the validation errors before attempting database operations.

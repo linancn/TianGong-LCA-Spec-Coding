@@ -7,7 +7,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from tiangong_lca_spec.core.config import Settings, get_settings
-from tiangong_lca_spec.core.exceptions import ProcessExtractionError
+from tiangong_lca_spec.core.exceptions import ProcessExtractionError, SpecCodingError
 from tiangong_lca_spec.core.logging import get_logger
 
 from .extractors import (
@@ -116,7 +116,11 @@ class ProcessExtractionService:
         process_info = state.get("process_information")
         if not process_info:
             return state
-        geography = self._location_normalizer.run(process_info)
+        try:
+            geography = self._location_normalizer.run(process_info)
+        except SpecCodingError as exc:
+            LOGGER.warning("process_extraction.location_parse_failed", error=str(exc))
+            geography = {}
         if isinstance(geography, str):
             geography = {"description": geography}
         process_info.setdefault("geography", {}).update(geography)

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     mcp_api_key: str | None = None
     mcp_transport: Literal["streamable_http"] = "streamable_http"
     flow_search_service_name: str = "TianGong_LCA_Remote"
+    flow_search_tool_name: str = "Search_flows_Tool"
 
     tidas_base_url: HttpUrl = "http://192.168.1.140:9278/mcp"
     tidas_api_key: str | None = None
@@ -137,6 +138,9 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
                 "mcp_transport": flow_cfg.get("transport", overrides.get("mcp_transport")),
                 "flow_search_service_name": flow_cfg.get(
                     "service_name", overrides.get("flow_search_service_name")
+                ),
+                "flow_search_tool_name": flow_cfg.get(
+                    "tool_name", overrides.get("flow_search_tool_name")
                 ),
             }
         )
