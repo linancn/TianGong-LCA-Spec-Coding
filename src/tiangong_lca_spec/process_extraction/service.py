@@ -16,6 +16,7 @@ from .extractors import (
     ProcessClassifier,
     SectionExtractor,
 )
+from .tidas_mapping import build_tidas_process_dataset
 
 LOGGER = get_logger(__name__)
 
@@ -31,6 +32,7 @@ class ExtractionState(TypedDict, total=False):
     classification: list[dict[str, Any]]
     geography: dict[str, Any]
     process_blocks: list[dict[str, Any]]
+    process_data_set: dict[str, Any]
 
 
 class ProcessExtractionService:
@@ -74,7 +76,27 @@ class ProcessExtractionService:
         if not clean_text:
             raise ProcessExtractionError("Clean text missing for extraction")
         sections = self._section_extractor.run(clean_text)
-        state.update(sections)
+        process_dataset = sections.get("processDataSet")
+        if not isinstance(process_dataset, dict):
+            raise ProcessExtractionError("Section extraction must return `processDataSet`")
+
+        state["process_data_set"] = process_dataset
+        process_information = process_dataset.setdefault("processInformation", {})
+        administrative = process_dataset.setdefault("administrativeInformation", {})
+        modelling = process_dataset.setdefault("modellingAndValidation", {})
+        exchanges = process_dataset.get("exchanges", {}).get("exchange")
+        exchange_list: list[dict[str, Any]] = []
+        if isinstance(exchanges, list):
+            exchange_list = exchanges
+        elif exchanges:
+            exchange_list = [exchanges]
+
+        state["process_information"] = process_information
+        state["administrative_information"] = administrative
+        state["modelling_and_validation"] = modelling
+        state["exchange_list"] = exchange_list
+        if "notes" in sections:
+            state["notes"] = sections["notes"]
         return state
 
     def _classify_process(self, state: ExtractionState) -> ExtractionState:
@@ -83,7 +105,10 @@ class ProcessExtractionService:
             LOGGER.warning("process_extraction.missing_process_information")
             return state
         classification = self._classifier.run(process_info)
-        process_info.setdefault("classificationInformation", {})["classification"] = classification
+        data_info = process_info.setdefault("dataSetInformation", {})
+        classification_info = data_info.setdefault("classificationInformation", {})
+        classification_info["classification"] = classification
+        classification_info.setdefault("common:classification", {"common:class": classification})
         state["classification"] = classification
         return state
 
@@ -99,13 +124,47 @@ class ProcessExtractionService:
         return state
 
     def _finalize(self, state: ExtractionState) -> ExtractionState:
+        process_information = state.get("process_information") or {}
+        administrative_information = state.get("administrative_information") or {}
+        modelling_and_validation = state.get("modelling_and_validation") or {}
+        exchange_list = state.get("exchange_list") or []
+        notes = state.get("notes")
+
+        process_dataset = state.get("process_data_set")
+        if not isinstance(process_dataset, dict):
+            raise ProcessExtractionError("Process dataset missing at finalize step")
+
+        normalized_dataset = build_tidas_process_dataset(
+            process_dataset,
+            notes=notes,
+        )
+        state["process_data_set"] = normalized_dataset
+        state["process_information"] = normalized_dataset.get("processInformation", {})
+        state["administrative_information"] = normalized_dataset.get(
+            "administrativeInformation", {}
+        )
+        state["modelling_and_validation"] = normalized_dataset.get(
+            "modellingAndValidation", {}
+        )
+
+        exchanges = normalized_dataset.get("exchanges", {}).get("exchange")
+        if isinstance(exchanges, list):
+            exchange_block = {"exchange": exchanges}
+        elif exchanges:
+            exchange_block = {"exchange": [exchanges]}
+        else:
+            exchange_block = {"exchange": exchange_list}
+
+        state["exchange_list"] = exchange_block.get("exchange", [])
+
         block = {
-            "process_information": state.get("process_information", {}),
-            "administrative_information": state.get("administrative_information", {}),
-            "modelling_and_validation": state.get("modelling_and_validation", {}),
-            "exchange_list": state.get("exchange_list") or [],
-            "notes": state.get("notes"),
+            "process_information": normalized_dataset.get("processInformation", {}),
+            "administrative_information": normalized_dataset.get("administrativeInformation", {}),
+            "modelling_and_validation": normalized_dataset.get("modellingAndValidation", {}),
+            "exchange_list": exchange_block.get("exchange") or [],
+            "notes": notes,
+            "processDataSet": normalized_dataset,
+            "exchanges": exchange_block,
         }
-        block["exchanges"] = {"exchange": block["exchange_list"]}
         state["process_blocks"] = [block]
         return state

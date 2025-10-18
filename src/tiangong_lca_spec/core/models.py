@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
 
@@ -42,9 +42,25 @@ class ProcessDataset:
     modelling_and_validation: dict[str, Any]
     administrative_information: dict[str, Any]
     exchanges: list[Mapping[str, Any]] = field(default_factory=list)
+    notes: Any | None = None
+    process_data_set: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        from tiangong_lca_spec.process_extraction.tidas_mapping import (
+            build_tidas_process_dataset,
+        )
+
+        base_dataset = self.process_data_set or {
+            "processInformation": self.process_information,
+            "modellingAndValidation": self.modelling_and_validation,
+            "administrativeInformation": self.administrative_information,
+            "exchanges": {"exchange": [dict(exchange) for exchange in self.exchanges]},
+        }
+
+        return build_tidas_process_dataset(
+            base_dataset,
+            notes=self.notes,
+        )
 
 
 @dataclass(slots=True)

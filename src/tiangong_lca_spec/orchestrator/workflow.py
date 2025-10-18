@@ -116,7 +116,8 @@ class WorkflowOrchestrator:
         matched_lookup: dict[str, list[FlowCandidate]] = {}
         origin_exchanges: dict[str, list[dict[str, Any]]] = {}
         for block in blocks:
-            alignment = self._flow_alignment.align_exchanges(block, clean_text)
+            process_dataset = block.get("processDataSet", {})
+            alignment = self._flow_alignment.align_exchanges(process_dataset, clean_text)
             alignment_results.append(alignment)
             process_name = alignment.get("process_name") or _extract_process_name_from_block(block)
             matched_lookup[process_name] = alignment.get("matched_flows", [])
@@ -160,6 +161,32 @@ class WorkflowOrchestrator:
 
 
 def _extract_process_name_from_block(block: dict[str, Any]) -> str:
-    process_info = block.get("process_information", {})
+    if "processDataSet" in block and isinstance(block["processDataSet"], dict):
+        process_info = block["processDataSet"].get("processInformation", {})
+    else:
+        process_info = block.get("process_information", {})
     data_info = process_info.get("dataSetInformation", {})
-    return data_info.get("name") or block.get("process_name") or "unknown_process"
+    name_block = data_info.get("name")
+    resolved = _resolve_base_name(name_block)
+    if resolved:
+        return resolved
+    return block.get("process_name") or "unknown_process"
+
+
+def _resolve_base_name(name_block: Any) -> str | None:
+    if isinstance(name_block, dict):
+        base = name_block.get("baseName")
+        if isinstance(base, dict):
+            text = base.get("#text")
+            if text:
+                return text
+        elif base:
+            return str(base)
+        text = name_block.get("#text")
+        if text:
+            return str(text)
+    elif isinstance(name_block, list) and name_block:
+        return _resolve_base_name(name_block[0])
+    elif isinstance(name_block, str):
+        return name_block
+    return None

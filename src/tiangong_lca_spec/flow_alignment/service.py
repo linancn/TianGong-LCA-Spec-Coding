@@ -106,7 +106,7 @@ class FlowAlignmentService:
 
     def _iter_exchanges(self, process_dataset: dict[str, Any]) -> Iterable[dict[str, Any]]:
         exchanges_block = process_dataset.get("exchanges") or {}
-        exchanges = exchanges_block.get("exchange") or process_dataset.get("exchange_list") or []
+        exchanges = exchanges_block.get("exchange") or []
         if isinstance(exchanges, list):
             return exchanges
         return [exchanges]
@@ -121,7 +121,11 @@ class FlowAlignmentService:
         data_info = (
             process_info.get("dataSetInformation") or process_info.get("data_set_information") or {}
         )
-        return data_info.get("name") or process_dataset.get("process_name")
+        name_block = data_info.get("name")
+        resolved = _resolve_base_name(name_block)
+        if resolved:
+            return resolved
+        return process_dataset.get("process_name") or "unknown_process"
 
     @staticmethod
     def _safe_exchange_name(exchange: dict[str, Any]) -> str:
@@ -140,3 +144,22 @@ def align_exchanges(process_dataset: dict[str, Any], paper_md: str | None = None
         return service.align_exchanges(process_dataset, paper_md)
     finally:
         service.close()
+
+
+def _resolve_base_name(name_block: Any) -> str | None:
+    if isinstance(name_block, dict):
+        base = name_block.get("baseName")
+        if isinstance(base, dict):
+            text = base.get("#text")
+            if text:
+                return text
+        elif base:
+            return str(base)
+        text = name_block.get("#text")
+        if text:
+            return str(text)
+    elif isinstance(name_block, list) and name_block:
+        return _resolve_base_name(name_block[0])
+    elif isinstance(name_block, str):
+        return name_block
+    return None

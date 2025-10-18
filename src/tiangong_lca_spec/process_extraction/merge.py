@@ -8,6 +8,25 @@ from typing import Any, Iterable
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 
 
+def _resolve_base_name(name_block: Any) -> str | None:
+    if isinstance(name_block, dict):
+        base = name_block.get("baseName")
+        if isinstance(base, dict):
+            text = base.get("#text")
+            if text:
+                return text
+        elif base:
+            return str(base)
+        text = name_block.get("#text")
+        if text:
+            return str(text)
+    elif isinstance(name_block, list) and name_block:
+        return _resolve_base_name(name_block[0])
+    elif isinstance(name_block, str):
+        return name_block
+    return None
+
+
 def merge_results(
     process_blocks: list[dict[str, Any]],
     matched_lookup: dict[str, list[FlowCandidate]],
@@ -15,8 +34,16 @@ def merge_results(
 ) -> list[ProcessDataset]:
     datasets: list[ProcessDataset] = []
     for block in process_blocks:
-        process_name = _extract_process_name(block)
-        exchanges = origin_exchanges.get(process_name) or block.get("exchange_list") or []
+        process_dataset = block.get("processDataSet")
+        if not isinstance(process_dataset, dict):
+            raise ValueError("Expected `processDataSet` in process block")
+        process_information = process_dataset.get("processInformation", {})
+        modelling = process_dataset.get("modellingAndValidation", {})
+        administrative = process_dataset.get("administrativeInformation", {})
+        base_exchanges = process_dataset.get("exchanges", {}).get("exchange") or []
+
+        process_name = _extract_process_name_from_dataset(process_dataset, block)
+        exchanges = origin_exchanges.get(process_name) or base_exchanges
         exchanges_list = _ensure_list(exchanges)
         merged_exchanges = _merge_exchange_candidates(
             exchanges_list,
@@ -24,19 +51,28 @@ def merge_results(
         )
 
         dataset = ProcessDataset(
-            process_information=block.get("process_information", {}),
-            modelling_and_validation=block.get("modelling_and_validation", {}),
-            administrative_information=block.get("administrative_information", {}),
+            process_information=process_information,
+            modelling_and_validation=modelling,
+            administrative_information=administrative,
             exchanges=merged_exchanges,
+            notes=block.get("notes"),
+            process_data_set=process_dataset,
         )
         datasets.append(dataset)
     return datasets
 
 
-def _extract_process_name(block: dict[str, Any]) -> str:
-    process_info = block.get("process_information", {})
+def _extract_process_name_from_dataset(
+    process_dataset: dict[str, Any],
+    block: dict[str, Any],
+) -> str:
+    process_info = process_dataset.get("processInformation", {})
     dataset_info = process_info.get("dataSetInformation", {})
-    return dataset_info.get("name") or block.get("process_name", "unknown_process")
+    name_block = dataset_info.get("name")
+    resolved = _resolve_base_name(name_block)
+    if resolved:
+        return resolved
+    return block.get("process_name", "unknown_process")
 
 
 def _merge_exchange_candidates(
