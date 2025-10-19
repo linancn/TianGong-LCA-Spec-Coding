@@ -145,7 +145,7 @@ class WorkflowResult:
 2. 将 MCP/TIDAS 客户端抽象为接口或协议，实现本地 Mock 以支持 CI 离线测试。
 3. 按需扩展缓存、断点恢复、指标上报等横切能力，并考虑将 `WorkflowResult` 与日志落盘至 `artifacts/`。
 
-## 11. 维护与检查要求
+## 11. 维护与检查要求（必须要做）
 - **静态检查 / 格式化**：每次代码更新后必须执行
   ```bash
   uv run ruff check
