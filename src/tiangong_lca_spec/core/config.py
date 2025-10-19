@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     tidas_service_name: str = "Tidas_Data_Validate"
 
     request_timeout: float = 30.0
+    flow_search_timeout: float | None = None
+    tidas_timeout: float | None = None
     max_retries: int = 3
     retry_backoff: float = 0.5
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -93,6 +95,9 @@ class Settings(BaseSettings):
         headers = _authorization_header(self.mcp_api_key)
         if headers:
             config["headers"] = headers
+        timeout = self.flow_search_timeout or self.request_timeout
+        if timeout and timeout > 0:
+            config["timeout"] = float(timeout)
         return config
 
     def tidas_mcp_config(self) -> dict[str, Any]:
@@ -104,6 +109,9 @@ class Settings(BaseSettings):
         headers = _authorization_header(self.tidas_api_key)
         if headers:
             config["headers"] = headers
+        timeout = self.tidas_timeout or self.request_timeout
+        if timeout and timeout > 0:
+            config["timeout"] = float(timeout)
         return config
 
     def mcp_service_configs(self) -> dict[str, dict[str, Any]]:
@@ -203,6 +211,9 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
         api_key = _sanitize_api_key(flow_cfg.get("api_key") or flow_cfg.get("authorization"))
         if api_key is not None:
             overrides["mcp_api_key"] = api_key
+        timeout_value = _coerce_float(flow_cfg.get("timeout"))
+        if timeout_value is not None:
+            overrides["flow_search_timeout"] = timeout_value
 
     tidas_cfg = _extract_section(data, "tidas_data_validate", "tidas", "validation")
     if tidas_cfg:
@@ -219,6 +230,9 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
         api_key = _sanitize_api_key(tidas_cfg.get("api_key") or tidas_cfg.get("authorization"))
         if api_key is not None:
             overrides["tidas_api_key"] = api_key
+        timeout_value = _coerce_float(tidas_cfg.get("timeout"))
+        if timeout_value is not None:
+            overrides["tidas_timeout"] = timeout_value
 
     langsmith_cfg = _extract_section(data, "LANGSMITH", "langsmith")
     if langsmith_cfg:
@@ -369,6 +383,22 @@ def _coerce_bool(value: Any) -> bool:
 
 def _bool_to_env(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
 
 
 def _stringify_env_value(value: Any) -> str:

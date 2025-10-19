@@ -1,568 +1,1113 @@
 {
   "process_datasets": [
     {
-      "process_information": {
-        "name": "Comparative Environmental Assessment of Methanol Production Technologies",
-        "processes_compared": [
-          "Coal Gasification to Methanol (CGTM)",
-          "Coal Coking to Methanol (COTM)",
-          "Natural Gas to Methanol (NGTM)",
-          "Biomass to Methanol (BOTM)",
-          "CO2 Capture to Methanol (CCTM)"
-        ],
-        "boundaries": "Cradle-to-gate (from raw material extraction to methanol production), infrastructure excluded, solid waste (excluding catalyst) to landfill, wastewater processed and reused, flue gases flared or recycled",
-        "functional_unit": "1 tonne of methanol produced",
-        "system_description": {
-          "CGTM": "Four stages: coal mining & cleaning, coal gasification (Texaco slurry, water-gas shift, Rectisol purification, sulfur recovery), methanol synthesis (Cu/ZnO/Al2O3 catalyst), methanol distillation.",
-          "COTM": "Coal mining & handling, coke production (pyrolysis ~1100°C, crude coke oven gas, pollutant removal, reforming reactor), compression, methanol synthesis & distillation.",
-          "NGTM": "Natural gas extraction, acid gas removal, steam reforming, compression, methanol synthesis, recycled syngas, crude methanol distillation.",
-          "BOTM": "Biomass pretreatment (granulation/drying), gasification, WGS to adjust CO/H2, acid gas removal, syngas compression, methanol synthesis, crude methanol refining.",
-          "CCTM": "Water electrolysis for H2 (clean energy), CO2 capture (MEA process, Huaneng demo unit), CO2 electroreduction to methanol, separation, and purification."
-        },
-        "co_products_and_allocation": "Coke and coke oven gas in COTM are handled via energy allocation (allocation factor for coke oven gas: 11.4%).",
-        "excluded_processes": "Post-production use-phase, infrastructure, inputs <1% (with a maximum cutoff 3% per process), waste catalyst replacements.",
-        "classificationInformation": {
-          "classification": [
-            {
-              "@level": 1,
-              "@classId": "C",
-              "#text": "Manufacturing"
+      "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+      "@xmlns": "http://lca.jrc.it/ILCD/Process",
+      "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+      "@version": "1.1.0",
+      "@locations": "../ILCDLocations.xml",
+      "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Process ../../schemas/ILCD_ProcessDataSet.xsd",
+      "processInformation": {
+        "dataSetInformation": {
+          "common:UUID": "901cfb60-5cea-446a-9c24-253f8defb7f8",
+          "name": {
+            "baseName": {
+              "@xml:lang": "en",
+              "#text": "Methanol production from coal gasification (China, cradle-to-gate)"
             },
-            {
-              "@level": 2,
-              "@classId": "20",
-              "#text": "Manufacture of chemicals and chemical products"
+            "baseName_short": "CGTM methanol",
+            "nameFormat": "short",
+            "treatmentStandardsRoutes": {
+              "@xml:lang": "en",
+              "#text": "Not specified"
             },
-            {
-              "@level": 3,
-              "@classId": "201",
-              "#text": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms"
-            },
-            {
-              "@level": 4,
-              "@classId": "2011",
-              "#text": "Manufacture of basic chemicals"
+            "mixAndLocationTypes": {
+              "@xml:lang": "en",
+              "#text": "Unknown mix"
             }
-          ]
+          },
+          "common:synonyms": [
+            "Coal to methanol",
+            "CGTM"
+          ],
+          "classificationInformation": {
+            "classificationItem": [
+              {
+                "classificationSystem": "ILCD Process classification",
+                "item": "Energy carrier production / Chemical fuel production / Methanol"
+              }
+            ],
+            "classification": [
+              {
+                "@level": "1",
+                "@classId": "C",
+                "#text": "Manufacturing"
+              },
+              {
+                "@level": "2",
+                "@classId": "20",
+                "#text": "Manufacture of chemicals and chemical products"
+              },
+              {
+                "@level": "3",
+                "@classId": "201",
+                "#text": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms"
+              },
+              {
+                "@level": "4",
+                "@classId": "2011",
+                "#text": "Manufacture of basic chemicals"
+              }
+            ],
+            "common:classification": {
+              "common:class": [
+                {
+                  "@level": "1",
+                  "@classId": "C",
+                  "#text": "Manufacturing"
+                },
+                {
+                  "@level": "2",
+                  "@classId": "20",
+                  "#text": "Manufacture of chemicals and chemical products"
+                },
+                {
+                  "@level": "3",
+                  "@classId": "201",
+                  "#text": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms"
+                },
+                {
+                  "@level": "4",
+                  "@classId": "2011",
+                  "#text": "Manufacture of basic chemicals"
+                }
+              ]
+            }
+          },
+          "common:generalComment": "Life cycle inventory and assessment of methanol production via coal gasification (CGTM) in China with cradle-to-gate boundary. Inventory represents average Chinese technology and grid mix circa 2022. System covers raw coal mining and processing, syngas production, syngas purification, methanol synthesis, and methanol distillation. Excludes facility and infrastructure, with solid waste delivery to landfill and processed wastewater. Waste catalyst is omitted (3–5 year replacement out of boundary). Data from national statistics, industrial projects, eFootprint database, and literature sources.",
+          "identifierOfSubDataSet": "901cfb60-5cea-446a-9c24-253f8defb7f8",
+          "common:mathematicalRelationsOrReasonsForDataDerivation": {
+            "common:other": "Not specified"
+          },
+          "scope": {
+            "defaultAllocationMethod": "Not specified"
+          },
+          "dataSetOwner": {
+            "nameOfDataSetOwner": {
+              "@xml:lang": "en",
+              "#text": "Unknown owner"
+            }
+          }
+        },
+        "quantitativeReference": {
+          "@type": "Reference flow(s)",
+          "referenceToReferenceFlow": "1",
+          "functionalUnitOrOther": {
+            "@xml:lang": "en",
+            "#text": "1 tonne methanol at refinery gate"
+          }
+        },
+        "time": {
+          "common:referenceYear": 2022,
+          "common:timeRepresentativenessDescription": "Average data centered on the Chinese chemical industry for the year 2022. Data sources span 2008-2022; assumed to be representative for this period.",
+          "common:dataSetValidUntil": 2027
         },
         "geography": {
-          "code": "CN",
-          "description": "Processes for the comparative environmental assessment of methanol production—Coal Gasification to Methanol (CGTM), Coal Coking to Methanol (COTM), Natural Gas to Methanol (NGTM), Biomass to Methanol (BOTM), and CO2 Capture to Methanol (CCTM)—are described for China (ISO 3166-1 alpha-2: CN). Contextual process details (such as CO2 capture via Huaneng demonstration unit and Chinese standard coal gasification/coking technologies) indicate China as the region."
+          "locationOfOperationSupplyOrProduction": {
+            "@location": "CN"
+          }
+        },
+        "technology": {
+          "technologyDescriptionAndIncludedProcesses": {
+            "@xml:lang": "en",
+            "#text": "Process includes: (1) Hard coal mining, washing, and processing; (2) Coal water slurry gasification (Texaco technology) with air separation for pure oxygen supply; (3) Water-gas shift for H/C adjustment; (4) Rectisol purification of syngas and sulfur recovery (Super-clause process); (5) Methanol synthesis via Cu/ZnO/Al2O3 catalyst; (6) Distillation of crude methanol; produces purified methanol as output. Wastewater is treated and repurposed; solid wastes (except catalyst) landfilled. Steel, catalyst, infrastructure are excluded. Process energy uses Chinese average electricity mix."
+          },
+          "technologicalApplicability": {
+            "@xml:lang": "en",
+            "#text": "Modern large-scale methanol plants in China; process applies to current industrial-scale coal gasification with integrated emissions controls."
+          },
+          "referenceToIncludedProcesses": {
+            "@type": "process",
+            "@refObjectId": "3877c5a4-c8ca-4dd1-a2d6-0409860729ff",
+            "@uri": "https://tiangong.earth/process/3877c5a4-c8ca-4dd1-a2d6-0409860729ff",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Included process placeholder"
+            }
+          },
+          "referenceToTechnologyPictogramme": {
+            "@type": "source",
+            "@refObjectId": "50c7f41d-6672-4b89-9b49-22fbca929ac4",
+            "@uri": "https://tiangong.earth/source/50c7f41d-6672-4b89-9b49-22fbca929ac4",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Technology pictogram placeholder"
+            }
+          },
+          "referenceToTechnologyFlowDiagrammOrPicture": {
+            "@type": "source",
+            "@refObjectId": "b98ac924-f522-4f5e-bda3-a7a6f7675ec7",
+            "@uri": "https://tiangong.earth/source/b98ac924-f522-4f5e-bda3-a7a6f7675ec7",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Technology flow diagram placeholder"
+            }
+          },
+          "common:other": "Generated placeholder"
         }
       },
-      "modelling_and_validation": {
-        "LCIA_methods": [
-          {
-            "name": "CML2001",
-            "levels": "Midpoint",
-            "impact_categories": [
-              "Global Warming Potential (GWP)",
-              "Abiotic Depletion Potential (ADP)",
-              "Eutrophication Potential (EP)",
-              "Human Toxicity Potential (HTP)",
-              "Ozone Depletion Potential (ODP)",
-              "Photochemical Oxidation Potential (POCP)",
-              "Freshwater Aquatic Ecotoxicity Potential (FAETP)",
-              "Marine Aquatic Ecotoxicity Potential (MAETP)",
-              "Terrestrial Ecotoxicity Potential (TETP)",
-              "Acidification Potential (AP)"
-            ]
-          },
-          {
-            "name": "Eco-indicator 99",
-            "levels": "Endpoint",
-            "impact_categories": [
-              "Ecosystem Quality (Land conversion, Acidification/Eutrophication, Ecotoxicity)",
-              "Human Health (Climate Change, Radiation, Cancer ecotoxicity, Inorganic/Organic Respirable)"
-            ],
-            "damage_units": {
-              "Ecosystem Quality": "PDF·m²·year",
-              "Human Health": "DALY"
+      "modellingAndValidation": {
+        "LCIMethodAndAllocation": {
+          "typeOfDataSet": "Unit process, black box",
+          "LCIMethodPrinciple": "Attributional",
+          "LCIMethodApproaches": "Allocation - physical causality"
+        },
+        "dataSourcesTreatmentAndRepresentativeness": {
+          "percentageSupplyOrProductionCovered": "0.95",
+          "referenceToDataSource": [
+            {
+              "@type": "source",
+              "@refObjectId": "82f6cb41-5086-48ab-872d-d25a2aa663ef",
+              "@uri": "https://tiangong.earth/source/82f6cb41-5086-48ab-872d-d25a2aa663ef",
+              "@version": "01.00.000",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Not specified"
+              }
+            }
+          ]
+        },
+        "completeness": {
+          "completenessProductModel": "No statement"
+        },
+        "validation": {
+          "review": {
+            "@type": "Not reviewed",
+            "scope": {
+              "@name": "Goal and scope definition",
+              "method": {
+                "@name": "Documentation"
+              }
             }
           }
-        ],
-        "software": "eFootprint",
-        "data_modelling": {
-          "sources": "Mix of actual measurements, literature, public statistics, eFootprint database modeled for Chinese context.",
-          "electricity_profile": "Chinese grid (2022): 66.5% coal, 15.3% hydro, 8.6% wind, 4.8% solar, 4.7% nuclear for all routes except CCTM hydrogen (100% renewables).",
-          "allocation": "Energy allocation for co-products, especially in COTM.",
-          "cut-off_criteria": "Inputs <1% of material/energy flows omitted, maximum 3% per process.",
-          "sensitivity_analysis": "±10% input parameter variation; settings with sensitivity <0.02% excluded; electricity is the most sensitive parameter.",
-          "validation": "Results compared at midpoint and endpoint; simulated/actual data triangulated for legitimacy."
         },
-        "limitations": [
-          "Early-stage/experimental data for CCTM and some BOTM stages",
-          "Exclusion of infrastructure and use-phase impacts",
-          "Assumes regional/literature averages for some inventory items"
-        ]
-      },
-      "administrative_information": {
-        "authors": null,
-        "year": null,
-        "software_used": "eFootprint",
-        "data_sources": [
-          "Public plant and project data",
-          "Scholarly literature",
-          "Simulated data for unavailable parameters",
-          "eFootprint database (secondary energy, China resource environment models)",
-          "Chinese Cleaner Production Standard for coal mining and processing",
-          "Statistical bulletin (methane leakage, National Bureau of Statistics of China)",
-          "IGCC plant project (NETL, 2010)",
-          "Shanghai Coking and Chemical Company",
-          "Larson and Ren 2003 (simulation data)",
-          "Methanol plants (China National Offshore Oil Corporation Bohai)",
-          "Huaneng Group CO2 capture demo project (Beijing)",
-          "ChemCAD software for CCTM modeling"
-        ],
-        "standards_applied": {
-          "LCA": [
-            "ISO, 2006a",
-            "ISO, 2006b"
-          ]
-        }
-      },
-      "exchanges": [
-        {
-          "CGTM": {
-            "inputs": [
-              {
-                "Electricity": "53.67 kWh"
-              },
-              {
-                "Fresh water": "0.69 t"
-              },
-              {
-                "Hard coal": "1.533 t"
-              },
-              {
-                "Oil": "1.53 kg"
-              },
-              {
-                "HP-steam": "1.77 t"
-              },
-              {
-                "Air": "4348.2 kg"
-              },
-              {
-                "Water": "134.01 t"
-              },
-              {
-                "Ammonia": "0.03 t"
-              },
-              {
-                "NaOH (10%)": "1.0 t"
-              },
-              {
-                "Synthetic gas": "1.23 t"
-              },
-              {
-                "Electricity (methanol production)": "825 kWh"
-              },
-              {
-                "Water (methanol production)": "14.2 kg"
+        "complianceDeclarations": {
+          "compliance": {
+            "common:referenceToComplianceSystem": {
+              "@type": "source",
+              "@refObjectId": "71d81a55-286a-41e3-b8e3-e5836f719e20",
+              "@uri": "https://tiangong.earth/source/71d81a55-286a-41e3-b8e3-e5836f719e20",
+              "@version": "01.00.000",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Compliance system"
               }
-            ],
-            "outputs": [
-              {
-                "Hard coal": "1.38 t"
-              },
-              {
-                "Gangue": "153 kg"
-              },
-              {
-                "Methane": "7.64 kg"
-              },
-              {
-                "Synthetic gas": "1.23 t"
-              },
-              {
-                "Slag": "0.15 t"
-              },
-              {
-                "MP-N2": "1523.7 kg"
-              },
-              {
-                "CO2": "1.74 kg"
-              },
-              {
-                "Sulphur": "30 kg"
-              },
-              {
-                "Methanol": "1.00 t"
-              },
-              {
-                "Flue gas": "0.07 t"
-              },
-              {
-                "Effluents": "0.266 t"
-              }
-            ]
-          },
-          "COTM": {
-            "inputs": [
-              {
-                "Coal": "20.3 kg"
-              },
-              {
-                "Electricity": "36.61 kWh"
-              },
-              {
-                "Fresh water": "0.76 t"
-              },
-              {
-                "Kerosene": "0.42 kg"
-              },
-              {
-                "Flotation reagents": "1.8 kg"
-              },
-              {
-                "Washed coal": "1324 kg"
-              },
-              {
-                "COG for heating": "215.80 Nm3"
-              },
-              {
-                "Compressed air": "5.10 Nm3"
-              },
-              {
-                "Electricity (coke production)": "163 MJ"
-              },
-              {
-                "Washing oil": "0.43 kg"
-              },
-              {
-                "Sodium hydroxide": "0.003 kg"
-              },
-              {
-                "Low-pressure steam": "148 kg"
-              },
-              {
-                "Sulfuric acid (aq, 98%)": "10 kg"
-              },
-              {
-                "Fresh water (coke production)": "741 kg"
-              },
-              {
-                "COG": "1968.66 Nm3"
-              },
-              {
-                "Electricity (methanol production)": "678.32 kWh"
-              },
-              {
-                "Medium-pressure steam": "2.25 t"
-              },
-              {
-                "Desalinated water": "1.14 t"
-              },
-              {
-                "Fresh water (methanol production)": "6.19 t"
-              }
-            ],
-            "outputs": [
-              {
-                "Washed coal": "1000 kg"
-              },
-              {
-                "Coal gangue": "200 kg"
-              },
-              {
-                "Methane": "3.42 kg"
-              },
-              {
-                "Coke": "1000 kg"
-              },
-              {
-                "Coke oven gas": "432.35 Nm3"
-              },
-              {
-                "Coal tar": "36 kg"
-              },
-              {
-                "Ammonium sulfate": "13 kg"
-              },
-              {
-                "Raw benzene": "11 kg"
-              },
-              {
-                "Sulfur": "1 kg"
-              },
-              {
-                "Nitrogen oxides": "0.17 kg"
-              },
-              {
-                "Sulphur dioxide": "0.07 kg"
-              },
-              {
-                "Coke tar residue": "0.06 kg"
-              },
-              {
-                "Dust": "0.03 kg"
-              },
-              {
-                "Benzo{a}pyrene": "0.00022 kg"
-              },
-              {
-                "Coal tar pitch residue": "0.0001 kg"
-              },
-              {
-                "Methanol": "1.00 t"
-              },
-              {
-                "Low-pressure steam": "938.40 kg"
-              },
-              {
-                "Exhausted gas": "676.3 m3"
-              }
-            ]
-          },
-          "NGTM": {
-            "inputs": [
-              {
-                "Hard coal": "47.39 kg"
-              },
-              {
-                "Oil": "11.97 kg"
-              },
-              {
-                "Iron": "0.05 kg"
-              },
-              {
-                "Natural gas": "617 Nm3"
-              },
-              {
-                "Fuel natural gas": "20.11 kg"
-              },
-              {
-                "Electricity": "576.40 kWh"
-              },
-              {
-                "Oxygen": "142 Nm3"
-              },
-              {
-                "Desalinated water": "3.60 t"
-              },
-              {
-                "Fresh water": "11.00 t"
-              },
-              {
-                "Sodium hydroxide": "0.20 kg"
-              },
-              {
-                "Trisodium phosphate": "0.15 kg"
-              }
-            ],
-            "outputs": [
-              {
-                "Natural gas": "617 Nm3"
-              },
-              {
-                "CO2": "153 kg"
-              },
-              {
-                "CH4": "5.44 kg"
-              },
-              {
-                "NOx": "0.48 kg"
-              },
-              {
-                "SOx": "0.39 kg"
-              },
-              {
-                "CO": "0.043 kg"
-              },
-              {
-                "PM": "0.025 kg"
-              },
-              {
-                "Methanol": "1.00 t"
-              }
-            ]
-          },
-          "BOTM": {
-            "inputs": [
-              {
-                "Biomass": "1066.7 kg"
-              },
-              {
-                "Diesel": "0.68 kg"
-              },
-              {
-                "Electricity": "21.10 kWh"
-              },
-              {
-                "Oxygen": "800.40 kg"
-              },
-              {
-                "Boiler water": "2128.97 kg"
-              },
-              {
-                "Crude oil": "20.10 kg"
-              },
-              {
-                "Fuel oil": "0.41 kg"
-              },
-              {
-                "Gasoline": "5.58 kg"
-              },
-              {
-                "Diesel (continue)": "3.76 kg"
-              },
-              {
-                "Hydrogen": "136.11 kg"
-              },
-              {
-                "CO": "874.95 kg"
-              },
-              {
-                "CO2": "34.3 kg"
-              },
-              {
-                "Electricity (methanol production)": "217.40 kWh"
-              },
-              {
-                "Water": "10.80 t"
-              },
-              {
-                "Steam": "0.80 t"
-              }
-            ],
-            "outputs": [
-              {
-                "Biomass": "1066.7 kg"
-              },
-              {
-                "Steam": "0.8 t"
-              },
-              {
-                "CO": "874.95 kg"
-              },
-              {
-                "CO2": "34.30 kg"
-              },
-              {
-                "Methanol": "1.00 t"
-              }
-            ]
-          },
-          "CCTM": {
-            "inputs": [
-              {
-                "Deionized water": "2.4 t"
-              },
-              {
-                "Electricity for electrolysis (Bio-IGCC)": "9388.2 kWh"
-              },
-              {
-                "Electricity for electrolysis (PV)": "6124.5 kWh"
-              },
-              {
-                "Electricity for compression (PV)": "793.09 kWh"
-              },
-              {
-                "Recycling water": "89.37 t"
-              },
-              {
-                "CO2 (air in)": "0.91 t"
-              },
-              {
-                "O2 (air in)": "347.61 t"
-              },
-              {
-                "N2 (air in)": "1148.03 t"
-              },
-              {
-                "H2O (air in)": "14.81 t"
-              },
-              {
-                "Natural gas for gas turbine": "0.04 t"
-              },
-              {
-                "Natural gas for calciner": "0.08 t"
-              },
-              {
-                "CaCO3 for preparation": "3.93 t"
-              },
-              {
-                "Water": "3.62 t"
-              },
-              {
-                "KOH, K2CO3 for CO2 adsorber": "2342.31 t"
-              },
-              {
-                "O2 for calcine": "0.34 t"
-              },
-              {
-                "N2 for calcine": "0.02 t"
-              },
-              {
-                "Hydrogen": "220.6 kg"
-              },
-              {
-                "CO2": "1617.4 kg"
-              },
-              {
-                "Electricity (methanol synthesis)": "271.4 kWh"
-              },
-              {
-                "Water (methanol synthesis)": "10.8 t"
-              },
-              {
-                "Steam (methanol synthesis)": "0.8 t"
-              }
-            ],
-            "outputs": [
-              {
-                "Hydrogen": "220.6 kg"
-              },
-              {
-                "Oxygen": "1764.71 kg"
-              },
-              {
-                "CO2 (air out)": "0.24 t"
-              },
-              {
-                "O2 (air out)": "348.39 t"
-              },
-              {
-                "N2 (air out)": "1150.63 t"
-              },
-              {
-                "H2O (air out)": "18.21 t"
-              },
-              {
-                "CO2 (captured)": "1 t"
-              },
-              {
-                "O2 (captured)": "0.014 t"
-              },
-              {
-                "N2": "0.015 t"
-              },
-              {
-                "CaCO3": "0.02 t"
-              },
-              {
-                "Methanol": "1 t"
-              }
-            ]
+            },
+            "common:approvalOfOverallCompliance": "Not defined",
+            "common:nomenclatureCompliance": "Not defined",
+            "common:methodologicalCompliance": "Not defined",
+            "common:reviewCompliance": "Not defined",
+            "common:documentationCompliance": "Not defined",
+            "common:qualityCompliance": "Not defined"
           }
         }
-      ]
+      },
+      "administrativeInformation": {
+        "common:commissionerAndGoal": {
+          "common:intendedApplications": [
+            "Life cycle assessment study"
+          ],
+          "common:referenceToCommissioner": [
+            {
+              "@type": "contact",
+              "@refObjectId": "2363e14c-c35d-4dd4-9067-035e84ea281b",
+              "@uri": "https://tiangong.earth/contact/2363e14c-c35d-4dd4-9067-035e84ea281b",
+              "@version": "01.00.000",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Commissioning organisation"
+              }
+            }
+          ]
+        },
+        "dataEntryBy": {
+          "common:timeStamp": "2024-01-01T00:00:00Z",
+          "common:referenceToPersonOrEntityEnteringTheData": {
+            "@type": "contact",
+            "@refObjectId": "5b7361bb-bfd7-45dd-b4d1-8cfd3cb80736",
+            "@uri": "https://tiangong.earth/contact/5b7361bb-bfd7-45dd-b4d1-8cfd3cb80736",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Data entry"
+            }
+          },
+          "common:referenceToDataSetFormat": {
+            "@type": "documentation",
+            "@refObjectId": "f5827c4d-14a2-46ec-b54a-3110f2ec7606",
+            "@uri": "https://tiangong.earth/documentation/f5827c4d-14a2-46ec-b54a-3110f2ec7606",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "ILCD 1.1"
+            }
+          }
+        },
+        "publicationAndOwnership": {
+          "common:dataSetVersion": "01.000.001",
+          "common:permanentDataSetURI": "https://doi.org/10.1016/j.jclepro.2024.140041",
+          "common:referenceToOwnershipOfDataSet": {
+            "@type": "contact",
+            "@refObjectId": "af4d7328-e772-4ca2-9bb0-bc5d257c1cd3",
+            "@uri": "https://tiangong.earth/contact/af4d7328-e772-4ca2-9bb0-bc5d257c1cd3",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Unknown owner"
+            }
+          },
+          "common:copyright": "true",
+          "common:licenseType": "Other",
+          "common:accessRestrictions": "None",
+          "registrationAuthority": {
+            "name": {
+              "@xml:lang": "en",
+              "#text": "Tiangong LCA Registry"
+            }
+          },
+          "common:workflowAndPublicationStatus": "Working draft",
+          "common:referenceToUnchangedRepublication": {
+            "@type": "source",
+            "@refObjectId": "4c335181-36bd-422a-a632-f29406280ba1",
+            "@uri": "https://tiangong.earth/source/4c335181-36bd-422a-a632-f29406280ba1",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Original publication"
+            }
+          },
+          "common:referenceToRegistrationAuthority": {
+            "@type": "contact",
+            "@refObjectId": "d0dbb317-518a-499a-8789-9fd59efdb0a0",
+            "@uri": "https://tiangong.earth/contact/d0dbb317-518a-499a-8789-9fd59efdb0a0",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Registration authority"
+            }
+          },
+          "common:registrationNumber": "901cfb60-5cea-446a-9c24-253f8defb7f8"
+        },
+        "dataGenerator": {
+          "common:other": "Generated via Tiangong LCA automated workflow"
+        }
+      },
+      "exchanges": {
+        "exchange": [
+          {
+            "@dataSetInternalID": "1",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "2b6f66b6-6bbe-42c1-93cb-71b444499255",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/2b6f66b6-6bbe-42c1-93cb-71b444499255",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Sulphur, recovered"
+              }
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "30",
+            "resultingAmount": "30",
+            "dataDerivationTypeStatus": "Measured",
+            "exchangeName": "Sulphur, recovered"
+          },
+          {
+            "@dataSetInternalID": "2",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "edc70af0-57ba-484c-aa8c-4d313ba14580",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/edc70af0-57ba-484c-aa8c-4d313ba14580",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Hard coal, in ground"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.533",
+            "resultingAmount": "1.533",
+            "dataDerivationTypeStatus": "Measured",
+            "exchangeName": "Hard coal, in ground"
+          },
+          {
+            "@dataSetInternalID": "3",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "91fb7b1c-26d5-423d-a861-136db19245cb",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/91fb7b1c-26d5-423d-a861-136db19245cb",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Oil, crude"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.53",
+            "resultingAmount": "1.53",
+            "dataDerivationTypeStatus": "Measured",
+            "exchangeName": "Oil, crude"
+          },
+          {
+            "@dataSetInternalID": "4",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "2ee897b5-bd49-4f60-82ca-98372edfefb4",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/2ee897b5-bd49-4f60-82ca-98372edfefb4",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "MP-N2"
+              }
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "1523.7",
+            "resultingAmount": "1523.7",
+            "dataDerivationTypeStatus": "Estimated",
+            "exchangeName": "MP-N2"
+          },
+          {
+            "@dataSetInternalID": "5",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "23309797-25ed-4378-b3e7-4a368518d56e",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/23309797-25ed-4378-b3e7-4a368518d56e",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Water, process"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "134.01",
+            "resultingAmount": "134.01",
+            "dataDerivationTypeStatus": "Estimated",
+            "exchangeName": "Water, process"
+          }
+        ]
+      },
+      "LCIAResults": {
+        "LCIAResult": {
+          "meanAmount": "0.0",
+          "referenceToLCIAMethodDataSet": {
+            "@type": "method",
+            "@refObjectId": "fb61af3c-e2ca-4945-b914-7e0332ce9583",
+            "@uri": "https://tiangong.earth/method/fb61af3c-e2ca-4945-b914-7e0332ce9583",
+            "@version": "01.00.000",
+            "common:shortDescription": {
+              "@xml:lang": "en",
+              "#text": "Placeholder LCIA method"
+            }
+          }
+        },
+        "common:other": "Generated placeholder"
+      }
     }
   ],
   "alignment": [
     {
-      "process_name": null,
-      "matched_flows": [],
-      "unmatched_flows": [
+      "process_name": "Methanol production from coal gasification (China, cradle-to-gate)",
+      "matched_flows": [
         {
-          "base_name": "unknown_exchange",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": null
+          "uuid": "515ad0c8-5bea-4b8b-97cc-851b8450534f",
+          "base_name": "hard coal, coking coal",
+          "treatment_standards_routes": "washing and processing",
+          "mix_and_location_types": "production mix, in the coal washing plant",
+          "flow_properties": {
+            "flowProperty": [
+              {
+                "meanValue": "1.0",
+                "@dataSetInternalID": "0",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                  "common:shortDescription": {
+                    "#text": "Mass",
+                    "@xml:lang": "en"
+                  }
+                }
+              },
+              {
+                "meanValue": "26.377",
+                "@dataSetInternalID": "1",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200c9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
+                  "common:shortDescription": [
+                    {
+                      "#text": "Net calorific value",
+                      "@xml:lang": "en"
+                    },
+                    {
+                      "#text": "净热值, 低位热值",
+                      "@xml:lang": "zh"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "version": "01.01.000",
+          "general_comment": "Coking coal, also known as main coking coal, is a kind of bituminous coal with high degree of metamorphism, which has strong caking and coking properties. Its dry ash-free volatile Vdaf is generally 10 % to 28 %, and the maximum thickness of the resin layer is y ≤ 25mm. Coking coal can produce colloids with good thermal stability when heated, and coke with large lumpiness, less cracks, high crushing strength and wear resistance can be obtained when coking alone.",
+          "geography": null,
+          "classification": [
+            {
+              "#text": "Ores and minerals; electricity, gas and water",
+              "@level": "0",
+              "@classId": "1"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "1",
+              "@classId": "11"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "2",
+              "@classId": "110"
+            },
+            {
+              "#text": "Hard coal",
+              "@level": "3",
+              "@classId": "1101"
+            },
+            {
+              "#text": "Bituminous Coal",
+              "@level": "4",
+              "@classId": "11012"
+            },
+            {
+              "#text": "Coking coal",
+              "@level": "5",
+              "@classId": "11012.1"
+            }
+          ],
+          "reasoning": ""
+        },
+        {
+          "uuid": "c63c87ee-66a0-426e-a052-38ab3951f711",
+          "base_name": "hard coal, fat coal",
+          "treatment_standards_routes": "washing and processing",
+          "mix_and_location_types": "生产混合，在洗煤厂",
+          "flow_properties": {
+            "flowProperty": [
+              {
+                "meanValue": "1.0",
+                "@dataSetInternalID": "0",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                  "common:shortDescription": {
+                    "#text": "Mass",
+                    "@xml:lang": "en"
+                  }
+                }
+              },
+              {
+                "meanValue": "26.377",
+                "@dataSetInternalID": "1",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200c9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
+                  "common:shortDescription": [
+                    {
+                      "#text": "Net calorific value",
+                      "@xml:lang": "en"
+                    },
+                    {
+                      "#text": "净热值, 低位热值",
+                      "@xml:lang": "zh"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "version": "01.01.000",
+          "general_comment": "Fat coal is a kind of bituminous coal with moderate metamorphism. It is a kind of coking coal and has good cohesiveness. The dry ash-free base volatile Vdaf of fat coal is generally between 10 % and 37 %, the maximum thickness of the resin layer y is usually greater than 25 mm, and the Oya expansion degree b is greater than 150 % ( for bituminous coal with Vdaf greater than 28 %, b is greater than 220 % ). When the fat coal is heated, a large number of colloids can be produced. The coke produced when coking alone is good in melting, but there are more transverse cracks, and the coke root part has bee coke. The main use of fat coal is coking, and some high-ash and high-sulfur fat coal is also used for power generation. In coking, fat coal usually needs to be mixed with other coals to optimize the quality of coke.",
+          "geography": null,
+          "classification": [
+            {
+              "#text": "Ores and minerals; electricity, gas and water",
+              "@level": "0",
+              "@classId": "1"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "1",
+              "@classId": "11"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "2",
+              "@classId": "110"
+            },
+            {
+              "#text": "Hard coal",
+              "@level": "3",
+              "@classId": "1101"
+            },
+            {
+              "#text": "Bituminous Coal",
+              "@level": "4",
+              "@classId": "11012"
+            },
+            {
+              "#text": "Coking coal",
+              "@level": "5",
+              "@classId": "11012.1"
+            }
+          ],
+          "reasoning": ""
+        },
+        {
+          "uuid": "ec4b882e-3ec8-4756-9689-fa8760c16811",
+          "base_name": "hard coal, gas coal",
+          "treatment_standards_routes": "洗选加工处理",
+          "mix_and_location_types": "production mix, in the coal washing plant",
+          "flow_properties": {
+            "flowProperty": [
+              {
+                "meanValue": "1.0",
+                "@dataSetInternalID": "0",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                  "common:shortDescription": {
+                    "#text": "Mass",
+                    "@xml:lang": "en"
+                  }
+                }
+              },
+              {
+                "meanValue": "26.377",
+                "@dataSetInternalID": "1",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200c9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
+                  "common:shortDescription": [
+                    {
+                      "#text": "Net calorific value",
+                      "@xml:lang": "en"
+                    },
+                    {
+                      "#text": "净热值, 低位热值",
+                      "@xml:lang": "zh"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "version": "01.01.000",
+          "general_comment": "Gas coal is a less metamorphosed bituminous coal characterized by a high dry, ashless volatile matter content, usually greater than 28% to 37%. Gas coal is so called because it produces large quantities of gas and tar when heated in isolation from the air. It is mainly used for coking, but is also used as a power coal and for gasification.",
+          "geography": null,
+          "classification": [
+            {
+              "#text": "Ores and minerals; electricity, gas and water",
+              "@level": "0",
+              "@classId": "1"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "1",
+              "@classId": "11"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "2",
+              "@classId": "110"
+            },
+            {
+              "#text": "Hard coal",
+              "@level": "3",
+              "@classId": "1101"
+            },
+            {
+              "#text": "Bituminous Coal",
+              "@level": "4",
+              "@classId": "11012"
+            },
+            {
+              "#text": "Coking coal",
+              "@level": "5",
+              "@classId": "11012.1"
+            }
+          ],
+          "reasoning": ""
         }
       ],
-      "origin_exchanges": {}
+      "unmatched_flows": [
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 弱黏煤",
+          "general_comment": "弱黏煤的干燥无灰基挥发分(Vdaf)大于20%至37%，粘结指数(G)大于5至30。弱黏煤属于非炼焦煤，主要用作工业和民用燃料，也可用作气化原料。中国弱黏煤的灰分和硫分比较低，在炼焦配合煤中，当有足够量的强粘结性肥煤时，可以部分地配入弱粘煤，以降低焦炭中的灰分和硫分。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Raw gas",
+          "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "hard coal, gas coal",
+          "general_comment": "Gas coal is a less metamorphosed bituminous coal characterized by a high dry, ashless volatile matter content, usually greater than 28% to 37%. Gas coal is so called because it produces large quantities of gas and tar when heated in isolation from the air. It is mainly used for coking, but is also used as a power coal and for gasification.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Coal gas",
+          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 1/3焦煤",
+          "general_comment": "1/3焦煤是介于焦煤、肥煤和气煤之间的过渡煤种，具有中高挥发分的强粘结性煤。这种煤在单独炼焦时能够生成熔融性好、强度较高的焦炭。1/3焦煤的干燥无灰基挥发分(Vdaf)通常在28%至37%之间，粘结指数(G)大于65，胶质层最大厚度(y)小于或等于25mm。1/3焦煤由于其产量高，因此它主要用于炼焦和发电。此外，1/3焦煤的灰、硫含量和可选性通常要优于肥煤和焦煤，这也是1/3焦煤的一个优势。在炼焦特性上，1/3焦煤的焦炭性能如抗碎强度(M40)和耐磨强度(M10)虽然略逊于肥煤和焦煤，但比其他煤类更接近于优质焦煤，具有很好的结焦性能。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Sulphur, recovered",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 1/3焦煤",
+          "general_comment": "1/3焦煤是介于焦煤、肥煤和气煤之间的过渡煤种，具有中高挥发分的强粘结性煤。这种煤在单独炼焦时能够生成熔融性好、强度较高的焦炭。1/3焦煤的干燥无灰基挥发分(Vdaf)通常在28%至37%之间，粘结指数(G)大于65，胶质层最大厚度(y)小于或等于25mm。1/3焦煤由于其产量高，因此它主要用于炼焦和发电。此外，1/3焦煤的灰、硫含量和可选性通常要优于肥煤和焦煤，这也是1/3焦煤的一个优势。在炼焦特性上，1/3焦煤的焦炭性能如抗碎强度(M40)和耐磨强度(M10)虽然略逊于肥煤和焦煤，但比其他煤类更接近于优质焦煤，具有很好的结焦性能。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 1/2中黏煤",
+          "general_comment": "1/2中黏煤（1/2 medium caking coal）是一种中等粘结性的中高挥发分烟煤。它的干燥无灰基挥发分(Vdaf)范围从23号煤的大于20.0%至28.0%，到33号煤的大于28.0%至37.0%，粘结指数(G)范围从23号煤的大于30至50，到33号煤的大于33至50。这种煤介于气煤和弱粘煤之间，结焦性中等，可作为炼焦煤使用。在单独炼焦时，1/2中黏煤能生成一定强度的焦炭，因此可以作为配煤炼焦的原料。然而，粘结性较弱的1/2中黏煤单独炼焦时，生成的焦炭强度较差，粉焦率高，因此这种煤也常作为气化用煤或动力用煤，在配煤炼焦时也可适当配入。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 弱黏煤",
+          "general_comment": "弱黏煤的干燥无灰基挥发分(Vdaf)大于20%至37%，粘结指数(G)大于5至30。弱黏煤属于非炼焦煤，主要用作工业和民用燃料，也可用作气化原料。中国弱黏煤的灰分和硫分比较低，在炼焦配合煤中，当有足够量的强粘结性肥煤时，可以部分地配入弱粘煤，以降低焦炭中的灰分和硫分。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 气肥煤",
+          "general_comment": "气肥煤（gas-fat coal），也称为液肥煤，是一种挥发分和胶质层都很高的强粘结性肥煤类。它的炼焦性能介于肥煤和气煤之间，单独炼焦时能产生大量的气体和液体化学产品。气肥煤最适合于高温干馏制造煤气，也可用于炼焦配煤，以增加化学产品产率。根据中国煤炭分类国家标准，气肥煤的干燥无灰基挥发分(Vdaf)大于37%，胶质层最大厚度y大于25mm。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "hard coal, meager lean coal",
+          "general_comment": "Meager lean coal is a kind of bituminous coal, its dry ashless volatile fraction (Vdaf) is more than 10% to 20%, and the bond index (G) is more than 5 to 20. this kind of coal produces very few colloidal bodies when heated, and can't be smelted into lump coke alone, which belongs to the transition coal between coking coal and non-coking coal. Poor lean coal has poor coking property and produces a lot of coke powder when coking alone, but when mixed with other coals suitable for coking, it can be used as a coking coal and play the role of leaning agent. In addition, lean coal is also a good fuel for civil use and power, and can be used in power generation, power station boilers and civil fuel.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Coal gas",
+          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 瘦煤",
+          "general_comment": "瘦煤（Thin Coal）是一种变质程度较高的烟煤，具有较低的挥发分和中等的粘结性。它的干燥无灰基挥发分(Vdaf)通常在10%至20%之间，黏结指数(G)在20至65之间。瘦煤在加热时产生的胶质体较少，单独炼焦时，生成的焦炭块大、裂纹少，但熔融性较差，耐磨强度低。瘦煤主要用作炼焦煤，尤其在配煤炼焦中，它可以作为瘦化剂，与其他煤种混合使用，以提高焦炭的块度和减少裂纹。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Coal gas",
+          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 1/2中黏煤",
+          "general_comment": "1/2中黏煤（1/2 medium caking coal）是一种中等粘结性的中高挥发分烟煤。它的干燥无灰基挥发分(Vdaf)范围从23号煤的大于20.0%至28.0%，到33号煤的大于28.0%至37.0%，粘结指数(G)范围从23号煤的大于30至50，到33号煤的大于33至50。这种煤介于气煤和弱粘煤之间，结焦性中等，可作为炼焦煤使用。在单独炼焦时，1/2中黏煤能生成一定强度的焦炭，因此可以作为配煤炼焦的原料。然而，粘结性较弱的1/2中黏煤单独炼焦时，生成的焦炭强度较差，粉焦率高，因此这种煤也常作为气化用煤或动力用煤，在配煤炼焦时也可适当配入。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Gas oil",
+          "general_comment": "Gas oil refers to a fraction obtained by the fractional distillation of crude oil or other secondary processed oils in an oil refinery, with a boiling point range of 200-380°C. The gas oil distilled from the atmospheric tower is called atmospheric gas oil (AGO) or gas oil, and the gas oil obtained from vacuum distillation is called vacuum gas oil (VGO) or wax oil. It can be an intermediate distillate fuel containing certain heavy distillate oils for specific purposes.\n\nNote 1: This distillate oil can be used for blending vehicle gas oil, heating oil, and marine distillate fuel.\nNote 2: It refers to atmospheric gas oil (AGO) or vacuum gas oil (VGO) generally within the distillation range of 250°C to 500°C; VGO is also known as straight-run wax oil.\nNote 3: The once-used term: gas oil.  ",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "coke oven gas",
+          "general_comment": "Coke Oven Gas (COG) is a strong fuel produced during the manufacture of metallurgical coke by heating bituminous coal to temperatures of 900°C to 1000°C in a chamber from which air is excluded. It is less useful compared to other injected fuels in the lower part of the blast furnace. As a coking product, COG is a combustible gas produced simultaneously along with coke and tar. The main constituents are, by volume, about 50% hydrogen, 30% methane and 3% higher hydrocarbons, 7% carbon monoxide.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Raw gas",
+          "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Oil, crude",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Raw gas",
+          "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Producer gas",
+          "general_comment": "Producer gas: A fuel gas generated from solid fuels such as coal or biomass through gasification, typically used for heat and power generation. Its production involves the partial combustion of the material to a gaseous product that includes carbon monoxide, hydrogen, and nitrogen. Producer gas is often utilized within the same facility where it is produced, being a part of a production mix, and is available 'at plant' with no further treatment required after generation.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Copper catalyst",
+          "general_comment": "Copper catalysts play an important role in industrial settings, such as the water-gas shift reaction, partial oxidation of methanol, methanol synthesis from CO2, conversion of esters to alcohols, and selective hydrogenation of oils, among many others. Copper is a less active metal that does not combine with oxygen in dry air at room temperature.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Coal gas",
+          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methylamine",
+          "general_comment": "Methylamine is an organic compound. This colorless gas is a derivative of ammonia but with one hydrogen atom being replaced by a methyl group. It is the simplest primary amine. Methylamine is sold as a solution in methanol ethanol tetrahydrofuran or water or as the anhydrous gas in pressurized metal containers. It has a strong ammoniacal odor and is used especially in organic synthesis (as of dyes and insecticides).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methylamine",
+          "general_comment": "Methylamine is an organic compound with a formula of CH3NH2. This colorless gas is a derivative of ammonia, but with one hydrogen atom being replaced by a methyl group. It is the simplest primary amine. Methylamine is sold as a solution in methanol, ethanol, tetrahydrofuran, or water, or as the anhydrous gas in pressurized metal containers. It is used especially in organic synthesis (as of dyes and insecticides).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "MP-N2",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Ammonia",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Slag, gasification",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Flue gas",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Effluent, wastewater",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "HP-steam",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methanol",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "CO2, process emission",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Synthetic gas (syngas)",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Gangue (coal mining waste)",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "硬煤; 弱黏煤",
+          "general_comment": "弱黏煤的干燥无灰基挥发分(Vdaf)大于20%至37%，粘结指数(G)大于5至30。弱黏煤属于非炼焦煤，主要用作工业和民用燃料，也可用作气化原料。中国弱黏煤的灰分和硫分比较低，在炼焦配合煤中，当有足够量的强粘结性肥煤时，可以部分地配入弱粘煤，以降低焦炭中的灰分和硫分。",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "water vapour",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Coal gas",
+          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "water vapour",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Raw gas",
+          "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "water vapour",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "hard coal, gas coal",
+          "general_comment": "Gas coal is a less metamorphosed bituminous coal characterized by a high dry, ashless volatile matter content, usually greater than 28% to 37%. Gas coal is so called because it produces large quantities of gas and tar when heated in isolation from the air. It is mainly used for coking, but is also used as a power coal and for gasification.",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "water vapour",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Water, process",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Electricity, medium voltage, CN mix, at grid",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methanol",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "NaOH, 10% solution",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Fresh water, unspecified",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Methane, fugitive",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        },
+        {
+          "base_name": "Air, separated",
+          "general_comment": null,
+          "status": "requires_creation",
+          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+        }
+      ],
+      "origin_exchanges": {
+        "Sulphur, recovered": [
+          {
+            "@dataSetInternalID": "18",
+            "referenceToFlowDataSet": {
+              "flowName": "Sulphur, recovered",
+              "CASNumber": "7704-34-9",
+              "referenceToFlowProperty": "Mass",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "30",
+            "resultingAmount": "30",
+            "dataDerivationTypeStatus": "Measured",
+            "exchangeName": "Sulphur, recovered"
+          }
+        ],
+        "Hard coal, in ground": [
+          {
+            "@dataSetInternalID": "2",
+            "referenceToFlowDataSet": {
+              "flowName": "Hard coal, in ground",
+              "referenceToFlowProperty": "Mass",
+              "unit": "tonne"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.533",
+            "resultingAmount": "1.533",
+            "dataDerivationTypeStatus": "Measured",
+            "exchangeName": "Hard coal, in ground"
+          }
+        ],
+        "Oil, crude": [
+          {
+            "@dataSetInternalID": "5",
+            "referenceToFlowDataSet": {
+              "flowName": "Oil, crude",
+              "referenceToFlowProperty": "Mass",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.53",
+            "resultingAmount": "1.53",
+            "dataDerivationTypeStatus": "Measured",
+            "exchangeName": "Oil, crude"
+          }
+        ],
+        "MP-N2": [
+          {
+            "@dataSetInternalID": "20",
+            "referenceToFlowDataSet": {
+              "flowName": "MP-N2",
+              "referenceToFlowProperty": "Mass",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "1523.7",
+            "resultingAmount": "1523.7",
+            "dataDerivationTypeStatus": "Estimated",
+            "exchangeName": "MP-N2"
+          }
+        ],
+        "Water, process": [
+          {
+            "@dataSetInternalID": "6",
+            "referenceToFlowDataSet": {
+              "flowName": "Water, process",
+              "referenceToFlowProperty": "Mass",
+              "unit": "tonne"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "134.01",
+            "resultingAmount": "134.01",
+            "dataDerivationTypeStatus": "Estimated",
+            "exchangeName": "Water, process"
+          }
+        ]
+      }
     }
   ],
   "validation_report": []

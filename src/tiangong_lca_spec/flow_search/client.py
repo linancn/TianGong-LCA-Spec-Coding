@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from tenacity import RetryError, Retrying, stop_after_attempt, wait_exponential
+import httpx
+
+try:
+    from anyio.exceptions import TimeoutError as AnyioTimeoutError
+except ImportError:  # pragma: no cover - fallback for older anyio
+    AnyioTimeoutError = TimeoutError  # type: ignore[misc]
+
+from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import FlowSearchError, SpecCodingError
@@ -13,6 +20,9 @@ from tiangong_lca_spec.core.mcp_client import MCPToolClient
 from tiangong_lca_spec.core.models import FlowQuery
 
 LOGGER = get_logger(__name__)
+
+TIMEOUT_ERRORS = (httpx.TimeoutException, AnyioTimeoutError, TimeoutError)
+
 
 class FlowSearchClient:
     """Thin wrapper around the MCP flow search tool."""
@@ -27,6 +37,8 @@ class FlowSearchClient:
         self._server_name = self._settings.flow_search_service_name
         self._tool_name = getattr(self._settings, "flow_search_tool_name", "Search_flows_Tool")
         self._mcp = mcp_client or MCPToolClient(self._settings)
+        self._timeout_seconds = self._resolve_timeout()
+        self._max_attempts = max(1, self._settings.max_retries)
 
     def _build_arguments(self, query: FlowQuery) -> Mapping[str, Any]:
         parts: list[str] = []
@@ -47,7 +59,7 @@ class FlowSearchClient:
         LOGGER.info("flow_search.request", arguments=arguments)
         try:
             raw = self._call_with_retry(arguments)
-        except (RetryError, FlowSearchError):
+        except FlowSearchError:
             raise
         except Exception as exc:  # pylint: disable=broad-except
             raise FlowSearchError("Flow search invocation failed") from exc
@@ -58,7 +70,7 @@ class FlowSearchClient:
 
     def _call_with_retry(self, arguments: Mapping[str, Any]) -> Any:
         retryer = Retrying(
-            stop=stop_after_attempt(max(1, self._settings.max_retries)),
+            stop=stop_after_attempt(self._max_attempts),
             wait=wait_exponential(
                 multiplier=max(self._settings.retry_backoff, 0.1),
                 min=0.5,
@@ -74,10 +86,32 @@ class FlowSearchClient:
                         self._tool_name,
                         arguments,
                     )
-        except RetryError as exc:
-            raise FlowSearchError("Flow search failed after retries") from exc
         except SpecCodingError as exc:
             raise FlowSearchError("Flow search returned malformed payload") from exc
+        except TIMEOUT_ERRORS as exc:  # type: ignore[misc]
+            attempts = retryer.statistics.get("attempt_number") or self._max_attempts
+            attempts_int = max(int(attempts), 1)
+            LOGGER.error(
+                "flow_search.timeout",
+                attempts=attempts_int,
+                timeout=self._timeout_seconds,
+                server=self._server_name,
+                tool=self._tool_name,
+            )
+            message = "Flow search request timed out"
+            if attempts_int > 1:
+                message += f" after {attempts_int} attempts"
+            if self._timeout_seconds:
+                message += f" (timeout={self._timeout_seconds:.0f}s)"
+            raise FlowSearchError(message) from exc
+
+    def _resolve_timeout(self) -> float | None:
+        timeout = getattr(self._settings, "flow_search_timeout", None)
+        if timeout is None or timeout <= 0:
+            timeout = getattr(self._settings, "request_timeout", None)
+        if timeout is None or timeout <= 0:
+            return None
+        return float(timeout)
 
     def close(self) -> None:
         self._mcp.close()
@@ -181,7 +215,11 @@ def _extract_geography(raw_geo: Any) -> dict[str, Any] | None:
         return None
     location = raw_geo.get("locationOfOperationSupplyOrProduction") or raw_geo.get("location")
     if isinstance(location, dict):
-        code = location.get("@location") or location.get("code") or _first_text(location.get("name"))
+        code = (
+            location.get("@location")
+            or location.get("code")
+            or _first_text(location.get("name"))
+        )
         description = _first_text(location.get("descriptionOfRestrictions")) or _first_text(
             location.get("common:other")
         )
