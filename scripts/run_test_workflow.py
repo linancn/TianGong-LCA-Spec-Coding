@@ -5,11 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import tomllib
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
-import tomllib
 from openai import APIConnectionError, APIStatusError, OpenAI
 
 from tiangong_lca_spec.orchestrator import WorkflowOrchestrator
@@ -111,7 +111,7 @@ def run_workflow(paper_path: Path, output_path: Path, skip_tidas: bool) -> None:
 
     orchestrator = WorkflowOrchestrator(llm)
     if skip_tidas:
-        orchestrator._tidas = _NoOpTidas()  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        setattr(orchestrator, "_tidas", _NoOpTidas())  # type: ignore[attr-defined]
     try:
         result = orchestrator.run(paper_md_json)
     finally:
@@ -122,7 +122,9 @@ def run_workflow(paper_path: Path, output_path: Path, skip_tidas: bool) -> None:
         alignment_serializable.append(
             {
                 "process_name": entry.get("process_name"),
-                "matched_flows": [_to_serializable(flow) for flow in entry.get("matched_flows", [])],
+                "matched_flows": [
+                    _to_serializable(flow) for flow in entry.get("matched_flows", [])
+                ],
                 "unmatched_flows": [
                     _to_serializable(flow) for flow in entry.get("unmatched_flows", [])
                 ],

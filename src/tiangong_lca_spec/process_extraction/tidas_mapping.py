@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import re
+from copy import deepcopy
 from typing import Any
 from uuid import uuid4
-
 
 BASE_METADATA = {
     "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
@@ -34,11 +33,7 @@ def build_tidas_process_dataset(
     dataset["@locations"] = BASE_METADATA["@locations"]
     process_information = dataset.setdefault("processInformation", {})
     dataset["processInformation"] = _normalise_process_information(process_information, notes=notes)
-    dataset_uuid = (
-        dataset["processInformation"]
-        .get("dataSetInformation", {})
-        .get("common:UUID")
-    )
+    dataset_uuid = dataset["processInformation"].get("dataSetInformation", {}).get("common:UUID")
     dataset["modellingAndValidation"] = _normalise_modelling_and_validation(
         dataset.get("modellingAndValidation")
     )
@@ -64,8 +59,13 @@ def _normalise_process_information(
     notes: Any | None,
 ) -> dict[str, Any]:
     info = _ensure_dict(process_information)
-    info["dataSetInformation"] = _normalise_dataset_information(info.get("dataSetInformation"), notes=notes)
-    info["quantitativeReference"] = _normalise_quantitative_reference(info.get("quantitativeReference"))
+    info["dataSetInformation"] = _normalise_dataset_information(
+        info.get("dataSetInformation"),
+        notes=notes,
+    )
+    info["quantitativeReference"] = _normalise_quantitative_reference(
+        info.get("quantitativeReference")
+    )
     info["time"] = _normalise_time(info.get("time"))
     info["geography"] = _normalise_geography(info.get("geography"))
     info["technology"] = _normalise_technology(info.get("technology"))
@@ -93,7 +93,10 @@ def _normalise_dataset_information(data_info: Any, *, notes: Any | None) -> dict
     if isinstance(name_block, str):
         name_block = {"baseName": name_block}
     name_block = _ensure_dict(name_block)
-    name_block["baseName"] = _ensure_multilang(name_block.get("baseName"), fallback="Unnamed process")
+    name_block["baseName"] = _ensure_multilang(
+        name_block.get("baseName"),
+        fallback="Unnamed process",
+    )
     name_block["treatmentStandardsRoutes"] = _ensure_multilang(
         name_block.get("treatmentStandardsRoutes"), fallback="Not specified"
     )
@@ -137,7 +140,9 @@ def _normalise_dataset_information(data_info: Any, *, notes: Any | None) -> dict
     general_comment = info.get("common:generalComment") or ""
     note_text = _stringify(notes)
     if note_text:
-        general_comment = f"{general_comment}\n{note_text}".strip() if general_comment else note_text
+        general_comment = (
+            f"{general_comment}\n{note_text}".strip() if general_comment else note_text
+        )
     info["common:generalComment"] = general_comment
 
     info.pop("referenceToExternalDocumentation", None)
@@ -331,7 +336,9 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
         "percentageSupplyOrProductionCovered": "0.95",
         "referenceToDataSource": [
             _ensure_global_reference(
-                mv_raw.get("dataSourcesTreatmentAndRepresentativeness", {}).get("referenceToDataSource"),
+                mv_raw.get("dataSourcesTreatmentAndRepresentativeness", {}).get(
+                    "referenceToDataSource"
+                ),
                 ref_type="source",
                 description="Not specified",
             )
@@ -355,7 +362,9 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
     mv["complianceDeclarations"] = {
         "compliance": {
             "common:referenceToComplianceSystem": _ensure_global_reference(
-                mv_raw.get("complianceDeclarations", {}).get("compliance", {}).get("common:referenceToComplianceSystem"),
+                mv_raw.get("complianceDeclarations", {})
+                .get("compliance", {})
+                .get("common:referenceToComplianceSystem"),
                 ref_type="source",
                 description="Compliance system",
             ),
@@ -424,18 +433,16 @@ def _normalise_administrative_information(
         ref_type="contact",
         description="Unknown owner",
     )
-    publication["common:copyright"] = _normalise_boolean(
-        publication.get("common:copyright")
-    )
+    publication["common:copyright"] = _normalise_boolean(publication.get("common:copyright"))
     publication["common:licenseType"] = _normalise_license(publication.get("common:licenseType"))
     publication.setdefault("common:accessRestrictions", "Public")
     if not isinstance(publication.get("registrationAuthority"), dict):
         publication["registrationAuthority"] = {
             "name": _ensure_multilang("Tiangong LCA Registry"),
         }
-    publication["common:workflowAndPublicationStatus"] = _stringify(
-        publication.get("common:workflowAndPublicationStatus")
-    ) or "Working draft"
+    publication["common:workflowAndPublicationStatus"] = (
+        _stringify(publication.get("common:workflowAndPublicationStatus")) or "Working draft"
+    )
     _ensure_reference_field(
         publication,
         "common:referenceToUnchangedRepublication",
@@ -514,7 +521,9 @@ def _normalise_derivation_status(value: Any) -> str:
 def _normalise_license(value: Any) -> str:
     allowed = {
         "free of charge for all users and uses": "Free of charge for all users and uses",
-        "free of charge for some user types or use types": "Free of charge for some user types or use types",
+        "free of charge for some user types or use types": (
+            "Free of charge for some user types or use types"
+        ),
         "free of charge for members only": "Free of charge for members only",
         "license fee": "License fee",
         "other": "Other",
@@ -539,7 +548,12 @@ def _select_from_enum(value: Any, allowed: list[str], default: str) -> str:
 
 
 def _is_valid_uuid(value: str) -> bool:
-    return bool(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value))
+    return bool(
+        re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            value,
+        )
+    )
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:
@@ -552,7 +566,10 @@ def _to_multilang(value: Any) -> dict[str, Any]:
             value.setdefault("@xml:lang", DEFAULT_LANGUAGE)
         return value
     if isinstance(value, list):
-        return {"@xml:lang": DEFAULT_LANGUAGE, "#text": "; ".join(_stringify(item) for item in value)}
+        return {
+            "@xml:lang": DEFAULT_LANGUAGE,
+            "#text": "; ".join(_stringify(item) for item in value),
+        }
     return {"@xml:lang": DEFAULT_LANGUAGE, "#text": _stringify(value)}
 
 
@@ -603,9 +620,10 @@ def _extract_location_code(value: Any) -> tuple[str, str | None]:
         text = value.strip()
         return (text or DEFAULT_LOCATION, None)
     if isinstance(value, dict):
-        fallback_description = _stringify(
-            value.get("description") or value.get("name") or value.get("common:other")
-        ) or None
+        fallback_description = (
+            _stringify(value.get("description") or value.get("name") or value.get("common:other"))
+            or None
+        )
         for key in ("code", "@location", "location", "country", "region"):
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.strip():

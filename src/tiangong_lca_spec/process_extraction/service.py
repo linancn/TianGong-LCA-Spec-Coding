@@ -128,9 +128,6 @@ class ProcessExtractionService:
         return state
 
     def _finalize(self, state: ExtractionState) -> ExtractionState:
-        process_information = state.get("process_information") or {}
-        administrative_information = state.get("administrative_information") or {}
-        modelling_and_validation = state.get("modelling_and_validation") or {}
         exchange_list = state.get("exchange_list") or []
         notes = state.get("notes")
 
@@ -147,9 +144,7 @@ class ProcessExtractionService:
         state["administrative_information"] = normalized_dataset.get(
             "administrativeInformation", {}
         )
-        state["modelling_and_validation"] = normalized_dataset.get(
-            "modellingAndValidation", {}
-        )
+        state["modelling_and_validation"] = normalized_dataset.get("modellingAndValidation", {})
 
         exchanges = normalized_dataset.get("exchanges", {}).get("exchange")
         if isinstance(exchanges, list):

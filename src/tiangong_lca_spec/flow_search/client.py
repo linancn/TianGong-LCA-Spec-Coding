@@ -11,6 +11,7 @@ try:
 except ImportError:  # pragma: no cover - fallback for older anyio
     AnyioTimeoutError = TimeoutError  # type: ignore[misc]
 
+from langchain_core.tools.base import ToolException
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from tiangong_lca_spec.core.config import Settings, get_settings
@@ -22,6 +23,7 @@ from tiangong_lca_spec.core.models import FlowQuery
 LOGGER = get_logger(__name__)
 
 TIMEOUT_ERRORS = (httpx.TimeoutException, AnyioTimeoutError, TimeoutError)
+DEFAULT_CONTEXT_LIMIT = 800
 
 
 class FlowSearchClient:
@@ -39,8 +41,16 @@ class FlowSearchClient:
         self._mcp = mcp_client or MCPToolClient(self._settings)
         self._timeout_seconds = self._resolve_timeout()
         self._max_attempts = max(1, self._settings.max_retries)
+        self._context_char_limit = int(
+            getattr(self._settings, "flow_search_context_chars", DEFAULT_CONTEXT_LIMIT)
+        )
 
-    def _build_arguments(self, query: FlowQuery) -> Mapping[str, Any]:
+    def _build_arguments(
+        self,
+        query: FlowQuery,
+        *,
+        include_context: bool = True,
+    ) -> Mapping[str, Any]:
         parts: list[str] = []
         if query.exchange_name:
             parts.append(f"exchange: {query.exchange_name}")
@@ -48,19 +58,32 @@ class FlowSearchClient:
             parts.append(f"process: {query.process_name}")
         if query.description:
             parts.append(f"description: {query.description}")
-        if query.paper_md:
-            parts.append(f"context: {query.paper_md[:4000]}")
+        if include_context and query.paper_md:
+            limit = max(self._context_char_limit, 0)
+            if limit > 0:
+                parts.append(f"context: {query.paper_md[:limit]}")
         joined = " \n".join(parts)
         return {"query": joined or query.exchange_name}
 
     def search(self, query: FlowQuery) -> list[dict[str, Any]]:
         """Execute the remote flow search and return parsed candidates."""
-        arguments = self._build_arguments(query)
+        include_context = True
+        arguments = self._build_arguments(query, include_context=include_context)
         LOGGER.info("flow_search.request", arguments=arguments)
         try:
             raw = self._call_with_retry(arguments)
-        except FlowSearchError:
-            raise
+        except FlowSearchError as exc:
+            if self._should_strip_context(exc, include_context):
+                LOGGER.warning(
+                    "flow_search.context_stripped",
+                    exchange=query.exchange_name,
+                    process=query.process_name,
+                )
+                include_context = False
+                arguments = self._build_arguments(query, include_context=False)
+                raw = self._call_with_retry(arguments)
+            else:
+                raise
         except Exception as exc:  # pylint: disable=broad-except
             raise FlowSearchError("Flow search invocation failed") from exc
 
@@ -113,6 +136,19 @@ class FlowSearchClient:
             return None
         return float(timeout)
 
+    @staticmethod
+    def _should_strip_context(exc: FlowSearchError, include_context: bool) -> bool:
+        if not include_context:
+            return False
+        cause: Exception | None = exc.__cause__  # type: ignore[assignment]
+        while cause:
+            if isinstance(cause, ToolException):
+                message = str(cause)
+                if "HTTP error: 500" in message or "413" in message:
+                    return True
+            cause = cause.__cause__  # type: ignore[assignment]
+        return False
+
     def close(self) -> None:
         self._mcp.close()
 
@@ -135,10 +171,7 @@ class FlowSearchClient:
             return normalized
         if isinstance(raw, dict):
             candidates = (
-                raw.get("candidates")
-                or raw.get("flows")
-                or raw.get("results")
-                or raw.get("data")
+                raw.get("candidates") or raw.get("flows") or raw.get("results") or raw.get("data")
             )
             if isinstance(candidates, list):
                 normalized: list[dict[str, Any]] = []
@@ -216,9 +249,7 @@ def _extract_geography(raw_geo: Any) -> dict[str, Any] | None:
     location = raw_geo.get("locationOfOperationSupplyOrProduction") or raw_geo.get("location")
     if isinstance(location, dict):
         code = (
-            location.get("@location")
-            or location.get("code")
-            or _first_text(location.get("name"))
+            location.get("@location") or location.get("code") or _first_text(location.get("name"))
         )
         description = _first_text(location.get("descriptionOfRestrictions")) or _first_text(
             location.get("common:other")

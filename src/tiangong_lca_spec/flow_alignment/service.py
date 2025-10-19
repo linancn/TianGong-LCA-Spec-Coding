@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Iterable
 
 from tiangong_lca_spec.core.config import Settings, get_settings
-from tiangong_lca_spec.core.exceptions import FlowAlignmentError
+from tiangong_lca_spec.core.exceptions import FlowAlignmentError, FlowSearchError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, FlowQuery, UnmatchedFlow
 from tiangong_lca_spec.flow_search import search_flows
@@ -44,13 +44,14 @@ class FlowAlignmentService:
         unmatched: list[UnmatchedFlow] = []
         origin_exchanges: dict[str, list[dict[str, Any]]] = {}
 
-        search_jobs = {
-            self._submit_exchange(exchange, process_name, paper_md): exchange
-            for exchange in exchanges
-        }
+        search_jobs: dict[Any, tuple[dict[str, Any], FlowQuery]] = {}
+        for exchange in exchanges:
+            query = self._build_query(exchange, process_name, paper_md)
+            future = self._executor.submit(self._flow_search, query)
+            search_jobs[future] = (exchange, query)
 
         for future in as_completed(search_jobs):
-            exchange = search_jobs[future]
+            exchange, query = search_jobs[future]
             exchange_name = self._safe_exchange_name(exchange)
             try:
                 matches, misses = future.result()
@@ -59,19 +60,40 @@ class FlowAlignmentService:
                 if misses:
                     unmatched.extend(misses)
                 origin_exchanges.setdefault(exchange_name, []).append(exchange)
+            except FlowSearchError as exc:
+                LOGGER.warning(
+                    "flow_alignment.retry_serial",
+                    exchange=exchange_name,
+                    process=process_name,
+                    error=str(exc),
+                )
+                try:
+                    matches, misses = self._flow_search(query)
+                    if matches:
+                        matched.extend(matches)
+                    if misses:
+                        unmatched.extend(misses)
+                    origin_exchanges.setdefault(exchange_name, []).append(exchange)
+                    continue
+                except Exception as serial_exc:  # pylint: disable=broad-except
+                    LOGGER.error(
+                        "flow_alignment.exchange_failed",
+                        exchange=exchange_name,
+                        error=str(serial_exc),
+                    )
             except Exception as exc:  # pylint: disable=broad-except
                 LOGGER.error(
                     "flow_alignment.exchange_failed", exchange=exchange_name, error=str(exc)
                 )
-                unmatched.append(
-                    UnmatchedFlow(
-                        base_name=exchange_name,
-                        general_comment=exchange.get("generalComment1")
-                        or exchange.get("generalComment")
-                        or exchange.get("comment"),
-                        process_name=process_name,
-                    )
+            unmatched.append(
+                UnmatchedFlow(
+                    base_name=exchange_name,
+                    general_comment=exchange.get("generalComment1")
+                    or exchange.get("generalComment")
+                    or exchange.get("comment"),
+                    process_name=process_name,
                 )
+            )
 
         return {
             "process_name": process_name,
@@ -80,10 +102,10 @@ class FlowAlignmentService:
             "origin_exchanges": origin_exchanges,
         }
 
-    def _submit_exchange(
+    def _build_query(
         self, exchange: dict[str, Any], process_name: str | None, paper_md: str | None
-    ):
-        query = FlowQuery(
+    ) -> FlowQuery:
+        return FlowQuery(
             exchange_name=self._safe_exchange_name(exchange),
             description=exchange.get("generalComment1")
             or exchange.get("generalComment")
@@ -91,18 +113,19 @@ class FlowAlignmentService:
             process_name=process_name,
             paper_md=paper_md,
         )
-        return self._executor.submit(self._flow_search, query)
 
     @property
     def _executor(self) -> ThreadPoolExecutor:
         if not hasattr(self, "__executor"):
-            max_workers = max(1, self._profile.concurrency)
+            limit = max(1, self._settings.flow_search_max_parallel)
+            max_workers = max(1, min(self._profile.concurrency, limit))
             self.__executor = ThreadPoolExecutor(max_workers=max_workers)
         return self.__executor
 
     def close(self) -> None:
         if hasattr(self, "__executor"):
             self.__executor.shutdown(wait=True)
+            delattr(self, "__executor")
 
     def _iter_exchanges(self, process_dataset: dict[str, Any]) -> Iterable[dict[str, Any]]:
         exchanges_block = process_dataset.get("exchanges") or {}

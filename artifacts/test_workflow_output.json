@@ -9,14 +9,13 @@
       "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Process ../../schemas/ILCD_ProcessDataSet.xsd",
       "processInformation": {
         "dataSetInformation": {
-          "common:UUID": "901cfb60-5cea-446a-9c24-253f8defb7f8",
+          "common:UUID": "b4dc204f-c98e-4233-b8a1-0f635a7f9e01",
           "name": {
             "baseName": {
               "@xml:lang": "en",
-              "#text": "Methanol production from coal gasification (China, cradle-to-gate)"
+              "#text": "Comparative cradle-to-gate LCA of methanol production technologies"
             },
-            "baseName_short": "CGTM methanol",
-            "nameFormat": "short",
+            "baseName@xml:lang": "en",
             "treatmentStandardsRoutes": {
               "@xml:lang": "en",
               "#text": "Not specified"
@@ -26,17 +25,15 @@
               "#text": "Unknown mix"
             }
           },
+          "identifierOfSubDataSet": "Cradle-to-gate methanol production (CGTM, COTM, NGTM, BOTM, CCTM)",
           "common:synonyms": [
-            "Coal to methanol",
-            "CGTM"
+            "Methanol via coal gasification",
+            "Methanol via coal coking",
+            "Methanol via natural gas",
+            "Methanol via biomass",
+            "Methanol via CO2 hydrogenation"
           ],
           "classificationInformation": {
-            "classificationItem": [
-              {
-                "classificationSystem": "ILCD Process classification",
-                "item": "Energy carrier production / Chemical fuel production / Methanol"
-              }
-            ],
             "classification": [
               {
                 "@level": "1",
@@ -84,8 +81,7 @@
               ]
             }
           },
-          "common:generalComment": "Life cycle inventory and assessment of methanol production via coal gasification (CGTM) in China with cradle-to-gate boundary. Inventory represents average Chinese technology and grid mix circa 2022. System covers raw coal mining and processing, syngas production, syngas purification, methanol synthesis, and methanol distillation. Excludes facility and infrastructure, with solid waste delivery to landfill and processed wastewater. Waste catalyst is omitted (3–5 year replacement out of boundary). Data from national statistics, industrial projects, eFootprint database, and literature sources.",
-          "identifierOfSubDataSet": "901cfb60-5cea-446a-9c24-253f8defb7f8",
+          "common:generalComment": "This dataset represents a cradle-to-gate comparative LCA of five major methanol production pathways in China: Coal Gasification to Methanol (CGTM), Coal Coking to Methanol (COTM), Natural Gas to Methanol (NGTM), Biomass to Methanol (BOTM), and CO2 Capture/Hydrogenation to Methanol (CCTM). System boundaries include raw material extraction, resource inputs, emissions and outputs, but exclude infrastructure, capital goods, and methanol usage. Comprehensive inventories (inputs and outputs) are given for each route. The inventory data was sourced from plant data, national statistics, scholarly literature, and eFootprint LCA software/database. The methodology follows ISO 14040/44 and includes sensitivity analysis and midpoint/end-point LCIA per CML2001 and Eco-indicator 99. Notably, the environmental impact of electricity and steam inputs is a key sensitivity factor. The inventory omits inputs less than 1% by mass (cumulative omission <3%). Wastewater is treated and reused, solid waste is mostly landfilled locally, and waste catalyst is excluded due to long replacement cycle.",
           "common:mathematicalRelationsOrReasonsForDataDerivation": {
             "common:other": "Not specified"
           },
@@ -103,13 +99,14 @@
           "@type": "Reference flow(s)",
           "referenceToReferenceFlow": "1",
           "functionalUnitOrOther": {
-            "@xml:lang": "en",
-            "#text": "1 tonne methanol at refinery gate"
+            "functionalUnit": "1 tonne of purified methanol at plant gate (cradle-to-gate)",
+            "@xml:lang": "en"
           }
         },
         "time": {
           "common:referenceYear": 2022,
-          "common:timeRepresentativenessDescription": "Average data centered on the Chinese chemical industry for the year 2022. Data sources span 2008-2022; assumed to be representative for this period.",
+          "common:timeRepresentativenessDescription": "Input and output data are representative of typical operating conditions and technology in China ca. 2020-2022; power grid mix reflects Chinese grid in 2022; local plant/project/literature data used whenever available, with simulation for emerging technologies (e.g., CCTM).",
+          "common:other": "For CCTM, hydrogen electrolysis data is from typical recent literature data; for CGTM, synthesis and distillation use data from 2003 simulations; CCTM methanol synthesis is based on ChemCAD software simulation.",
           "common:dataSetValidUntil": 2027
         },
         "geography": {
@@ -120,16 +117,16 @@
         "technology": {
           "technologyDescriptionAndIncludedProcesses": {
             "@xml:lang": "en",
-            "#text": "Process includes: (1) Hard coal mining, washing, and processing; (2) Coal water slurry gasification (Texaco technology) with air separation for pure oxygen supply; (3) Water-gas shift for H/C adjustment; (4) Rectisol purification of syngas and sulfur recovery (Super-clause process); (5) Methanol synthesis via Cu/ZnO/Al2O3 catalyst; (6) Distillation of crude methanol; produces purified methanol as output. Wastewater is treated and repurposed; solid wastes (except catalyst) landfilled. Steel, catalyst, infrastructure are excluded. Process energy uses Chinese average electricity mix."
+            "#text": "Five methanol routes are modeled: (1) CGTM (Coal Gasification to Methanol): includes coal mining/cleaning, Texaco coal-water slurry gasification, syngas purification (Rectisol), methanol synthesis (Cu/ZnO/Al2O3 catalyst), and distillation; (2) COTM (Coal Coking to Methanol): includes coal mining, pyrolysis (coke oven ~1100°C), gas cleaning, reforming, and methanol synthesis/distillation; (3) NGTM (Natural Gas to Methanol): natural gas extraction, processing (acid gas removal), steam reforming, syngas compression, methanol synthesis/distillation; (4) BOTM (Biomass to Methanol): biomass feedstock preparation, gasification (fluidized bed), syngas treatment, methanol synthesis/distillation; (5) CCTM (CO2 Capture/Hydrogenation to Methanol): electrolytic hydrogen (from water electrolysis using renewables), CO2 capture (amine scrubbing or direct air capture), syngas formation, and methanol synthesis/purification. System boundary excludes infrastructure, focusing only on foreground processes and immediate upstream supply chains. Wastewater is treated and reused; solid waste is sent to landfill. Waste catalyst excluded due to multi-year replacement cycle."
           },
           "technologicalApplicability": {
             "@xml:lang": "en",
-            "#text": "Modern large-scale methanol plants in China; process applies to current industrial-scale coal gasification with integrated emissions controls."
+            "#text": "Applicable to China-based methanol production via mainstream and emerging routes. CCTM is in pilot/early commercialization; other processes reflect established industrial practice."
           },
           "referenceToIncludedProcesses": {
             "@type": "process",
-            "@refObjectId": "3877c5a4-c8ca-4dd1-a2d6-0409860729ff",
-            "@uri": "https://tiangong.earth/process/3877c5a4-c8ca-4dd1-a2d6-0409860729ff",
+            "@refObjectId": "95fa9d82-1667-45cd-85e5-e4c3b58836ab",
+            "@uri": "https://tiangong.earth/process/95fa9d82-1667-45cd-85e5-e4c3b58836ab",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
@@ -138,8 +135,8 @@
           },
           "referenceToTechnologyPictogramme": {
             "@type": "source",
-            "@refObjectId": "50c7f41d-6672-4b89-9b49-22fbca929ac4",
-            "@uri": "https://tiangong.earth/source/50c7f41d-6672-4b89-9b49-22fbca929ac4",
+            "@refObjectId": "e44a8e36-7b4c-4231-8a3a-86cd8de8733e",
+            "@uri": "https://tiangong.earth/source/e44a8e36-7b4c-4231-8a3a-86cd8de8733e",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
@@ -148,8 +145,8 @@
           },
           "referenceToTechnologyFlowDiagrammOrPicture": {
             "@type": "source",
-            "@refObjectId": "b98ac924-f522-4f5e-bda3-a7a6f7675ec7",
-            "@uri": "https://tiangong.earth/source/b98ac924-f522-4f5e-bda3-a7a6f7675ec7",
+            "@refObjectId": "0704392c-130a-4b6b-8350-d4e73026c8bd",
+            "@uri": "https://tiangong.earth/source/0704392c-130a-4b6b-8350-d4e73026c8bd",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
@@ -170,8 +167,8 @@
           "referenceToDataSource": [
             {
               "@type": "source",
-              "@refObjectId": "82f6cb41-5086-48ab-872d-d25a2aa663ef",
-              "@uri": "https://tiangong.earth/source/82f6cb41-5086-48ab-872d-d25a2aa663ef",
+              "@refObjectId": "f86afd91-e83f-489e-9923-6f68c2af2b13",
+              "@uri": "https://tiangong.earth/source/f86afd91-e83f-489e-9923-6f68c2af2b13",
               "@version": "01.00.000",
               "common:shortDescription": {
                 "@xml:lang": "en",
@@ -198,8 +195,8 @@
           "compliance": {
             "common:referenceToComplianceSystem": {
               "@type": "source",
-              "@refObjectId": "71d81a55-286a-41e3-b8e3-e5836f719e20",
-              "@uri": "https://tiangong.earth/source/71d81a55-286a-41e3-b8e3-e5836f719e20",
+              "@refObjectId": "f30f3bd3-2a1f-4aca-b3ec-b7638d621b18",
+              "@uri": "https://tiangong.earth/source/f30f3bd3-2a1f-4aca-b3ec-b7638d621b18",
               "@version": "01.00.000",
               "common:shortDescription": {
                 "@xml:lang": "en",
@@ -223,8 +220,8 @@
           "common:referenceToCommissioner": [
             {
               "@type": "contact",
-              "@refObjectId": "2363e14c-c35d-4dd4-9067-035e84ea281b",
-              "@uri": "https://tiangong.earth/contact/2363e14c-c35d-4dd4-9067-035e84ea281b",
+              "@refObjectId": "644311f1-7096-4d27-bd3c-1f90f7af119a",
+              "@uri": "https://tiangong.earth/contact/644311f1-7096-4d27-bd3c-1f90f7af119a",
               "@version": "01.00.000",
               "common:shortDescription": {
                 "@xml:lang": "en",
@@ -237,8 +234,8 @@
           "common:timeStamp": "2024-01-01T00:00:00Z",
           "common:referenceToPersonOrEntityEnteringTheData": {
             "@type": "contact",
-            "@refObjectId": "5b7361bb-bfd7-45dd-b4d1-8cfd3cb80736",
-            "@uri": "https://tiangong.earth/contact/5b7361bb-bfd7-45dd-b4d1-8cfd3cb80736",
+            "@refObjectId": "04313a6f-736a-426d-9271-3886e2fce53c",
+            "@uri": "https://tiangong.earth/contact/04313a6f-736a-426d-9271-3886e2fce53c",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
@@ -247,8 +244,8 @@
           },
           "common:referenceToDataSetFormat": {
             "@type": "documentation",
-            "@refObjectId": "f5827c4d-14a2-46ec-b54a-3110f2ec7606",
-            "@uri": "https://tiangong.earth/documentation/f5827c4d-14a2-46ec-b54a-3110f2ec7606",
+            "@refObjectId": "f9b99f6b-e336-4bb5-ae8f-688075e5397e",
+            "@uri": "https://tiangong.earth/documentation/f9b99f6b-e336-4bb5-ae8f-688075e5397e",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
@@ -258,20 +255,20 @@
         },
         "publicationAndOwnership": {
           "common:dataSetVersion": "01.000.001",
-          "common:permanentDataSetURI": "https://doi.org/10.1016/j.jclepro.2024.140041",
+          "common:permanentDataSetURI": "https://doi.org/10.1016/j.energy.2024.130000",
+          "common:copyright": "true",
+          "common:licenseType": "Other",
           "common:referenceToOwnershipOfDataSet": {
             "@type": "contact",
-            "@refObjectId": "af4d7328-e772-4ca2-9bb0-bc5d257c1cd3",
-            "@uri": "https://tiangong.earth/contact/af4d7328-e772-4ca2-9bb0-bc5d257c1cd3",
+            "@refObjectId": "341b81df-5a5e-4072-bec2-3eae1c7e71f8",
+            "@uri": "https://tiangong.earth/contact/341b81df-5a5e-4072-bec2-3eae1c7e71f8",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
               "#text": "Unknown owner"
             }
           },
-          "common:copyright": "true",
-          "common:licenseType": "Other",
-          "common:accessRestrictions": "None",
+          "common:accessRestrictions": "Public",
           "registrationAuthority": {
             "name": {
               "@xml:lang": "en",
@@ -281,8 +278,8 @@
           "common:workflowAndPublicationStatus": "Working draft",
           "common:referenceToUnchangedRepublication": {
             "@type": "source",
-            "@refObjectId": "4c335181-36bd-422a-a632-f29406280ba1",
-            "@uri": "https://tiangong.earth/source/4c335181-36bd-422a-a632-f29406280ba1",
+            "@refObjectId": "6460f69e-2b00-47bf-b1b8-096d2bc50a08",
+            "@uri": "https://tiangong.earth/source/6460f69e-2b00-47bf-b1b8-096d2bc50a08",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
@@ -291,15 +288,15 @@
           },
           "common:referenceToRegistrationAuthority": {
             "@type": "contact",
-            "@refObjectId": "d0dbb317-518a-499a-8789-9fd59efdb0a0",
-            "@uri": "https://tiangong.earth/contact/d0dbb317-518a-499a-8789-9fd59efdb0a0",
+            "@refObjectId": "789e732f-71cf-4184-9df4-f8c1ec16687c",
+            "@uri": "https://tiangong.earth/contact/789e732f-71cf-4184-9df4-f8c1ec16687c",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
               "#text": "Registration authority"
             }
           },
-          "common:registrationNumber": "901cfb60-5cea-446a-9c24-253f8defb7f8"
+          "common:registrationNumber": "b4dc204f-c98e-4233-b8a1-0f635a7f9e01"
         },
         "dataGenerator": {
           "common:other": "Generated via Tiangong LCA automated workflow"
@@ -311,91 +308,343 @@
             "@dataSetInternalID": "1",
             "referenceToFlowDataSet": {
               "@type": "flow data set",
-              "@refObjectId": "2b6f66b6-6bbe-42c1-93cb-71b444499255",
+              "@refObjectId": "c7e2bac5-1c45-45b5-9324-d4694aeb462a",
               "@version": "00.00.000",
-              "@uri": "https://tiangong.earth/flows/2b6f66b6-6bbe-42c1-93cb-71b444499255",
+              "@uri": "https://tiangong.earth/flows/c7e2bac5-1c45-45b5-9324-d4694aeb462a",
               "common:shortDescription": {
                 "@xml:lang": "en",
-                "#text": "Sulphur, recovered"
+                "#text": "Natural gas, high pressure"
               }
             },
-            "exchangeDirection": "Output",
-            "meanAmount": "30",
-            "resultingAmount": "30",
+            "exchangeDirection": "Input",
+            "meanAmount": "617",
+            "resultingAmount": "617",
             "dataDerivationTypeStatus": "Measured",
-            "exchangeName": "Sulphur, recovered"
+            "generalComment": "LP natural gas input for NGTM per tonne methanol.",
+            "exchangeName": "Natural gas, high pressure"
           },
           {
             "@dataSetInternalID": "2",
             "referenceToFlowDataSet": {
               "@type": "flow data set",
-              "@refObjectId": "edc70af0-57ba-484c-aa8c-4d313ba14580",
+              "@refObjectId": "5535929a-639e-4d00-aad4-adb3847411d9",
               "@version": "00.00.000",
-              "@uri": "https://tiangong.earth/flows/edc70af0-57ba-484c-aa8c-4d313ba14580",
+              "@uri": "https://tiangong.earth/flows/5535929a-639e-4d00-aad4-adb3847411d9",
               "common:shortDescription": {
                 "@xml:lang": "en",
-                "#text": "Hard coal, in ground"
+                "#text": "CO2, captured"
               }
             },
             "exchangeDirection": "Input",
-            "meanAmount": "1.533",
-            "resultingAmount": "1.533",
+            "meanAmount": "1617.4",
+            "resultingAmount": "1617.4",
             "dataDerivationTypeStatus": "Measured",
-            "exchangeName": "Hard coal, in ground"
+            "generalComment": "Captured CO2 input to hydrogenation process, CCTM.",
+            "exchangeName": "CO2, captured"
           },
           {
             "@dataSetInternalID": "3",
             "referenceToFlowDataSet": {
               "@type": "flow data set",
-              "@refObjectId": "91fb7b1c-26d5-423d-a861-136db19245cb",
+              "@refObjectId": "9192af8b-21be-4bd0-9a46-167536d6047f",
               "@version": "00.00.000",
-              "@uri": "https://tiangong.earth/flows/91fb7b1c-26d5-423d-a861-136db19245cb",
+              "@uri": "https://tiangong.earth/flows/9192af8b-21be-4bd0-9a46-167536d6047f",
               "common:shortDescription": {
                 "@xml:lang": "en",
-                "#text": "Oil, crude"
+                "#text": "Electricity, medium voltage"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "576.40",
+            "resultingAmount": "576.40",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Electricity for natural gas methanol synthesis (NGTM).",
+            "exchangeName": "Electricity, medium voltage"
+          },
+          {
+            "@dataSetInternalID": "4",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "d9ba519a-608e-4080-af1a-14a0adcd6165",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/d9ba519a-608e-4080-af1a-14a0adcd6165",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Electricity, medium voltage"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "825",
+            "resultingAmount": "825",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Electricity input for methanol synthesis (CGTM), Chinese grid mix.",
+            "exchangeName": "Electricity, medium voltage"
+          },
+          {
+            "@dataSetInternalID": "5",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "6d2d362f-5452-4a40-86d1-6e08318b97a5",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/6d2d362f-5452-4a40-86d1-6e08318b97a5",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Coke oven gas (COG)"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1968.66",
+            "resultingAmount": "1968.66",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Feedstock entering methanol synthesis stage, COTM.",
+            "exchangeName": "Coke oven gas (COG)"
+          },
+          {
+            "@dataSetInternalID": "6",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "d202d758-bf5b-4d1b-bca6-f4cddfb0cafb",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/d202d758-bf5b-4d1b-bca6-f4cddfb0cafb",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Biomass, dry"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1066.7",
+            "resultingAmount": "1066.7",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Biomass straw; BOTM route input per tonne.",
+            "exchangeName": "Biomass, dry"
+          },
+          {
+            "@dataSetInternalID": "7",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "b77fe6f3-f7e5-4088-92b3-1bc3b4cb7358",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/b77fe6f3-f7e5-4088-92b3-1bc3b4cb7358",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Oil, light crude"
               }
             },
             "exchangeDirection": "Input",
             "meanAmount": "1.53",
             "resultingAmount": "1.53",
             "dataDerivationTypeStatus": "Measured",
-            "exchangeName": "Oil, crude"
+            "generalComment": "Oil as process input to CGTM route.",
+            "exchangeName": "Oil, light crude"
           },
           {
-            "@dataSetInternalID": "4",
+            "@dataSetInternalID": "8",
             "referenceToFlowDataSet": {
               "@type": "flow data set",
-              "@refObjectId": "2ee897b5-bd49-4f60-82ca-98372edfefb4",
+              "@refObjectId": "de97a90f-3bec-4c10-8aed-4c1de70b30be",
               "@version": "00.00.000",
-              "@uri": "https://tiangong.earth/flows/2ee897b5-bd49-4f60-82ca-98372edfefb4",
+              "@uri": "https://tiangong.earth/flows/de97a90f-3bec-4c10-8aed-4c1de70b30be",
               "common:shortDescription": {
                 "@xml:lang": "en",
-                "#text": "MP-N2"
+                "#text": "Methanol, purified"
               }
             },
             "exchangeDirection": "Output",
-            "meanAmount": "1523.7",
-            "resultingAmount": "1523.7",
-            "dataDerivationTypeStatus": "Estimated",
-            "exchangeName": "MP-N2"
+            "meanAmount": "1.0",
+            "resultingAmount": "1.0",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Reference product for all routes; represents 1 tonne delivered at plant gate.",
+            "exchangeName": "Methanol, purified"
           },
           {
-            "@dataSetInternalID": "5",
+            "@dataSetInternalID": "9",
             "referenceToFlowDataSet": {
               "@type": "flow data set",
-              "@refObjectId": "23309797-25ed-4378-b3e7-4a368518d56e",
+              "@refObjectId": "8f8315f3-14de-48d9-a33d-d2b5552dc151",
               "@version": "00.00.000",
-              "@uri": "https://tiangong.earth/flows/23309797-25ed-4378-b3e7-4a368518d56e",
+              "@uri": "https://tiangong.earth/flows/8f8315f3-14de-48d9-a33d-d2b5552dc151",
               "common:shortDescription": {
                 "@xml:lang": "en",
-                "#text": "Water, process"
+                "#text": "Hard coal, mine"
               }
             },
             "exchangeDirection": "Input",
-            "meanAmount": "134.01",
-            "resultingAmount": "134.01",
-            "dataDerivationTypeStatus": "Estimated",
-            "exchangeName": "Water, process"
+            "meanAmount": "1.533",
+            "resultingAmount": "1.533",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Input for CGTM; mine-to-plant delivery.",
+            "exchangeName": "Hard coal, mine"
+          },
+          {
+            "@dataSetInternalID": "10",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "fcb37e0e-750f-4128-9e07-1228809aa5b3",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/fcb37e0e-750f-4128-9e07-1228809aa5b3",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Methane, emission"
+              }
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "7.64",
+            "resultingAmount": "7.64",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Methane vented/leaked in mining (CGTM).",
+            "exchangeName": "Methane, emission"
+          },
+          {
+            "@dataSetInternalID": "11",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "2412e5cf-df7b-41af-8e98-0d826ecb9fa7",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/2412e5cf-df7b-41af-8e98-0d826ecb9fa7",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Hydrogen, gas"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "136.11",
+            "resultingAmount": "136.11",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Hydrogen input to methanol synthesis, BOTM.",
+            "exchangeName": "Hydrogen, gas"
+          },
+          {
+            "@dataSetInternalID": "12",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "ead5d8da-c9bb-41f0-b1fe-311f0f68dcdf",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/ead5d8da-c9bb-41f0-b1fe-311f0f68dcdf",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Hydrogen, gas"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "220.6",
+            "resultingAmount": "220.6",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Hydrogen from water electrolysis for CCTM synthesis.",
+            "exchangeName": "Hydrogen, gas"
+          },
+          {
+            "@dataSetInternalID": "13",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "2f416600-a3b9-4c89-ba38-e8b668d4218d",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/2f416600-a3b9-4c89-ba38-e8b668d4218d",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Gangue"
+              }
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "153",
+            "resultingAmount": "153",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "CGTM mining waste (sent to landfill).",
+            "exchangeName": "Gangue"
+          },
+          {
+            "@dataSetInternalID": "14",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "df108d7d-06b6-46de-999e-8bf6d3727d81",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/df108d7d-06b6-46de-999e-8bf6d3727d81",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Electricity, renewable (mix Bio-IGCC/PV)"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "15505.61",
+            "resultingAmount": "15505.61",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Total electricity for electrolysis + compression, CCTM.",
+            "exchangeName": "Electricity, renewable (mix Bio-IGCC/PV)"
+          },
+          {
+            "@dataSetInternalID": "15",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "a479f285-f91b-4a2d-9eb3-0884f82837ba",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/a479f285-f91b-4a2d-9eb3-0884f82837ba",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "CO2, stack emission"
+              }
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "1.74",
+            "resultingAmount": "1.74",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Direct CO2 emissions from syngas stage (CGTM).",
+            "exchangeName": "CO2, stack emission"
+          },
+          {
+            "@dataSetInternalID": "16",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "664e42c5-d33f-4ee5-b5e2-0897c4af8bdd",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/664e42c5-d33f-4ee5-b5e2-0897c4af8bdd",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Synthetic gas (syngas)"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.23",
+            "resultingAmount": "1.23",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Syngas for methanol synthesis (CGTM).",
+            "exchangeName": "Synthetic gas (syngas)"
+          },
+          {
+            "@dataSetInternalID": "17",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "28108b4a-c6c8-49fd-9b11-b7d8947d5056",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/28108b4a-c6c8-49fd-9b11-b7d8947d5056",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "NaOH (10%)"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.00",
+            "resultingAmount": "1.00",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Used in methanol purification (CGTM).",
+            "exchangeName": "NaOH (10%)"
+          },
+          {
+            "@dataSetInternalID": "18",
+            "referenceToFlowDataSet": {
+              "@type": "flow data set",
+              "@refObjectId": "52705ae5-a588-40d0-bfac-3b062bdd2a88",
+              "@version": "00.00.000",
+              "@uri": "https://tiangong.earth/flows/52705ae5-a588-40d0-bfac-3b062bdd2a88",
+              "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "Process water"
+              }
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "0.69",
+            "resultingAmount": "0.69",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Fresh water for coal mining/processing (CGTM).",
+            "exchangeName": "Process water"
           }
         ]
       },
@@ -404,8 +653,8 @@
           "meanAmount": "0.0",
           "referenceToLCIAMethodDataSet": {
             "@type": "method",
-            "@refObjectId": "fb61af3c-e2ca-4945-b914-7e0332ce9583",
-            "@uri": "https://tiangong.earth/method/fb61af3c-e2ca-4945-b914-7e0332ce9583",
+            "@refObjectId": "93a50efc-949e-4046-a867-51446d133695",
+            "@uri": "https://tiangong.earth/method/93a50efc-949e-4046-a867-51446d133695",
             "@version": "01.00.000",
             "common:shortDescription": {
               "@xml:lang": "en",
@@ -419,8 +668,139 @@
   ],
   "alignment": [
     {
-      "process_name": "Methanol production from coal gasification (China, cradle-to-gate)",
+      "process_name": "Comparative cradle-to-gate LCA of methanol production technologies",
       "matched_flows": [
+        {
+          "uuid": "32ab44a2-c912-4c1f-98cf-856a24b3f99a",
+          "base_name": "coke oven gas",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@version": "00.00.000",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "01.01.000",
+          "general_comment": "Coke Oven Gas (COG) is a strong fuel produced during the manufacture of metallurgical coke by heating bituminous coal to temperatures of 900°C to 1000°C in a chamber from which air is excluded. It is less useful compared to other injected fuels in the lower part of the blast furnace. As a coking product, COG is a combustible gas produced simultaneously along with coke and tar. The main constituents are, by volume, about 50% hydrogen, 30% methane and 3% higher hydrocarbons, 7% carbon monoxide.",
+          "geography": null,
+          "classification": [
+            {
+              "#text": "Ores and minerals; electricity, gas and water",
+              "@level": "0",
+              "@classId": "1"
+            },
+            {
+              "#text": "Electricity, town gas, steam and hot water",
+              "@level": "1",
+              "@classId": "17"
+            },
+            {
+              "#text": "Coal gas, water gas, producer gas and similar gases, other than petroleum gases and other gaseous hydrocarbons",
+              "@level": "2",
+              "@classId": "172"
+            },
+            {
+              "#text": "Coal gas, water gas, producer gas and similar gases, other than petroleum gases and other gaseous hydrocarbons",
+              "@level": "3",
+              "@classId": "1720"
+            },
+            {
+              "#text": "Coke oven gas",
+              "@level": "4",
+              "@classId": "17201"
+            }
+          ],
+          "reasoning": ""
+        },
+        {
+          "uuid": "a2bec48b-8347-4582-8cca-fa9d09ce0ac1",
+          "base_name": "hard coal",
+          "treatment_standards_routes": "washing and processing",
+          "mix_and_location_types": "production mix, in the coal washing plant",
+          "flow_properties": {
+            "flowProperty": [
+              {
+                "meanValue": "1.0",
+                "@dataSetInternalID": "0",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                  "common:shortDescription": {
+                    "#text": "Mass",
+                    "@xml:lang": "en"
+                  }
+                }
+              },
+              {
+                "meanValue": "24.056",
+                "@dataSetInternalID": "1",
+                "referenceToFlowPropertyDataSet": {
+                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200c9a66.xml",
+                  "@type": "flow property data set",
+                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
+                  "common:shortDescription": [
+                    {
+                      "#text": "Net calorific value",
+                      "@xml:lang": "en"
+                    },
+                    {
+                      "#text": "净热值, 低位热值",
+                      "@xml:lang": "zh"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "version": "01.01.000",
+          "general_comment": "Hard coal refers to the coal whose high calorific value is greater than or equal to 24MJ / kg, including bituminous coal and anthracite. Because of its high calorific value and specific physical properties, hard coal has a wide range of applications in the industrial and energy fields, such as power generation, steel production, chemical raw materials and so on. The proportion of bituminous coal in hard coal is high, so hard coal is classified as hard coal-bituminous coal classification option.",
+          "geography": null,
+          "classification": [
+            {
+              "#text": "Ores and minerals; electricity, gas and water",
+              "@level": "0",
+              "@classId": "1"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "1",
+              "@classId": "11"
+            },
+            {
+              "#text": "Coal and peat",
+              "@level": "2",
+              "@classId": "110"
+            },
+            {
+              "#text": "Hard coal",
+              "@level": "3",
+              "@classId": "1101"
+            },
+            {
+              "#text": "Bituminous Coal",
+              "@level": "4",
+              "@classId": "11012"
+            },
+            {
+              "#text": "Other Bituminous Coal",
+              "@level": "5",
+              "@classId": "11012.2"
+            }
+          ],
+          "reasoning": ""
+        },
         {
           "uuid": "515ad0c8-5bea-4b8b-97cc-851b8450534f",
           "base_name": "hard coal, coking coal",
@@ -500,159 +880,341 @@
           "reasoning": ""
         },
         {
-          "uuid": "c63c87ee-66a0-426e-a052-38ab3951f711",
-          "base_name": "hard coal, fat coal",
-          "treatment_standards_routes": "washing and processing",
-          "mix_and_location_types": "生产混合，在洗煤厂",
+          "uuid": "fe0acd60-3ddc-11dd-a6fc-0050c2490048",
+          "base_name": "hard coal",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
           "flow_properties": {
-            "flowProperty": [
-              {
-                "meanValue": "1.0",
-                "@dataSetInternalID": "0",
-                "referenceToFlowPropertyDataSet": {
-                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
-                  "@type": "flow property data set",
-                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
-                  "common:shortDescription": {
-                    "#text": "Mass",
-                    "@xml:lang": "en"
-                  }
-                }
-              },
-              {
-                "meanValue": "26.377",
-                "@dataSetInternalID": "1",
-                "referenceToFlowPropertyDataSet": {
-                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200c9a66.xml",
-                  "@type": "flow property data set",
-                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
-                  "common:shortDescription": [
-                    {
-                      "#text": "Net calorific value",
-                      "@xml:lang": "en"
-                    },
-                    {
-                      "#text": "净热值, 低位热值",
-                      "@xml:lang": "zh"
-                    }
-                  ]
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200c9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
+                "common:shortDescription": {
+                  "#text": "Radioactivity",
+                  "@xml:lang": "en"
                 }
               }
-            ]
-          },
-          "version": "01.01.000",
-          "general_comment": "Fat coal is a kind of bituminous coal with moderate metamorphism. It is a kind of coking coal and has good cohesiveness. The dry ash-free base volatile Vdaf of fat coal is generally between 10 % and 37 %, the maximum thickness of the resin layer y is usually greater than 25 mm, and the Oya expansion degree b is greater than 150 % ( for bituminous coal with Vdaf greater than 28 %, b is greater than 220 % ). When the fat coal is heated, a large number of colloids can be produced. The coke produced when coking alone is good in melting, but there are more transverse cracks, and the coke root part has bee coke. The main use of fat coal is coking, and some high-ash and high-sulfur fat coal is also used for power generation. In coking, fat coal usually needs to be mixed with other coals to optimize the quality of coke.",
-          "geography": null,
-          "classification": [
-            {
-              "#text": "Ores and minerals; electricity, gas and water",
-              "@level": "0",
-              "@classId": "1"
-            },
-            {
-              "#text": "Coal and peat",
-              "@level": "1",
-              "@classId": "11"
-            },
-            {
-              "#text": "Coal and peat",
-              "@level": "2",
-              "@classId": "110"
-            },
-            {
-              "#text": "Hard coal",
-              "@level": "3",
-              "@classId": "1101"
-            },
-            {
-              "#text": "Bituminous Coal",
-              "@level": "4",
-              "@classId": "11012"
-            },
-            {
-              "#text": "Coking coal",
-              "@level": "5",
-              "@classId": "11012.1"
             }
-          ],
+          },
+          "version": "04.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
           "reasoning": ""
         },
         {
-          "uuid": "ec4b882e-3ec8-4756-9689-fa8760c16811",
-          "base_name": "hard coal, gas coal",
-          "treatment_standards_routes": "洗选加工处理",
-          "mix_and_location_types": "production mix, in the coal washing plant",
+          "uuid": "7c324fa4-13d8-4ba6-8d8a-d33e6fc6bb26",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
           "flow_properties": {
-            "flowProperty": [
-              {
-                "meanValue": "1.0",
-                "@dataSetInternalID": "0",
-                "referenceToFlowPropertyDataSet": {
-                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
-                  "@type": "flow property data set",
-                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
-                  "common:shortDescription": {
-                    "#text": "Mass",
-                    "@xml:lang": "en"
-                  }
-                }
-              },
-              {
-                "meanValue": "26.377",
-                "@dataSetInternalID": "1",
-                "referenceToFlowPropertyDataSet": {
-                  "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200c9a66.xml",
-                  "@type": "flow property data set",
-                  "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
-                  "common:shortDescription": [
-                    {
-                      "#text": "Net calorific value",
-                      "@xml:lang": "en"
-                    },
-                    {
-                      "#text": "净热值, 低位热值",
-                      "@xml:lang": "zh"
-                    }
-                  ]
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
                 }
               }
-            ]
-          },
-          "version": "01.01.000",
-          "general_comment": "Gas coal is a less metamorphosed bituminous coal characterized by a high dry, ashless volatile matter content, usually greater than 28% to 37%. Gas coal is so called because it produces large quantities of gas and tar when heated in isolation from the air. It is mainly used for coking, but is also used as a power coal and for gasification.",
-          "geography": null,
-          "classification": [
-            {
-              "#text": "Ores and minerals; electricity, gas and water",
-              "@level": "0",
-              "@classId": "1"
-            },
-            {
-              "#text": "Coal and peat",
-              "@level": "1",
-              "@classId": "11"
-            },
-            {
-              "#text": "Coal and peat",
-              "@level": "2",
-              "@classId": "110"
-            },
-            {
-              "#text": "Hard coal",
-              "@level": "3",
-              "@classId": "1101"
-            },
-            {
-              "#text": "Bituminous Coal",
-              "@level": "4",
-              "@classId": "11012"
-            },
-            {
-              "#text": "Coking coal",
-              "@level": "5",
-              "@classId": "11012.1"
             }
-          ],
+          },
+          "version": "00.00.002",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94a8-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94ab-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94ac-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94aa-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94ae-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94af-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94ad-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "7c324fa4-13d8-4ba6-8d8a-d33e6fc6bb26",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "00.00.002",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94b0-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94b1-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
+          "reasoning": ""
+        },
+        {
+          "uuid": "08a91e70-3ddc-11dd-94ad-0050c2490048",
+          "base_name": "hydrogen sulfide",
+          "treatment_standards_routes": null,
+          "mix_and_location_types": null,
+          "flow_properties": {
+            "flowProperty": {
+              "meanValue": "1.0",
+              "@dataSetInternalID": "0",
+              "referenceToFlowPropertyDataSet": {
+                "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+                "@type": "flow property data set",
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "common:shortDescription": {
+                  "#text": "Mass",
+                  "@xml:lang": "en"
+                }
+              }
+            }
+          },
+          "version": "03.00.004",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "geography": null,
+          "classification": null,
           "reasoning": ""
         }
       ],
@@ -661,450 +1223,1462 @@
           "base_name": "Methanol (market average)",
           "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "硬煤; 弱黏煤",
-          "general_comment": "弱黏煤的干燥无灰基挥发分(Vdaf)大于20%至37%，粘结指数(G)大于5至30。弱黏煤属于非炼焦煤，主要用作工业和民用燃料，也可用作气化原料。中国弱黏煤的灰分和硫分比较低，在炼焦配合煤中，当有足够量的强粘结性肥煤时，可以部分地配入弱粘煤，以降低焦炭中的灰分和硫分。",
+          "base_name": "natural gas in the gaseous state",
+          "general_comment": "Natural gas undergoes compression treatment at the production stage and is transported to consumers through pipelines. The quality of the natural gas meets the national gas standards. At the consumption stage, natural gas is utilized for various purposes, often involving mixing with other energy forms or fuels during its use.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Raw gas",
-          "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "hard coal, gas coal",
-          "general_comment": "Gas coal is a less metamorphosed bituminous coal characterized by a high dry, ashless volatile matter content, usually greater than 28% to 37%. Gas coal is so called because it produces large quantities of gas and tar when heated in isolation from the air. It is mainly used for coking, but is also used as a power coal and for gasification.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Coal gas",
-          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "硬煤; 1/3焦煤",
-          "general_comment": "1/3焦煤是介于焦煤、肥煤和气煤之间的过渡煤种，具有中高挥发分的强粘结性煤。这种煤在单独炼焦时能够生成熔融性好、强度较高的焦炭。1/3焦煤的干燥无灰基挥发分(Vdaf)通常在28%至37%之间，粘结指数(G)大于65，胶质层最大厚度(y)小于或等于25mm。1/3焦煤由于其产量高，因此它主要用于炼焦和发电。此外，1/3焦煤的灰、硫含量和可选性通常要优于肥煤和焦煤，这也是1/3焦煤的一个优势。在炼焦特性上，1/3焦煤的焦炭性能如抗碎强度(M40)和耐磨强度(M10)虽然略逊于肥煤和焦煤，但比其他煤类更接近于优质焦煤，具有很好的结焦性能。",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Sulphur, recovered",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "硬煤; 1/3焦煤",
-          "general_comment": "1/3焦煤是介于焦煤、肥煤和气煤之间的过渡煤种，具有中高挥发分的强粘结性煤。这种煤在单独炼焦时能够生成熔融性好、强度较高的焦炭。1/3焦煤的干燥无灰基挥发分(Vdaf)通常在28%至37%之间，粘结指数(G)大于65，胶质层最大厚度(y)小于或等于25mm。1/3焦煤由于其产量高，因此它主要用于炼焦和发电。此外，1/3焦煤的灰、硫含量和可选性通常要优于肥煤和焦煤，这也是1/3焦煤的一个优势。在炼焦特性上，1/3焦煤的焦炭性能如抗碎强度(M40)和耐磨强度(M10)虽然略逊于肥煤和焦煤，但比其他煤类更接近于优质焦煤，具有很好的结焦性能。",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "硬煤; 1/2中黏煤",
-          "general_comment": "1/2中黏煤（1/2 medium caking coal）是一种中等粘结性的中高挥发分烟煤。它的干燥无灰基挥发分(Vdaf)范围从23号煤的大于20.0%至28.0%，到33号煤的大于28.0%至37.0%，粘结指数(G)范围从23号煤的大于30至50，到33号煤的大于33至50。这种煤介于气煤和弱粘煤之间，结焦性中等，可作为炼焦煤使用。在单独炼焦时，1/2中黏煤能生成一定强度的焦炭，因此可以作为配煤炼焦的原料。然而，粘结性较弱的1/2中黏煤单独炼焦时，生成的焦炭强度较差，粉焦率高，因此这种煤也常作为气化用煤或动力用煤，在配煤炼焦时也可适当配入。",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "硬煤; 弱黏煤",
-          "general_comment": "弱黏煤的干燥无灰基挥发分(Vdaf)大于20%至37%，粘结指数(G)大于5至30。弱黏煤属于非炼焦煤，主要用作工业和民用燃料，也可用作气化原料。中国弱黏煤的灰分和硫分比较低，在炼焦配合煤中，当有足够量的强粘结性肥煤时，可以部分地配入弱粘煤，以降低焦炭中的灰分和硫分。",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "硬煤; 气肥煤",
-          "general_comment": "气肥煤（gas-fat coal），也称为液肥煤，是一种挥发分和胶质层都很高的强粘结性肥煤类。它的炼焦性能介于肥煤和气煤之间，单独炼焦时能产生大量的气体和液体化学产品。气肥煤最适合于高温干馏制造煤气，也可用于炼焦配煤，以增加化学产品产率。根据中国煤炭分类国家标准，气肥煤的干燥无灰基挥发分(Vdaf)大于37%，胶质层最大厚度y大于25mm。",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "hard coal, meager lean coal",
-          "general_comment": "Meager lean coal is a kind of bituminous coal, its dry ashless volatile fraction (Vdaf) is more than 10% to 20%, and the bond index (G) is more than 5 to 20. this kind of coal produces very few colloidal bodies when heated, and can't be smelted into lump coke alone, which belongs to the transition coal between coking coal and non-coking coal. Poor lean coal has poor coking property and produces a lot of coke powder when coking alone, but when mixed with other coals suitable for coking, it can be used as a coking coal and play the role of leaning agent. In addition, lean coal is also a good fuel for civil use and power, and can be used in power generation, power station boilers and civil fuel.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Coal gas",
-          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "硬煤; 瘦煤",
-          "general_comment": "瘦煤（Thin Coal）是一种变质程度较高的烟煤，具有较低的挥发分和中等的粘结性。它的干燥无灰基挥发分(Vdaf)通常在10%至20%之间，黏结指数(G)在20至65之间。瘦煤在加热时产生的胶质体较少，单独炼焦时，生成的焦炭块大、裂纹少，但熔融性较差，耐磨强度低。瘦煤主要用作炼焦煤，尤其在配煤炼焦中，它可以作为瘦化剂，与其他煤种混合使用，以提高焦炭的块度和减少裂纹。",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Methanol (market average)",
-          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Coal gas",
-          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "methanol",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "硬煤; 1/2中黏煤",
-          "general_comment": "1/2中黏煤（1/2 medium caking coal）是一种中等粘结性的中高挥发分烟煤。它的干燥无灰基挥发分(Vdaf)范围从23号煤的大于20.0%至28.0%，到33号煤的大于28.0%至37.0%，粘结指数(G)范围从23号煤的大于30至50，到33号煤的大于33至50。这种煤介于气煤和弱粘煤之间，结焦性中等，可作为炼焦煤使用。在单独炼焦时，1/2中黏煤能生成一定强度的焦炭，因此可以作为配煤炼焦的原料。然而，粘结性较弱的1/2中黏煤单独炼焦时，生成的焦炭强度较差，粉焦率高，因此这种煤也常作为气化用煤或动力用煤，在配煤炼焦时也可适当配入。",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "methanol",
+          "base_name": "(3-ethyloxetan-3-yl)methanol",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "methanol",
-          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Gas oil",
-          "general_comment": "Gas oil refers to a fraction obtained by the fractional distillation of crude oil or other secondary processed oils in an oil refinery, with a boiling point range of 200-380°C. The gas oil distilled from the atmospheric tower is called atmospheric gas oil (AGO) or gas oil, and the gas oil obtained from vacuum distillation is called vacuum gas oil (VGO) or wax oil. It can be an intermediate distillate fuel containing certain heavy distillate oils for specific purposes.\n\nNote 1: This distillate oil can be used for blending vehicle gas oil, heating oil, and marine distillate fuel.\nNote 2: It refers to atmospheric gas oil (AGO) or vacuum gas oil (VGO) generally within the distillation range of 250°C to 500°C; VGO is also known as straight-run wax oil.\nNote 3: The once-used term: gas oil.  ",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "coke oven gas",
-          "general_comment": "Coke Oven Gas (COG) is a strong fuel produced during the manufacture of metallurgical coke by heating bituminous coal to temperatures of 900°C to 1000°C in a chamber from which air is excluded. It is less useful compared to other injected fuels in the lower part of the blast furnace. As a coking product, COG is a combustible gas produced simultaneously along with coke and tar. The main constituents are, by volume, about 50% hydrogen, 30% methane and 3% higher hydrocarbons, 7% carbon monoxide.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Raw gas",
-          "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "methanol",
-          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Oil, crude",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Methanol (market average)",
-          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "Crude Syngas",
           "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(3-ethyloxetan-3-yl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "Syngas",
           "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Raw gas",
-          "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Producer gas",
-          "general_comment": "Producer gas: A fuel gas generated from solid fuels such as coal or biomass through gasification, typically used for heat and power generation. Its production involves the partial combustion of the material to a gaseous product that includes carbon monoxide, hydrogen, and nitrogen. Producer gas is often utilized within the same facility where it is produced, being a part of a production mix, and is available 'at plant' with no further treatment required after generation.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Copper catalyst",
-          "general_comment": "Copper catalysts play an important role in industrial settings, such as the water-gas shift reaction, partial oxidation of methanol, methanol synthesis from CO2, conversion of esters to alcohols, and selective hydrogenation of oils, among many others. Copper is a less active metal that does not combine with oxygen in dry air at room temperature.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Coal gas",
-          "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "methanol",
+          "base_name": "(3-ethyloxetan-3-yl)methanol",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Methylamine",
-          "general_comment": "Methylamine is an organic compound. This colorless gas is a derivative of ammonia but with one hydrogen atom being replaced by a methyl group. It is the simplest primary amine. Methylamine is sold as a solution in methanol ethanol tetrahydrofuran or water or as the anhydrous gas in pressurized metal containers. It has a strong ammoniacal odor and is used especially in organic synthesis (as of dyes and insecticides).",
+          "base_name": "cobalt sulfate",
+          "general_comment": "Cobalt(II) sulfate is an inorganic compound with the formula CoSO 4 (H 2 O) x. It usually refers to the hexa- or heptahydrates CoSO 4. 6H 2 O or CoSO 4. 7H 2 O. The heptahydrate is a red solid that is soluble in water and methanol. It is used especially for heat-resistant and magnetic alloys. The metal was isolated by Swedish chemist Georg Brandt.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Methylamine",
-          "general_comment": "Methylamine is an organic compound with a formula of CH3NH2. This colorless gas is a derivative of ammonia, but with one hydrogen atom being replaced by a methyl group. It is the simplest primary amine. Methylamine is sold as a solution in methanol, ethanol, tetrahydrofuran, or water, or as the anhydrous gas in pressurized metal containers. It is used especially in organic synthesis (as of dyes and insecticides).",
+          "base_name": "Alcohol-based fuel",
+          "general_comment": "Alcohol-based fuels are used in automotive applications, particularly as high-octane fuels for racing cars. They burn more completely and thus produce lower emissions. Two types of alcohol are distinguished: ethanol and methanol. Ethanol is a fuel made from ethyl alcohol, commonly distilled from plant sources such as corn, grain, grass, and sugar. It can also be made from discarded newspapers and other organic substances. The plant materials used in its production are known collectively as biomass, making it a renewable, relatively eco-friendly fuel for vehicles.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "MP-N2",
-          "general_comment": null,
+          "base_name": "Natural gas, high pressure",
+          "general_comment": "LP natural gas input for NGTM per tonne methanol.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Ammonia",
-          "general_comment": null,
+          "base_name": "Natural gas, high pressure",
+          "general_comment": "LP natural gas input for NGTM per tonne methanol.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Slag, gasification",
-          "general_comment": null,
+          "base_name": "residues (petroleum), catalytic reformer fractionator",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Flue gas",
-          "general_comment": null,
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Effluent, wastewater",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "HP-steam",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Methanol",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "CO2, process emission",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Synthetic gas (syngas)",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Gangue (coal mining waste)",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "Methanol (market average)",
           "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "硬煤; 弱黏煤",
-          "general_comment": "弱黏煤的干燥无灰基挥发分(Vdaf)大于20%至37%，粘结指数(G)大于5至30。弱黏煤属于非炼焦煤，主要用作工业和民用燃料，也可用作气化原料。中国弱黏煤的灰分和硫分比较低，在炼焦配合煤中，当有足够量的强粘结性肥煤时，可以部分地配入弱粘煤，以降低焦炭中的灰分和硫分。",
+          "base_name": "residues (petroleum), catalytic reformer fractionator",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "residues (petroleum), catalytic reformer fractionator",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Alcohol-based fuel",
+          "general_comment": "Alcohol-based fuels are used in automotive applications, particularly as high-octane fuels for racing cars. They burn more completely and thus produce lower emissions. Two types of alcohol are distinguished: ethanol and methanol. Ethanol is a fuel made from ethyl alcohol, commonly distilled from plant sources such as corn, grain, grass, and sugar. It can also be made from discarded newspapers and other organic substances. The plant materials used in its production are known collectively as biomass, making it a renewable, relatively eco-friendly fuel for vehicles.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "gases (petroleum), catalytic-cracked gas oil depropanizer bottoms, c4-rich acid-free",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "residues (petroleum), catalytic reformer fractionator",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "tert-Butyl methyl ether",
+          "general_comment": "Methyl tert-butyl ether (MTBE), also known as tert-butyl methyl ether, is an organic compound. MTBE is a volatile, flammable, and colorless liquid that is sparingly soluble in water. It is primarily used as a fuel additive, blended into gasoline to increase its octane rating and knock resistance, and reduce unwanted emissions. It is a clear, colorless liquid with a low viscosity that is combustible and has a distinct, turpentine-like odor. It is miscible with organic solvents, but only slightly soluble in water.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "CO2, captured",
+          "general_comment": "Captured CO2 input to hydrogenation process, CCTM.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "CO2, captured",
+          "general_comment": "Captured CO2 input to hydrogenation process, CCTM.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "交流电",
+          "general_comment": "本数据集描述了1-35kV中压交流电的产品流，从电力生产、传输到最终供应给使用电力的用户。该数据集专为用户侧的电力使用而设计，反映了多种电力来源的混合，包括化石燃料、核能和可再生能源等不同发电方式的组合。数据集符合国际生命周期数据系统 (ILCD) 的相关规定，满足方法学、数据质量、命名规范、审核和文档等方面的要求，确保数据的准确性和适用性，特别是针对电力用户的环境影响评估。",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "methanol",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "water vapour",
+          "base_name": "(3-ethyloxetan-3-yl)methanol",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(3-ethyloxetan-3-yl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "cobalt sulfate",
+          "general_comment": "Cobalt(II) sulfate is an inorganic compound with the formula CoSO 4 (H 2 O) x. It usually refers to the hexa- or heptahydrates CoSO 4. 6H 2 O or CoSO 4. 7H 2 O. The heptahydrate is a red solid that is soluble in water and methanol. It is used especially for heat-resistant and magnetic alloys. The metal was isolated by Swedish chemist Georg Brandt.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Alcohol-based fuel",
+          "general_comment": "Alcohol-based fuels are used in automotive applications, particularly as high-octane fuels for racing cars. They burn more completely and thus produce lower emissions. Two types of alcohol are distinguished: ethanol and methanol. Ethanol is a fuel made from ethyl alcohol, commonly distilled from plant sources such as corn, grain, grass, and sugar. It can also be made from discarded newspapers and other organic substances. The plant materials used in its production are known collectively as biomass, making it a renewable, relatively eco-friendly fuel for vehicles.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Separator paper",
+          "general_comment": "Separator paper refers to a type of paper designed to act as a barrier between layers of material, preventing them from sticking together or getting damaged. In the context of a Life Cycle Assessment data, the description may cover the treatment the paper has undergone, standards it complies with, its quality attributes, how it is used, the production route, and the raw materials input or educt name. Furthermore, it may include information on whether the paper is distributed as part of a production or consumption mix and detail its availability at specific locations such as to the consumer or at the plant.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Electricity, medium voltage",
+          "general_comment": "Electricity for natural gas methanol synthesis (NGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Electricity, medium voltage",
+          "general_comment": "Electricity for natural gas methanol synthesis (NGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "coke",
+          "general_comment": "Coke, also known as metallurgical coke, is a solid fuel mainly composed of carbon. It is made by heating coal in a retort to a high temperature ( about 1000 ° C ) and retorting under the condition of isolating air. This process is called coking, which is a chemical process of converting coal into coke. Coke has higher fixed carbon content and lower ash and sulfur content, which makes it have better reducibility and structural strength at high temperature. Coke is one of the indispensable raw materials in metallurgical industry because of its high calorific value, less and lasting flame during combustion.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "Coal gas",
           "general_comment": "The product flow of coal gas involves the gasification of coal to produce a combustible gas mixture. This typically encompasses the processing and treatment of coal, compliance with relevant standards, quality control measures, end-use applications, and the production method, which usually involves partial combustion of coal in an oxygen-deficient atmosphere. Educt name for coal gas is typically coal. Moreover, the description implies whether the product is offered within a production mix or as a consumer-ready fuel, and the point of transfer, such as 'to consumer' or 'at plant'.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "water vapour",
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Gas oil",
+          "general_comment": "Gas oil refers to a fraction obtained by the fractional distillation of crude oil or other secondary processed oils in an oil refinery, with a boiling point range of 200-380°C. The gas oil distilled from the atmospheric tower is called atmospheric gas oil (AGO) or gas oil, and the gas oil obtained from vacuum distillation is called vacuum gas oil (VGO) or wax oil. It can be an intermediate distillate fuel containing certain heavy distillate oils for specific purposes.\n\nNote 1: This distillate oil can be used for blending vehicle gas oil, heating oil, and marine distillate fuel.\nNote 2: It refers to atmospheric gas oil (AGO) or vacuum gas oil (VGO) generally within the distillation range of 250°C to 500°C; VGO is also known as straight-run wax oil.\nNote 3: The once-used term: gas oil.  ",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Liquefied petroleum gas",
+          "general_comment": "Liquefied Petroleum Gas (LPG) is a product flow characterized by being a flammable mixture of hydrocarbon gases used as fuel in heating appliances, cooking equipment, and vehicles. It typically contains processing levels involving refining and condensation, adherence to safety and quality standards, and is commonly used as a heating source or automotive fuel. The production involves the separation and collection of gases during natural gas purification or oil refining, with educt names including propane and butane. It can be part of both production and consumption mixes and is available in cylinders or bulk for various sectors like domestic, commercial, and industrial 'to consumer', or 'at plant'.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "metallurgical coke",
+          "general_comment": "Metallurgical coke is a kind of solid fuel with high strength and high porosity, which is made of high quality coal at high temperature. Metallurgical coke plays the role of heat source, reducing agent and material column skeleton in the process of blast furnace smelting, and plays a vital role in metallurgical production. Since more than 90 % of the metallurgical coke is used for blast furnace ironmaking, blast furnace coke is often referred to as metallurgical coke.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Production from pyrolysis （tar，syngas，char）",
+          "general_comment": "Conduction oil heating is indirect heating through the heat conduction oil in the refinery tank. It has a high energy consumption but offers high temperature control accuracy making it suitable for large scale operations. Conduction oil has a high boiling point and is usually used in industries that require temperatures of 150~350℃ instead of steam. The hot oil has high transfer efficiency fast heat transfer and good thermal stability.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Coal-based powdered activated carbon",
+          "general_comment": "Coal based activated carbon, abbreviated as activated carbon, is a granular substance prepared from coal as a raw material. It has a very high internal porosity and specific surface area, and these pore structures can effectively adsorb and store gas, liquid, and solute molecules. The adsorption performance of activated carbon is attributed to its developed pore structure and high specific surface area, which can be applied in multiple fields such as water treatment, air purification, exhaust gas treatment, and solvent recovery.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Coke oven gas (COG)",
+          "general_comment": "Feedstock entering methanol synthesis stage, COTM.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Alcohol-based fuel",
+          "general_comment": "Alcohol-based fuels are used in automotive applications, particularly as high-octane fuels for racing cars. They burn more completely and thus produce lower emissions. Two types of alcohol are distinguished: ethanol and methanol. Ethanol is a fuel made from ethyl alcohol, commonly distilled from plant sources such as corn, grain, grass, and sugar. It can also be made from discarded newspapers and other organic substances. The plant materials used in its production are known collectively as biomass, making it a renewable, relatively eco-friendly fuel for vehicles.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Solid Carbon Source",
+          "general_comment": "Solid carbon sources refer to materials that contain a high percentage of carbon and can be used for various applications, including as a source of energy, chemical synthesis, and metallurgical processes. Common solid carbon sources include coal, which is rich in carbon and the largest commercial source of mineral carbon, and biomass materials such as crop straw and fruit peel. They are advantageous due to their sustainable carbon release, environmental protection, economic safety, and practicality.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Abiotic Depletion Potential",
+          "general_comment": "Abiotic Depletion Potential (ADP) is a method used in Life Cycle Assessment (LCA) to analyze the impact of an object on the world around it. It is the most widely accepted LCIA method. However, it has limitations such as neglecting resources that can be recycled. Depletion of abiotic resources is a disputed impact category in LCA due to different problem definitions and choices regarding parameters and data. The LCA results identified abiotic depletion potential for fossil fuels (ADPF) as key impact indicators.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Biomass, dry",
+          "general_comment": "Biomass straw; BOTM route input per tonne.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Biomass, dry",
+          "general_comment": "Biomass straw; BOTM route input per tonne.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "solvent naphtha (petroleum), light arom.",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Gas oil",
+          "general_comment": "Gas oil refers to a fraction obtained by the fractional distillation of crude oil or other secondary processed oils in an oil refinery, with a boiling point range of 200-380°C. The gas oil distilled from the atmospheric tower is called atmospheric gas oil (AGO) or gas oil, and the gas oil obtained from vacuum distillation is called vacuum gas oil (VGO) or wax oil. It can be an intermediate distillate fuel containing certain heavy distillate oils for specific purposes.\n\nNote 1: This distillate oil can be used for blending vehicle gas oil, heating oil, and marine distillate fuel.\nNote 2: It refers to atmospheric gas oil (AGO) or vacuum gas oil (VGO) generally within the distillation range of 250°C to 500°C; VGO is also known as straight-run wax oil.\nNote 3: The once-used term: gas oil.  ",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Heavy oil",
+          "general_comment": "Heavy crude oil (or extra heavy crude oil) is highly viscous oil that cannot easily flow from production wells under normal reservoir conditions. It is referred to as 'heavy' because its density or specific gravity is higher than that of light crude oil. Heavy crude oil has been defined as any liquid petroleum with an API gravity less than 20°. Heavy oil is a type of crude oil that is different from conventional crude oil insofar as they are much more difficult to recover from the subsurface reservoir.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "solvent naphtha (petroleum), light aliph.",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "naphtha (petroleum), solvent-refined light",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "naphtha (petroleum), hydrodesulfurized light",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Wash oil",
+          "general_comment": "Wash oil is one of the light fractions extracted during the coal tar distillation process, which relies on optimizing the production mix at the plant. Wash oil plays a significant role in chemical and industrial applications, often used for aromatic hydrocarbon recovery or as a solvent. The products generated in the coal tar distillation process have a net calorific value of 33.453 MJ/kg, reflecting their economic potential for energy and material recovery.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "naphtha (petroleum), hydrodesulfurized light",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "naphtha (petroleum), light straight-run",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "naphtha (petroleum), hydrodesulfurized light",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Oil, light crude",
+          "general_comment": "Oil as process input to CGTM route.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Oil, light crude",
+          "general_comment": "Oil as process input to CGTM route.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Landfill disposal",
+          "general_comment": "Landfill disposal refers to the process of managing and disposing of various types of waste, including municipal solid waste (MSW), construction and demolition debris (C&D), hazardous waste, and coal combustion residuals (CCRs or coal ash). Landfills are well-engineered facilities designed to protect the environment from contaminants present in the solid waste. They are built to hold a wide range of waste, from manufacturing and construction waste to agriculture waste. An industrial waste landfill includes all disposal areas at the facility.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(3-ethyloxetan-3-yl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(3-ethyloxetan-3-yl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "waste Impurities",
+          "general_comment": "Waste impurities refer to toxic chemicals in waste that can be recovered through various methods such as solvent recovery and metals recovery. These impurities are removed in the Secondary Treatment stage for reuse. Advanced Treatment removes additional impurities and compresses the waste into a high-Btu gas. Wastewater treatment is another method of removing impurities from wastewater before it reaches aquifers or natural bodies of water. Impurities such as dirt, metal scrapings, water, or chemicals can get mixed in with used oil.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Municipal solid waste landfill",
+          "general_comment": "A municipal solid waste landfill (MSWLF) is a discrete area of land or excavation that receives household waste. It may also receive other types of nonhazardous wastes, such as commercial solid waste, nonhazardous sludge, conditionally exempt small quantity generator waste, and industrial nonhazardous solid waste. A bioreactor landfill is a type of MSWLF in which liquids are added to help bacteria break down the waste.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol, purified",
+          "general_comment": "Reference product for all routes; represents 1 tonne delivered at plant gate.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol, purified",
+          "general_comment": "Reference product for all routes; represents 1 tonne delivered at plant gate.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "hard coal, fat coal",
+          "general_comment": "Fat coal is a kind of bituminous coal with moderate metamorphism. It is a kind of coking coal and has good cohesiveness. The dry ash-free base volatile Vdaf of fat coal is generally between 10 % and 37 %, the maximum thickness of the resin layer y is usually greater than 25 mm, and the Oya expansion degree b is greater than 150 % ( for bituminous coal with Vdaf greater than 28 %, b is greater than 220 % ). When the fat coal is heated, a large number of colloids can be produced. The coke produced when coking alone is good in melting, but there are more transverse cracks, and the coke root part has bee coke. The main use of fat coal is coking, and some high-ash and high-sulfur fat coal is also used for power generation. In coking, fat coal usually needs to be mixed with other coals to optimize the quality of coke.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "raw coal",
+          "general_comment": "Raw coal refers to unwashed and unprocessed coal products mined from coal mines. 2.Raw coal will contain impurities such as coal gangue and pyrite during the mining process, and it needs to be screened and processed to remove these impurities to obtain hard coal ( bituminous coal / anthracite ) / lignite products. 3.Lignite accounts for about 13 % of China 's coal reserves, and hard coal ( bituminous coal, anthracite ) accounts for about 72.35 %, the proportion of bituminous coal in hard coal is high, so the raw coal is classified as hard coal-bituminous coal classification option.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "coal gangue",
+          "general_comment": "Coal gangue refers to the solid waste produced in the process of coal mining and washing. It is mainly composed of a mixture of carbonaceous, argillaceous and sandy shale, usually containing lower calorific value and higher ash content. The formation of coal gangue is related to the mining method, geological conditions and washing process of coal. It is a common by-product in the coal industry.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "coal gangue",
+          "general_comment": "Coal gangue refers to the solid waste produced in the process of coal mining and washing. It is mainly composed of a mixture of carbonaceous, argillaceous and sandy shale, usually containing lower calorific value and higher ash content. The formation of coal gangue is related to the mining method, geological conditions and washing process of coal. It is a common by-product in the coal industry.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "硬煤; 1/2中黏煤",
+          "general_comment": "1/2中黏煤（1/2 medium caking coal）是一种中等粘结性的中高挥发分烟煤。它的干燥无灰基挥发分(Vdaf)范围从23号煤的大于20.0%至28.0%，到33号煤的大于28.0%至37.0%，粘结指数(G)范围从23号煤的大于30至50，到33号煤的大于33至50。这种煤介于气煤和弱粘煤之间，结焦性中等，可作为炼焦煤使用。在单独炼焦时，1/2中黏煤能生成一定强度的焦炭，因此可以作为配煤炼焦的原料。然而，粘结性较弱的1/2中黏煤单独炼焦时，生成的焦炭强度较差，粉焦率高，因此这种煤也常作为气化用煤或动力用煤，在配煤炼焦时也可适当配入。",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Hard coal, mine",
+          "general_comment": "Input for CGTM; mine-to-plant delivery.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methane",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "4,4'-methylenebis(n,n-dimethylaniline)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methane, emission",
+          "general_comment": "Methane vented/leaked in mining (CGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methane, emission",
+          "general_comment": "Methane vented/leaked in mining (CGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Hydrogen, gas",
+          "general_comment": "Hydrogen input to methanol synthesis, BOTM.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "交流电",
+          "general_comment": "本数据集描述了0.22-1kV低压交流电的产品流，从电力生产、传输到最终供应给使用电力的用户。该数据集专为用户侧的电力使用而设计，反映了多种电力来源的混合，包括化石燃料、核能和可再生能源等不同发电方式的组合。数据集符合国际生命周期数据系统 (ILCD) 的相关规定，满足方法学、数据质量、命名规范、审核和文档等方面的要求，确保数据的准确性和适用性，特别是针对电力用户的环境影响评估。",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Solid Waste",
+          "general_comment": "Solid waste refers to materials regulated by the Resource Conservation and Recovery Act (RCRA) and includes both hazardous and non-hazardous waste. Under RCRA, only materials that meet the definition of solid waste can be classified as hazardous wastes. In 2018, about 146.1 million tons of municipal solid waste (MSW) were landfilled in the United States, with food being the largest component at about 24 percent, followed by plastics at over 18 percent, and paper and paperboard at about 12 percent. The Environmental Protection Agency (EPA) defines solid waste as any material that is discarded and not subject to an exclusion or variance, which includes materials that are abandoned, recycled, or inherently waste-like. The EPA also provides information on best practices for waste management and has developed tools for identifying appropriate waste staging and storage.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Alternating current ",
+          "general_comment": "Electricity for thermal power is generated by thermal power plants using fuels such as oil, liquid natural gas (LNG), coal, and other substances. These plants burn fuels to create steam power that rotates generators, producing electricity. Thermal power generation is crucial for electricity supply due to its adaptability, reliability, availability, and economy of scale. Despite coal plants being phased out due to emissions, natural gas and biomass plants are on the rise.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Energy,unspecified",
+          "general_comment": "Energy, unspecified, can refer to various forms of energy that are not clearly defined or specified. This can include energy related to physical or mental states, such as fatigue or mental disorders, or energy in the context of resources, such as household energy insecurity or renewable energy sources. The term can also refer to energy in the context of scientific or technical fields, where it may be used when the specific type of energy is not identified.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Primary energy",
+          "general_comment": "Primary energy (PE) is the energy found in nature that has not been subjected to any human engineered conversion process. It encompasses energy contained in raw fuels and other forms of energy, including waste, received as input to a system. Primary energy can be non-renewable or renewable. Primary energy is the energy that's harvested directly from natural resources. Sources of primary energy fall into two basic categories, primary fuels and primary energy flows.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Hazardous Solid Waste",
+          "general_comment": "Hazardous solid waste is a term used in the hazardous waste management program. It is defined by the EPA's hazardous waste regulations under RCRA Subtitle C. This type of waste can cause substantial harm to human health and the environment if improperly handled. It can take the form of solids, liquids, sludges, or contained gases, and is primarily generated by chemical production, manufacturing, and other industrial activities. A solid waste derived from a hazardous waste is not considered hazardous when it no longer exhibits any characteristic of hazardous waste.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(4-methoxyphenyl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(5-ethyl-1,3-dioxan-5-yl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Electricity, medium voltage",
+          "general_comment": "Electricity input for methanol synthesis (CGTM), Chinese grid mix.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Electricity, medium voltage",
+          "general_comment": "Electricity input for methanol synthesis (CGTM), Chinese grid mix.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Landfill disposal",
+          "general_comment": "Landfill disposal refers to the process of managing and disposing of various types of waste, including municipal solid waste (MSW), construction and demolition debris (C&D), hazardous waste, and coal combustion residuals (CCRs or coal ash). Landfills are well-engineered facilities designed to protect the environment from contaminants present in the solid waste. They are built to hold a wide range of waste, from manufacturing and construction waste to agriculture waste. An industrial waste landfill includes all disposal areas at the facility.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Waste Residue",
+          "general_comment": "Waste residue refers to secondary renewable, bio-based, or biogenic materials not intended as the primary outcome of industrial and commercial processes. It includes a variety of materials such as paper/cardboard, plastics, glass, aluminum, batteries, electronics, food, lawn materials, used oil, household hazardous waste, tires, metal, and miscellaneous items. Waste residue encompasses different types of waste like municipal solid waste, hazardous waste, industrial non-hazardous waste, agricultural and animal waste, medical waste, radioactive waste, construction and demolition debris, extraction and mining waste, oil and gas production waste, fossil fuel combustion waste, and sewage sludge.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "waste Impurities",
+          "general_comment": "Waste impurities refer to toxic chemicals in waste that can be recovered through various methods such as solvent recovery and metals recovery. These impurities are removed in the Secondary Treatment stage for reuse. Advanced Treatment removes additional impurities and compresses the waste into a high-Btu gas. Wastewater treatment is another method of removing impurities from wastewater before it reaches aquifers or natural bodies of water. Impurities such as dirt, metal scrapings, water, or chemicals can get mixed in with used oil.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Municipal solid waste landfill",
+          "general_comment": "A municipal solid waste landfill (MSWLF) is a discrete area of land or excavation that receives household waste. It may also receive other types of nonhazardous wastes, such as commercial solid waste, nonhazardous sludge, conditionally exempt small quantity generator waste, and industrial nonhazardous solid waste. A bioreactor landfill is a type of MSWLF in which liquids are added to help bacteria break down the waste.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Energy,unspecified",
+          "general_comment": "Energy, unspecified, can refer to various forms of energy that are not clearly defined or specified. This can include energy related to physical or mental states, such as fatigue or mental disorders, or energy in the context of resources, such as household energy insecurity or renewable energy sources. The term can also refer to energy in the context of scientific or technical fields, where it may be used when the specific type of energy is not identified.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Gangue",
+          "general_comment": "CGTM mining waste (sent to landfill).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Gangue",
+          "general_comment": "CGTM mining waste (sent to landfill).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Solid Waste",
+          "general_comment": "Solid waste refers to materials regulated by the Resource Conservation and Recovery Act (RCRA) and includes both hazardous and non-hazardous waste. Under RCRA, only materials that meet the definition of solid waste can be classified as hazardous wastes. In 2018, about 146.1 million tons of municipal solid waste (MSW) were landfilled in the United States, with food being the largest component at about 24 percent, followed by plastics at over 18 percent, and paper and paperboard at about 12 percent. The Environmental Protection Agency (EPA) defines solid waste as any material that is discarded and not subject to an exclusion or variance, which includes materials that are abandoned, recycled, or inherently waste-like. The EPA also provides information on best practices for waste management and has developed tools for identifying appropriate waste staging and storage.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Hazardous Solid Waste",
+          "general_comment": "Hazardous solid waste is a term used in the hazardous waste management program. It is defined by the EPA's hazardous waste regulations under RCRA Subtitle C. This type of waste can cause substantial harm to human health and the environment if improperly handled. It can take the form of solids, liquids, sludges, or contained gases, and is primarily generated by chemical production, manufacturing, and other industrial activities. A solid waste derived from a hazardous waste is not considered hazardous when it no longer exhibits any characteristic of hazardous waste.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "waste Impurities",
+          "general_comment": "Waste impurities refer to toxic chemicals in waste that can be recovered through various methods such as solvent recovery and metals recovery. These impurities are removed in the Secondary Treatment stage for reuse. Advanced Treatment removes additional impurities and compresses the waste into a high-Btu gas. Wastewater treatment is another method of removing impurities from wastewater before it reaches aquifers or natural bodies of water. Impurities such as dirt, metal scrapings, water, or chemicals can get mixed in with used oil.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Alcohol-based fuel",
+          "general_comment": "Alcohol-based fuels are used in automotive applications, particularly as high-octane fuels for racing cars. They burn more completely and thus produce lower emissions. Two types of alcohol are distinguished: ethanol and methanol. Ethanol is a fuel made from ethyl alcohol, commonly distilled from plant sources such as corn, grain, grass, and sugar. It can also be made from discarded newspapers and other organic substances. The plant materials used in its production are known collectively as biomass, making it a renewable, relatively eco-friendly fuel for vehicles.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Electricity, renewable (mix Bio-IGCC/PV)",
+          "general_comment": "Total electricity for electrolysis + compression, CCTM.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Electricity, renewable (mix Bio-IGCC/PV)",
+          "general_comment": "Total electricity for electrolysis + compression, CCTM.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(4-methoxyphenyl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sulfur",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sulfur",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sulfur",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Hydrogen, gas",
+          "general_comment": "Hydrogen from water electrolysis for CCTM synthesis.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (biogenic)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (fossil)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (biogenic)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (fossil)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (biogenic)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (fossil)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (fossil)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "carbon dioxide (fossil)",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "CO2, stack emission",
+          "general_comment": "Direct CO2 emissions from syngas stage (CGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "CO2, stack emission",
+          "general_comment": "Direct CO2 emissions from syngas stage (CGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is a key platform for the utilization of nonpetroleum carbon resources such as natural gas or shale gas and coal. Syngas can also be produced from renewable carbon feedstocks such as biomass and even CO 2.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Crude Syngas",
+          "general_comment": "Syngas, or synthesis gas, is a mixture of hydrogen and carbon monoxide, in various ratios. The gas often contains some carbon dioxide and methane. It is principally used for producing ammonia or methanol. Syngas is combustible and can be used as a fuel. It is used primarily in the production of hydrocarbon fuels, such as diesel fuel and methanol, and in the production of industrial chemicals, particularly ammonia.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Solid Waste",
+          "general_comment": "Solid waste refers to materials regulated by the Resource Conservation and Recovery Act (RCRA) and includes both hazardous and non-hazardous waste. Under RCRA, only materials that meet the definition of solid waste can be classified as hazardous wastes. In 2018, about 146.1 million tons of municipal solid waste (MSW) were landfilled in the United States, with food being the largest component at about 24 percent, followed by plastics at over 18 percent, and paper and paperboard at about 12 percent. The Environmental Protection Agency (EPA) defines solid waste as any material that is discarded and not subject to an exclusion or variance, which includes materials that are abandoned, recycled, or inherently waste-like. The EPA also provides information on best practices for waste management and has developed tools for identifying appropriate waste staging and storage.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "Raw gas",
           "general_comment": "Coal gasification is the process of producing syngas—a mixture consisting primarily of carbon monoxide (CO), hydrogen (H2), carbon dioxide (CO2), methane (CH4), and water vapour (H2O)—from coal and water, air and/or oxygen. The raw gas produced by the coal gasification technology is mainly composed of carbon monoxide (CO) and hydrogen (H2). It is a widely available technology used for hydrogen production, chemical raw material production, synthetic fuel production, as well as power generation.",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Hazardous Solid Waste",
+          "general_comment": "Hazardous solid waste is a term used in the hazardous waste management program. It is defined by the EPA's hazardous waste regulations under RCRA Subtitle C. This type of waste can cause substantial harm to human health and the environment if improperly handled. It can take the form of solids, liquids, sludges, or contained gases, and is primarily generated by chemical production, manufacturing, and other industrial activities. A solid waste derived from a hazardous waste is not considered hazardous when it no longer exhibits any characteristic of hazardous waste.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "(4-methoxyphenyl)methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Synthetic gas (syngas)",
+          "general_comment": "Syngas for methanol synthesis (CGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "sodium hydroxide",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "NaOH (10%)",
+          "general_comment": "Used in methanol purification (CGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "NaOH (10%)",
+          "general_comment": "Used in methanol purification (CGTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Oxygen, co-product",
+          "general_comment": "Oxygen co-produced in electrolysis (CCTM).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Coal, washed",
+          "general_comment": "Input for COTM route (coke production).",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "硬煤; 1/2中黏煤",
+          "general_comment": "1/2中黏煤（1/2 medium caking coal）是一种中等粘结性的中高挥发分烟煤。它的干燥无灰基挥发分(Vdaf)范围从23号煤的大于20.0%至28.0%，到33号煤的大于28.0%至37.0%，粘结指数(G)范围从23号煤的大于30至50，到33号煤的大于33至50。这种煤介于气煤和弱粘煤之间，结焦性中等，可作为炼焦煤使用。在单独炼焦时，1/2中黏煤能生成一定强度的焦炭，因此可以作为配煤炼焦的原料。然而，粘结性较弱的1/2中黏煤单独炼焦时，生成的焦炭强度较差，粉焦率高，因此这种煤也常作为气化用煤或动力用煤，在配煤炼焦时也可适当配入。",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "硬煤; 1/3焦煤",
+          "general_comment": "1/3焦煤是介于焦煤、肥煤和气煤之间的过渡煤种，具有中高挥发分的强粘结性煤。这种煤在单独炼焦时能够生成熔融性好、强度较高的焦炭。1/3焦煤的干燥无灰基挥发分(Vdaf)通常在28%至37%之间，粘结指数(G)大于65，胶质层最大厚度(y)小于或等于25mm。1/3焦煤由于其产量高，因此它主要用于炼焦和发电。此外，1/3焦煤的灰、硫含量和可选性通常要优于肥煤和焦煤，这也是1/3焦煤的一个优势。在炼焦特性上，1/3焦煤的焦炭性能如抗碎强度(M40)和耐磨强度(M10)虽然略逊于肥煤和焦煤，但比其他煤类更接近于优质焦煤，具有很好的结焦性能。",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "硬煤; 气肥煤",
+          "general_comment": "气肥煤（gas-fat coal），也称为液肥煤，是一种挥发分和胶质层都很高的强粘结性肥煤类。它的炼焦性能介于肥煤和气煤之间，单独炼焦时能产生大量的气体和液体化学产品。气肥煤最适合于高温干馏制造煤气，也可用于炼焦配煤，以增加化学产品产率。根据中国煤炭分类国家标准，气肥煤的干燥无灰基挥发分(Vdaf)大于37%，胶质层最大厚度y大于25mm。",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "Methanol (market average)",
+          "general_comment": "Methanol, also known as methyl alcohol and wood spirit, is the simplest aliphatic alcohol. It is an organic chemical with the formula CH3OH. Methanol was formerly produced by the destructive distillation of wood. It is a nondrinking type of alcohol used to create fuel, solvents, and antifreeze. It is a colorless, volatile, flammable liquid that is poisonous for human consumption. Methanol is a chemical building block for many everyday products and is also a clean energy resource.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "water vapour",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "hard coal, gas coal",
-          "general_comment": "Gas coal is a less metamorphosed bituminous coal characterized by a high dry, ashless volatile matter content, usually greater than 28% to 37%. Gas coal is so called because it produces large quantities of gas and tar when heated in isolation from the air. It is mainly used for coking, but is also used as a power coal and for gasification.",
+          "base_name": "methanol",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "coal gangue",
+          "general_comment": "Coal gangue refers to the solid waste produced in the process of coal mining and washing. It is mainly composed of a mixture of carbonaceous, argillaceous and sandy shale, usually containing lower calorific value and higher ash content. The formation of coal gangue is related to the mining method, geological conditions and washing process of coal. It is a common by-product in the coal industry.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
+        },
+        {
+          "base_name": "coal gangue",
+          "general_comment": "Coal gangue refers to the solid waste produced in the process of coal mining and washing. It is mainly composed of a mixture of carbonaceous, argillaceous and sandy shale, usually containing lower calorific value and higher ash content. The formation of coal gangue is related to the mining method, geological conditions and washing process of coal. It is a common by-product in the coal industry.",
+          "status": "requires_creation",
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
           "base_name": "water vapour",
           "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Water, process",
-          "general_comment": null,
+          "base_name": "water vapour",
+          "general_comment": "Reference elementary flow of the International Reference Life Cycle Data System (ILCD).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         },
         {
-          "base_name": "Electricity, medium voltage, CN mix, at grid",
-          "general_comment": null,
+          "base_name": "Process water",
+          "general_comment": "Fresh water for coal mining/processing (CGTM).",
           "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Methanol",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "NaOH, 10% solution",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Fresh water, unspecified",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Methane, fugitive",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
-        },
-        {
-          "base_name": "Air, separated",
-          "general_comment": null,
-          "status": "requires_creation",
-          "process_name": "Methanol production from coal gasification (China, cradle-to-gate)"
+          "process_name": "Comparative cradle-to-gate LCA of methanol production technologies"
         }
       ],
       "origin_exchanges": {
-        "Sulphur, recovered": [
+        "Natural gas, high pressure": [
           {
-            "@dataSetInternalID": "18",
+            "@dataSetInternalID": "10",
             "referenceToFlowDataSet": {
-              "flowName": "Sulphur, recovered",
-              "CASNumber": "7704-34-9",
-              "referenceToFlowProperty": "Mass",
-              "unit": "kg"
-            },
-            "exchangeDirection": "Output",
-            "meanAmount": "30",
-            "resultingAmount": "30",
-            "dataDerivationTypeStatus": "Measured",
-            "exchangeName": "Sulphur, recovered"
-          }
-        ],
-        "Hard coal, in ground": [
-          {
-            "@dataSetInternalID": "2",
-            "referenceToFlowDataSet": {
-              "flowName": "Hard coal, in ground",
-              "referenceToFlowProperty": "Mass",
-              "unit": "tonne"
+              "flowName": "Natural gas, high pressure",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "Nm³"
             },
             "exchangeDirection": "Input",
-            "meanAmount": "1.533",
-            "resultingAmount": "1.533",
+            "meanAmount": "617",
+            "resultingAmount": "617",
             "dataDerivationTypeStatus": "Measured",
-            "exchangeName": "Hard coal, in ground"
+            "generalComment": "LP natural gas input for NGTM per tonne methanol.",
+            "exchangeName": "Natural gas, high pressure"
           }
         ],
-        "Oil, crude": [
+        "CO2, captured": [
+          {
+            "@dataSetInternalID": "14",
+            "referenceToFlowDataSet": {
+              "flowName": "CO2, captured",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1617.4",
+            "resultingAmount": "1617.4",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Captured CO2 input to hydrogenation process, CCTM.",
+            "exchangeName": "CO2, captured"
+          }
+        ],
+        "Electricity, medium voltage": [
+          {
+            "@dataSetInternalID": "11",
+            "referenceToFlowDataSet": {
+              "flowName": "Electricity, medium voltage",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kWh"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "576.40",
+            "resultingAmount": "576.40",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Electricity for natural gas methanol synthesis (NGTM).",
+            "exchangeName": "Electricity, medium voltage"
+          },
+          {
+            "@dataSetInternalID": "3",
+            "referenceToFlowDataSet": {
+              "flowName": "Electricity, medium voltage",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kWh"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "825",
+            "resultingAmount": "825",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Electricity input for methanol synthesis (CGTM), Chinese grid mix.",
+            "exchangeName": "Electricity, medium voltage"
+          }
+        ],
+        "Coke oven gas (COG)": [
+          {
+            "@dataSetInternalID": "9",
+            "referenceToFlowDataSet": {
+              "flowName": "Coke oven gas (COG)",
+              "flowType": "INTERMEDIATE_FLOW",
+              "unit": "Nm³"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1968.66",
+            "resultingAmount": "1968.66",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Feedstock entering methanol synthesis stage, COTM.",
+            "exchangeName": "Coke oven gas (COG)"
+          }
+        ],
+        "Biomass, dry": [
+          {
+            "@dataSetInternalID": "12",
+            "referenceToFlowDataSet": {
+              "flowName": "Biomass, dry",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1066.7",
+            "resultingAmount": "1066.7",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Biomass straw; BOTM route input per tonne.",
+            "exchangeName": "Biomass, dry"
+          }
+        ],
+        "Oil, light crude": [
           {
             "@dataSetInternalID": "5",
             "referenceToFlowDataSet": {
-              "flowName": "Oil, crude",
-              "referenceToFlowProperty": "Mass",
+              "flowName": "Oil, light crude",
+              "flowType": "ELEMENTARY_FLOW",
               "unit": "kg"
             },
             "exchangeDirection": "Input",
             "meanAmount": "1.53",
             "resultingAmount": "1.53",
             "dataDerivationTypeStatus": "Measured",
-            "exchangeName": "Oil, crude"
+            "generalComment": "Oil as process input to CGTM route.",
+            "exchangeName": "Oil, light crude"
           }
         ],
-        "MP-N2": [
+        "Methanol, purified": [
           {
-            "@dataSetInternalID": "20",
+            "@dataSetInternalID": "1",
             "referenceToFlowDataSet": {
-              "flowName": "MP-N2",
-              "referenceToFlowProperty": "Mass",
+              "flowName": "Methanol, purified",
+              "flowType": "PRODUCT_FLOW",
+              "unit": "t"
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "1.0",
+            "resultingAmount": "1.0",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Reference product for all routes; represents 1 tonne delivered at plant gate.",
+            "exchangeName": "Methanol, purified"
+          }
+        ],
+        "Hard coal, mine": [
+          {
+            "@dataSetInternalID": "2",
+            "referenceToFlowDataSet": {
+              "flowName": "Hard coal, mine",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "t"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.533",
+            "resultingAmount": "1.533",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Input for CGTM; mine-to-plant delivery.",
+            "exchangeName": "Hard coal, mine"
+          }
+        ],
+        "Methane, emission": [
+          {
+            "@dataSetInternalID": "19",
+            "referenceToFlowDataSet": {
+              "flowName": "Methane, emission",
+              "flowType": "ELEMENTARY_FLOW",
               "unit": "kg"
             },
             "exchangeDirection": "Output",
-            "meanAmount": "1523.7",
-            "resultingAmount": "1523.7",
-            "dataDerivationTypeStatus": "Estimated",
-            "exchangeName": "MP-N2"
+            "meanAmount": "7.64",
+            "resultingAmount": "7.64",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Methane vented/leaked in mining (CGTM).",
+            "exchangeName": "Methane, emission"
           }
         ],
-        "Water, process": [
+        "Hydrogen, gas": [
+          {
+            "@dataSetInternalID": "13",
+            "referenceToFlowDataSet": {
+              "flowName": "Hydrogen, gas",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "136.11",
+            "resultingAmount": "136.11",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Hydrogen input to methanol synthesis, BOTM.",
+            "exchangeName": "Hydrogen, gas"
+          },
+          {
+            "@dataSetInternalID": "15",
+            "referenceToFlowDataSet": {
+              "flowName": "Hydrogen, gas",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "220.6",
+            "resultingAmount": "220.6",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Hydrogen from water electrolysis for CCTM synthesis.",
+            "exchangeName": "Hydrogen, gas"
+          }
+        ],
+        "Gangue": [
+          {
+            "@dataSetInternalID": "17",
+            "referenceToFlowDataSet": {
+              "flowName": "Gangue",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "153",
+            "resultingAmount": "153",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "CGTM mining waste (sent to landfill).",
+            "exchangeName": "Gangue"
+          }
+        ],
+        "Electricity, renewable (mix Bio-IGCC/PV)": [
+          {
+            "@dataSetInternalID": "16",
+            "referenceToFlowDataSet": {
+              "flowName": "Electricity, renewable (mix Bio-IGCC/PV)",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kWh"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "15505.61",
+            "resultingAmount": "15505.61",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Total electricity for electrolysis + compression, CCTM.",
+            "exchangeName": "Electricity, renewable (mix Bio-IGCC/PV)"
+          }
+        ],
+        "CO2, stack emission": [
+          {
+            "@dataSetInternalID": "18",
+            "referenceToFlowDataSet": {
+              "flowName": "CO2, stack emission",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "kg"
+            },
+            "exchangeDirection": "Output",
+            "meanAmount": "1.74",
+            "resultingAmount": "1.74",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Direct CO2 emissions from syngas stage (CGTM).",
+            "exchangeName": "CO2, stack emission"
+          }
+        ],
+        "Synthetic gas (syngas)": [
           {
             "@dataSetInternalID": "6",
             "referenceToFlowDataSet": {
-              "flowName": "Water, process",
-              "referenceToFlowProperty": "Mass",
-              "unit": "tonne"
+              "flowName": "Synthetic gas (syngas)",
+              "flowType": "INTERMEDIATE_FLOW",
+              "unit": "t"
             },
             "exchangeDirection": "Input",
-            "meanAmount": "134.01",
-            "resultingAmount": "134.01",
-            "dataDerivationTypeStatus": "Estimated",
-            "exchangeName": "Water, process"
+            "meanAmount": "1.23",
+            "resultingAmount": "1.23",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Syngas for methanol synthesis (CGTM).",
+            "exchangeName": "Synthetic gas (syngas)"
+          }
+        ],
+        "NaOH (10%)": [
+          {
+            "@dataSetInternalID": "7",
+            "referenceToFlowDataSet": {
+              "flowName": "NaOH (10%)",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "t"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "1.00",
+            "resultingAmount": "1.00",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Used in methanol purification (CGTM).",
+            "exchangeName": "NaOH (10%)"
+          }
+        ],
+        "Process water": [
+          {
+            "@dataSetInternalID": "4",
+            "referenceToFlowDataSet": {
+              "flowName": "Process water",
+              "flowType": "ELEMENTARY_FLOW",
+              "unit": "t"
+            },
+            "exchangeDirection": "Input",
+            "meanAmount": "0.69",
+            "resultingAmount": "0.69",
+            "dataDerivationTypeStatus": "Measured",
+            "generalComment": "Fresh water for coal mining/processing (CGTM).",
+            "exchangeName": "Process water"
           }
         ]
       }

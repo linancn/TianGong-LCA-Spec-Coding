@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import json
-import copy
-
 
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "tidas" / "schemas"
 
@@ -86,7 +84,11 @@ class TidasSchemaRepository:
         visited: set[str] = set()
         return self._summarize_node(node, schema_path, visited, include_refs=include_refs)
 
-    def resolve_with_references(self, schema_name: str, pointer: str | None = None) -> dict[str, Any]:
+    def resolve_with_references(
+        self,
+        schema_name: str,
+        pointer: str | None = None,
+    ) -> dict[str, Any]:
         """Return the schema node with local $ref resolved recursively."""
         schema_path = (self._schema_dir / schema_name).resolve()
         document = self.load(schema_name)
@@ -126,12 +128,15 @@ class TidasSchemaRepository:
             elif isinstance(merged.get("items"), dict):
                 item = merged["items"]
                 merged_item, item_path, _ = self._merged_schema(item, target_path, visited)
-                children = self._summarize_node(
-                    merged_item,
-                    item_path,
-                    visited,
-                    include_refs=include_refs,
-                ) or None
+                children = (
+                    self._summarize_node(
+                        merged_item,
+                        item_path,
+                        visited,
+                        include_refs=include_refs,
+                    )
+                    or None
+                )
             summaries.append(
                 FieldSummary(
                     name=name,
@@ -220,7 +225,9 @@ class TidasSchemaRepository:
             return "const"
         if "anyOf" in schema:
             types = [
-                item.get("type") for item in schema["anyOf"] if isinstance(item, dict) and item.get("type")
+                item.get("type")
+                for item in schema["anyOf"]
+                if isinstance(item, dict) and item.get("type")
             ]
             return " | ".join(types) if types else "anyOf"
         return None

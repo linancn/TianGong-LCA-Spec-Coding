@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     mcp_transport: Literal["streamable_http"] = "streamable_http"
     flow_search_service_name: str = "TianGong_LCA_Remote"
     flow_search_tool_name: str = "Search_flows_Tool"
+    flow_search_max_parallel: int = 1
 
     tidas_base_url: HttpUrl = "http://192.168.1.140:9278/mcp"
     tidas_api_key: str | None = None
@@ -130,8 +131,7 @@ class Settings(BaseSettings):
     def langsmith_env_vars(self) -> dict[str, str]:
         """Return the environment variables needed for LangSmith + LangGraph logging."""
         env: dict[str, str] = {
-            key: _stringify_env_value(value)
-            for key, value in self.langsmith_environment.items()
+            key: _stringify_env_value(value) for key, value in self.langsmith_environment.items()
         }
         if self.langsmith_api_key:
             env["LANGSMITH_API_KEY"] = self.langsmith_api_key
@@ -145,14 +145,11 @@ class Settings(BaseSettings):
         if self.langsmith_session:
             env.setdefault("LANGCHAIN_SESSION", self.langsmith_session)
         tracing_enabled = self.langsmith_tracing_v2 or (
-            "LANGCHAIN_TRACING_V2" in env
-            and env["LANGCHAIN_TRACING_V2"].strip().lower() == "true"
+            "LANGCHAIN_TRACING_V2" in env and env["LANGCHAIN_TRACING_V2"].strip().lower() == "true"
         )
         if tracing_enabled or self.langsmith_api_key:
             env["LANGCHAIN_TRACING_V2"] = _bool_to_env(
-                tracing_enabled
-                or self.langsmith_tracing_v2
-                or bool(self.langsmith_api_key)
+                tracing_enabled or self.langsmith_tracing_v2 or bool(self.langsmith_api_key)
             )
         if self.langsmith_callbacks_background is not None:
             env["LANGCHAIN_CALLBACKS_BACKGROUND"] = _bool_to_env(
@@ -280,8 +277,8 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
             overrides["langsmith_tracing_v2"] = tracing_bool
             env_map["LANGCHAIN_TRACING_V2"] = _bool_to_env(tracing_bool)
 
-        callbacks_value = (
-            langsmith_cfg.get("CALLBACKS_BACKGROUND") or langsmith_cfg.get("callbacks_background")
+        callbacks_value = langsmith_cfg.get("CALLBACKS_BACKGROUND") or langsmith_cfg.get(
+            "callbacks_background"
         )
         if callbacks_value is None and (
             overrides.get("langsmith_tracing_v2") or env_map.get("LANGCHAIN_TRACING_V2") == "true"
@@ -298,9 +295,7 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
             overrides["langsmith_tags"] = tags
             env_map.setdefault("LANGCHAIN_TAGS", ",".join(tags))
 
-        metadata_value = (
-            langsmith_cfg.get("METADATA") or langsmith_cfg.get("metadata")
-        )
+        metadata_value = langsmith_cfg.get("METADATA") or langsmith_cfg.get("metadata")
         if isinstance(metadata_value, dict):
             overrides["langsmith_metadata"] = metadata_value
             env_map.setdefault(

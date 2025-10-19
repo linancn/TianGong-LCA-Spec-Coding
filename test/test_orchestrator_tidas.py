@@ -10,7 +10,6 @@ import jsonschema
 from tiangong_lca_spec.orchestrator import WorkflowOrchestrator
 from tiangong_lca_spec.tidas import get_schema_repository
 
-
 SAMPLE_PROCESS_DATASET = {
     "processInformation": {
         "dataSetInformation": {
@@ -19,9 +18,7 @@ SAMPLE_PROCESS_DATASET = {
                 "treatmentStandardsRoutes": "Steam reforming",
                 "mixAndLocationTypes": "at plant",
             },
-            "classificationInformation": {
-                "common:classification": {"common:class": []}
-            },
+            "classificationInformation": {"common:classification": {"common:class": []}},
             "common:generalComment": "Integration test dataset",
         },
         "quantitativeReference": {
@@ -115,9 +112,7 @@ SAMPLE_PROCESS_DATASET = {
                 "@dataSetInternalID": "1",
                 "exchangeName": "Electricity, medium voltage",
                 "exchangeDirection": "Input",
-                "referenceToFlowDataSet": {
-                    "@refObjectId": "00000000-0000-0000-0000-000000000000"
-                },
+                "referenceToFlowDataSet": {"@refObjectId": "00000000-0000-0000-0000-000000000000"},
                 "meanAmount": "1.0",
                 "resultingAmount": "1.0",
                 "dataDerivationTypeStatus": "Measured",
@@ -145,7 +140,10 @@ class FakeLLM:
                 {
                     "@level": "2",
                     "@classId": "201",
-                    "#text": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms",
+                    "#text": (
+                        "Manufacture of basic chemicals, fertilizers and nitrogen compounds, "
+                        "plastics and synthetic rubber in primary forms"
+                    ),
                 },
                 {
                     "@level": "3",
@@ -162,7 +160,11 @@ class DummyFlowAlignment:
     """Bypasses remote flow alignment while preserving structure."""
 
     def align_exchanges(self, process_dataset: dict[str, object], paper_md: str | None):
-        info = process_dataset.get("processInformation", {}) if isinstance(process_dataset, dict) else {}
+        info = (
+            process_dataset.get("processInformation", {})
+            if isinstance(process_dataset, dict)
+            else {}
+        )
         data_info = info.get("dataSetInformation", {}) if isinstance(info, dict) else {}
         name_block = data_info.get("name", {}) if isinstance(data_info, dict) else {}
         process_name = "example_process"
@@ -174,7 +176,9 @@ class DummyFlowAlignment:
                 process_name = str(base_entry)
         elif name_block:
             process_name = str(name_block)
-        exchanges = process_dataset.get("exchanges", {}) if isinstance(process_dataset, dict) else {}
+        exchanges = (
+            process_dataset.get("exchanges", {}) if isinstance(process_dataset, dict) else {}
+        )
         exchange_values = exchanges.get("exchange", []) if isinstance(exchanges, dict) else []
         if isinstance(exchange_values, dict):
             exchange_values = [exchange_values]
