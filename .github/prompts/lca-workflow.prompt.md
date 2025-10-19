@@ -146,7 +146,7 @@ class WorkflowResult:
 3. 按需扩展缓存、断点恢复、指标上报等横切能力，并考虑将 `WorkflowResult` 与日志落盘至 `artifacts/`。
 
 ## 11. 维护与检查要求
-- **静态检查 / 格式化**：每次代码更新后执行
+- **静态检查 / 格式化**：每次代码更新后必须执行
   ```bash
   uv run ruff check
   uv run black src/tiangong_lca_spec
