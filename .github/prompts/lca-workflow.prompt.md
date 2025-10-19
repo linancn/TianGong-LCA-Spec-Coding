@@ -7,17 +7,23 @@
 - **包管理**：运行 `uv sync` 初始化运行依赖，`uv sync --group dev` 同步开发工具。支持通过 `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple` 使用清华镜像。
 - **主要依赖**：`langchain-mcp-adapters`, `anyio`, `pydantic`, `pydantic-settings`, `tenacity`, `structlog`, `langchain-core`, `langgraph`, `python-dotenv`。
 - **构建体系**：`hatchling` 负责构建编辑/发行版；`pyproject.toml` 已在 `[tool.hatch.build.targets.wheel]` 中声明 `src/tiangong_lca_spec` 为打包目录。
+- **机密配置**：使用 `.secrets/secrets.toml` 注入 OpenAI、LangSmith、远程 MCP/TIDAS 凭据。首次配置可执行 `cp .secrets/secrets.example.toml .secrets/secrets.toml` 后替换占位符。
 - **代码规范**：
   - Formatter：`black`（`line-length=100`, `target-version=py312`）。
   - Linter：`ruff`（`target-version=py312`, 规则集 `E/F/I`）。
   - 运行方式：`uv run black src/tiangong_lca_spec`、`uv run ruff check`。
 
+### 1.1 LangSmith / LangGraph 追踪设置
+- `.secrets/secrets.toml` 中的 `[LANGSMITH]` 段定义 `API_KEY`, `ENDPOINT`, `PROJECT`, `SESSION`, `TAGS`, `METADATA` 等字段。
+- `tiangong_lca_spec.core.config.Settings` 在初始化时会将上述配置转换成 `LANGSMITH_*`/`LANGCHAIN_*` 环境变量，并在 `configure_logging()` 调用时确保注入到进程环境。
+- 默认启用 `LANGCHAIN_TRACING_V2=true` 与 `LANGCHAIN_CALLBACKS_BACKGROUND=true`，LangGraph/ LangSmith 将同步记录工作流 run tree，可通过 LangSmith 控制台追踪节点执行。
+
 ## 2. 包结构概览（src/tiangong_lca_spec）
 - `core/`
-  - `config.py`：`pydantic-settings` 驱动的 `Settings`，集中管理 MCP/TIDAS 基础配置、重试与并发策略、缓存目录、日志等级。
+  - `config.py`：`pydantic-settings` 驱动的 `Settings`，集中管理 MCP/TIDAS 基础配置、LangSmith 凭据、重试与并发策略、缓存目录、日志等级，并提供 `apply_langsmith_environment()` 自动写入运行时环境。
   - `exceptions.py`：`SpecCodingError` 及子类（`FlowSearchError`, `FlowAlignmentError`, `ProcessExtractionError`, `TidasValidationError`）。
   - `models.py`：核心 dataclass（`FlowQuery`, `FlowCandidate`, `UnmatchedFlow`, `ProcessDataset`, `TidasValidationFinding`, `WorkflowResult`, `SettingsProfile`）。
-  - `logging.py`：`structlog` JSON 日志初始化与 logger 工厂。
+  - `logging.py`：`structlog` JSON 日志初始化与 logger 工厂，统一设置 `langgraph*` logger，并在调用前确保 LangSmith 环境变量就绪。
   - `json_utils.py`：剥离 `<think>`、去除 Markdown 代码块、括号平衡截断等 JSON 清洗能力。
   - `mcp_client.py`：封装 `MultiServerMCPClient` 与 `anyio` 阻塞门户，供同步服务通过 MCP 工具调用。
 - `flow_search/`
@@ -124,7 +130,7 @@ class WorkflowResult:
   - `merge_results` 在缺失候选、功能单位推断失败时的容错。
   - LangGraph 节点，通过注入 Fake LLM 验证状态流转。
 - **集成测试**：构造最小 Markdown JSON 驱动完整 orchestrator，断言输出 schema 与错误分支。
-- **可观测性**：启用 `configure_logging` 输出 JSON 日志，建议在 orchestrator 入口记录 `settings.profile`、输入文档 ID 等上下文。
+- **可观测性**：启用 `configure_logging` 输出 JSON 日志，并通过 LangSmith 控制台观察 LangGraph run tree；建议在 orchestrator 入口绑定 `settings.profile`、输入文档 ID 等上下文。
 
 ## 10. 目录与后续迭代
 - `src/tiangong_lca_spec/core`: 配置、日志、模型、通用工具（含 `mcp_client` 同步封装）。
@@ -145,4 +151,5 @@ class WorkflowResult:
   uv run ruff check
   uv run black src/tiangong_lca_spec
   ```
+- **Secrets 校验**：提交前确认 `.secrets/secrets.toml` 存在且未包含真实密钥的提交，必要时通过 `.secrets/secrets.example.toml` 生成个人副本。
 - **文档同步**：如果实现或流程发生变化，务必同步更新当前文档（`.github/prompts/lca-workflow.prompt.md`），确保准则与代码保持一致。
