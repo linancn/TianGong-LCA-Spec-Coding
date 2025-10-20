@@ -140,9 +140,8 @@ class WorkflowResult:
 - `src/tiangong_lca_spec/orchestrator`: LangGraph orchestrator。
 
 **下一步建议**：
-1. 在 `tiangong_lca_spec/orchestrator` 中补充 CLI 或 demo 模块，方便 `uv run python -m tiangong_lca_spec.orchestrator.workflow_demo` 快速体验。
-2. 将 MCP/TIDAS 客户端抽象为接口或协议，实现本地 Mock 以支持 CI 离线测试。
-3. 按需扩展缓存、断点恢复、指标上报等横切能力，并考虑将 `WorkflowResult` 与日志落盘至 `artifacts/`。
+1. 将 MCP/TIDAS 客户端抽象为接口或协议，实现本地 Mock 以支持 CI 离线测试。
+2. 按需扩展缓存、断点恢复、指标上报等横切能力，并考虑将 `WorkflowResult` 与日志落盘至 `artifacts/`。
 
 ## 11. 维护与检查要求（必须要做）
 - **静态检查 / 格式化**：每次代码更新后必须执行

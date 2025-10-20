@@ -42,12 +42,12 @@
    ```
    自动格式化代码：
    ```bash
-   uv run black src/tiangong_lca_spec
+   uv run black .
    ```
 
 4. **执行流程编排示例（需自行实现 LLM 客户端后）**
    ```bash
-   uv run python -m tiangong_lca_spec.orchestrator.workflow_demo
+   uv run python scripts/run_test_workflow.py --skip-tidas
    ```
    *该入口示例留作扩展，可在 `src/orchestrator` 目录中补充。*
 
