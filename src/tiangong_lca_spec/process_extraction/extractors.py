@@ -80,9 +80,11 @@ def _build_section_prompt() -> str:
     )
     return (
         "You are an expert LCA analyst. Extract structured content that conforms to the "
-        "TIDAS ILCD `processDataSet` schema. Return JSON with a single key `processDataSet` "
-        "matching the schema excerpts below. Only include fields supported by the schema and "
-        "omit entries that are not supported by evidence in the paper.\n\n"
+        "TIDAS ILCD `processDataSet` schema. Return JSON with a top-level key `processDataSets` "
+        "whose value is an array of one or more objects matching the schema excerpts below. "
+        "If only a single process is identified, still return it as a single-element array. "
+        "Only include fields supported by the schema and omit entries that are not supported "
+        "by evidence in the paper.\n\n"
         f"{metadata}\n\n"
         f"{process_info}\n\n"
         f"{modelling}\n\n"
