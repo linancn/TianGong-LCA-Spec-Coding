@@ -9,9 +9,7 @@
 - **构建体系**：`hatchling` 负责构建编辑/发行版；`pyproject.toml` 已在 `[tool.hatch.build.targets.wheel]` 中声明 `src/tiangong_lca_spec` 为打包目录。
 - **机密配置**：使用 `.secrets/secrets.toml` 注入 OpenAI、LangSmith、远程 MCP/TIDAS 凭据。首次配置可执行 `cp .secrets/secrets.example.toml .secrets/secrets.toml` 后替换占位符。
 - **代码规范**：
-  - Formatter：`black`（`line-length=100`, `target-version=py312`）。
-  - Linter：`ruff`（`target-version=py312`, 规则集 `E/F/I`）。
-  - 运行方式：`uv run black src/tiangong_lca_spec`、`uv run ruff check`。
+  - 运行方式：`uv run black .`、`uv run ruff check`。
 
 ### 1.1 LangSmith / LangGraph 追踪设置
 - `.secrets/secrets.toml` 中的 `[LANGSMITH]` 段定义 `API_KEY`, `ENDPOINT`, `PROJECT`, `SESSION`, `TAGS`, `METADATA` 等字段。
@@ -149,8 +147,8 @@ class WorkflowResult:
 ## 11. 维护与检查要求（必须要做）
 - **静态检查 / 格式化**：每次代码更新后必须执行
   ```bash
+  uv run black .
   uv run ruff check
-  uv run black src/tiangong_lca_spec
   ```
-- **Secrets 校验**：提交前确认 `.secrets/secrets.toml` 存在且未包含真实密钥的提交，必要时通过 `.secrets/secrets.example.toml` 生成个人副本。
+
 - **文档同步**：如果实现或流程发生变化，务必同步更新当前文档（`.github/prompts/lca-workflow.prompt.md`），确保准则与代码保持一致。
