@@ -24,15 +24,7 @@ LOGGER = get_logger(__name__)
 class ExtractionState(TypedDict, total=False):
     clean_text: str
     sections: dict[str, Any]
-    process_information: dict[str, Any]
-    administrative_information: dict[str, Any]
-    modelling_and_validation: dict[str, Any]
-    exchange_list: list[dict[str, Any]]
-    notes: Any
-    classification: list[dict[str, Any]]
-    geography: dict[str, Any]
     process_blocks: list[dict[str, Any]]
-    process_data_set: dict[str, Any]
 
 
 class ProcessExtractionService:
@@ -76,94 +68,147 @@ class ProcessExtractionService:
         if not clean_text:
             raise ProcessExtractionError("Clean text missing for extraction")
         sections = self._section_extractor.run(clean_text)
-        process_dataset = sections.get("processDataSet")
-        if not isinstance(process_dataset, dict):
-            raise ProcessExtractionError("Section extraction must return `processDataSet`")
+        state["sections"] = sections
 
-        state["process_data_set"] = process_dataset
-        process_information = process_dataset.setdefault("processInformation", {})
-        administrative = process_dataset.setdefault("administrativeInformation", {})
-        modelling = process_dataset.setdefault("modellingAndValidation", {})
-        exchanges = process_dataset.get("exchanges", {}).get("exchange")
-        exchange_list: list[dict[str, Any]] = []
-        if isinstance(exchanges, list):
-            exchange_list = exchanges
-        elif exchanges:
-            exchange_list = [exchanges]
+        datasets: list[dict[str, Any]] = []
+        raw_datasets = sections.get("processDataSets")
+        if isinstance(raw_datasets, list):
+            datasets.extend(item for item in raw_datasets if isinstance(item, dict))
+        else:
+            single_dataset = sections.get("processDataSet")
+            if isinstance(single_dataset, dict):
+                datasets.append(single_dataset)
+        if not datasets:
+            raise ProcessExtractionError(
+                "Section extraction must return `processDataSets` or `processDataSet`"
+            )
 
-        state["process_information"] = process_information
-        state["administrative_information"] = administrative
-        state["modelling_and_validation"] = modelling
-        state["exchange_list"] = exchange_list
-        if "notes" in sections:
-            state["notes"] = sections["notes"]
+        notes = sections.get("notes")
+        if isinstance(notes, list) and len(notes) == len(datasets):
+            note_values = notes
+        else:
+            note_values = [notes] * len(datasets)
+
+        blocks: list[dict[str, Any]] = []
+        for index, dataset in enumerate(datasets):
+            process_information = dataset.setdefault("processInformation", {})
+            administrative = dataset.setdefault("administrativeInformation", {})
+            modelling = dataset.setdefault("modellingAndValidation", {})
+            exchanges = dataset.get("exchanges", {}).get("exchange")
+            exchange_list: list[dict[str, Any]] = []
+            if isinstance(exchanges, list):
+                exchange_list = exchanges
+            elif exchanges:
+                exchange_list = [exchanges]
+
+            blocks.append(
+                {
+                    "processDataSet": dataset,
+                    "process_information": process_information,
+                    "administrative_information": administrative,
+                    "modelling_and_validation": modelling,
+                    "exchange_list": exchange_list,
+                    "notes": note_values[index] if index < len(note_values) else None,
+                }
+            )
+
+        state["process_blocks"] = blocks
         return state
 
     def _classify_process(self, state: ExtractionState) -> ExtractionState:
-        process_info = state.get("process_information")
-        if not process_info:
-            LOGGER.warning("process_extraction.missing_process_information")
+        blocks = state.get("process_blocks") or []
+        if not blocks:
+            LOGGER.warning("process_extraction.missing_process_blocks")
             return state
-        classification = self._classifier.run(process_info)
-        data_info = process_info.setdefault("dataSetInformation", {})
-        classification_info = data_info.setdefault("classificationInformation", {})
-        classification_info["classification"] = classification
-        classification_info.setdefault("common:classification", {"common:class": classification})
-        state["classification"] = classification
+
+        for block in blocks:
+            dataset = block.get("processDataSet")
+            if not isinstance(dataset, dict):
+                LOGGER.warning("process_extraction.invalid_dataset_block")
+                continue
+            process_info = dataset.setdefault("processInformation", {})
+            if not process_info:
+                LOGGER.warning("process_extraction.missing_process_information")
+                continue
+            classification = self._classifier.run(process_info)
+            data_info = process_info.setdefault("dataSetInformation", {})
+            classification_info = data_info.setdefault("classificationInformation", {})
+            classification_info["classification"] = classification
+            classification_info.setdefault(
+                "common:classification",
+                {"common:class": classification},
+            )
+            block["classification"] = classification
+
+        state["process_blocks"] = blocks
         return state
 
     def _normalize_location(self, state: ExtractionState) -> ExtractionState:
-        process_info = state.get("process_information")
-        if not process_info:
+        blocks = state.get("process_blocks") or []
+        if not blocks:
             return state
-        try:
-            geography = self._location_normalizer.run(process_info)
-        except SpecCodingError as exc:
-            LOGGER.warning("process_extraction.location_parse_failed", error=str(exc))
-            geography = {}
-        if isinstance(geography, str):
-            geography = {"description": geography}
-        process_info.setdefault("geography", {}).update(geography)
-        state["geography"] = geography
+
+        for block in blocks:
+            dataset = block.get("processDataSet")
+            if not isinstance(dataset, dict):
+                continue
+            process_info = dataset.setdefault("processInformation", {})
+            if not process_info:
+                continue
+            try:
+                geography = self._location_normalizer.run(process_info)
+            except SpecCodingError as exc:
+                LOGGER.warning("process_extraction.location_parse_failed", error=str(exc))
+                geography = {}
+            if isinstance(geography, str):
+                geography = {"description": geography}
+            process_info.setdefault("geography", {}).update(geography)
+            block["geography"] = geography
+
+        state["process_blocks"] = blocks
         return state
 
     def _finalize(self, state: ExtractionState) -> ExtractionState:
-        exchange_list = state.get("exchange_list") or []
-        notes = state.get("notes")
-
-        process_dataset = state.get("process_data_set")
-        if not isinstance(process_dataset, dict):
+        blocks = state.get("process_blocks") or []
+        if not blocks:
             raise ProcessExtractionError("Process dataset missing at finalize step")
 
-        normalized_dataset = build_tidas_process_dataset(
-            process_dataset,
-            notes=notes,
-        )
-        state["process_data_set"] = normalized_dataset
-        state["process_information"] = normalized_dataset.get("processInformation", {})
-        state["administrative_information"] = normalized_dataset.get(
-            "administrativeInformation", {}
-        )
-        state["modelling_and_validation"] = normalized_dataset.get("modellingAndValidation", {})
+        final_blocks: list[dict[str, Any]] = []
+        for block in blocks:
+            process_dataset = block.get("processDataSet")
+            if not isinstance(process_dataset, dict):
+                raise ProcessExtractionError("Process dataset missing in block")
+            notes = block.get("notes")
+            exchange_list = block.get("exchange_list") or []
 
-        exchanges = normalized_dataset.get("exchanges", {}).get("exchange")
-        if isinstance(exchanges, list):
-            exchange_block = {"exchange": exchanges}
-        elif exchanges:
-            exchange_block = {"exchange": [exchanges]}
-        else:
-            exchange_block = {"exchange": exchange_list}
+            normalized_dataset = build_tidas_process_dataset(
+                process_dataset,
+                notes=notes,
+            )
 
-        state["exchange_list"] = exchange_block.get("exchange", [])
+            exchanges = normalized_dataset.get("exchanges", {}).get("exchange")
+            if isinstance(exchanges, list):
+                exchange_block = {"exchange": exchanges}
+            elif exchanges:
+                exchange_block = {"exchange": [exchanges]}
+            else:
+                exchange_block = {"exchange": exchange_list}
 
-        block = {
-            "process_information": normalized_dataset.get("processInformation", {}),
-            "administrative_information": normalized_dataset.get("administrativeInformation", {}),
-            "modelling_and_validation": normalized_dataset.get("modellingAndValidation", {}),
-            "exchange_list": exchange_block.get("exchange") or [],
-            "notes": notes,
-            "processDataSet": normalized_dataset,
-            "exchanges": exchange_block,
-        }
-        state["process_blocks"] = [block]
+            final_blocks.append(
+                {
+                    "process_information": normalized_dataset.get("processInformation", {}),
+                    "administrative_information": normalized_dataset.get(
+                        "administrativeInformation", {}
+                    ),
+                    "modelling_and_validation": normalized_dataset.get(
+                        "modellingAndValidation", {}
+                    ),
+                    "exchange_list": exchange_block.get("exchange") or [],
+                    "notes": notes,
+                    "processDataSet": normalized_dataset,
+                    "exchanges": exchange_block,
+                }
+            )
+
+        state["process_blocks"] = final_blocks
         return state

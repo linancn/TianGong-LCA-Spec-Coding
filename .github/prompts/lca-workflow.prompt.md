@@ -89,8 +89,9 @@ class WorkflowResult:
 - 接口：`search_flows(query) -> tuple[list[FlowCandidate], list[UnmatchedFlow]]`。
 - 关键点：
   1. `FlowSearchClient` 通过 `MCPToolClient` 调用 `FlowDataSearch` 工具，结合 `tenacity` 实现指数退避重试，并在客户端层完成候选列表解包。
-  2. `FlowSearchService` 过滤低相似度候选，并将被过滤项记录为 `UnmatchedFlow`；结果写入 LRU 缓存。
-  3. 遇到 MCP 错误或响应异常抛出 `FlowSearchError`；日志记录请求参数、工具返回结构与过滤原因。
+  2. 远程 `TianGong_LCA_Remote` MCP 服务在检索前使用大语言模型生成多语言同义词/重写描述，随后执行语义检索与全文检索的混合查询，以提供高召回的候选流数据集。
+  3. `FlowSearchService` 过滤低相似度候选，并将被过滤项记录为 `UnmatchedFlow`；结果写入 LRU 缓存。
+  4. 遇到 MCP 错误或响应异常抛出 `FlowSearchError`；日志记录请求参数、工具返回结构与过滤原因。
 
 ## 5. Flow Alignment 模块
 - 接口：`FlowAlignmentService.align_exchanges(process_dataset, paper_md)`。
