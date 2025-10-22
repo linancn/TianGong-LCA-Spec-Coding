@@ -129,6 +129,8 @@ class FakeLLM:
         prompt = str(input_data.get("prompt", ""))
         if prompt.startswith("You are an expert LCA analyst"):
             return {"processDataSet": deepcopy(SAMPLE_PROCESS_DATASET)}
+        if prompt.startswith("You are analysing a life cycle assessment document"):
+            return {"parentProcesses": []}
         if "Derive the ISIC classification" in prompt:
             return [
                 {"@level": "0", "@classId": "C", "#text": "Manufacturing"},
