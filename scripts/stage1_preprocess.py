@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 
 from _workflow_common import dump_json, load_paper
+
 from tiangong_lca_spec.process_extraction import preprocess_paper
 
 

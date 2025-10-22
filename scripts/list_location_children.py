@@ -12,7 +12,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
-
 LocationEntry = Tuple[str, str]
 
 

@@ -5,7 +5,7 @@
 ## 1. 环境与工具
 - **Python**：>= 3.12（可通过 `uv toolchain` 安装）；仓库默认解释器路径位于 `.venv/`。
 - **包管理**：运行 `uv sync` 初始化运行依赖，`uv sync --group dev` 同步开发工具。支持通过 `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple` 使用清华镜像。
-- **主要依赖**：`langchain-mcp-adapters`, `anyio`, `pydantic`, `pydantic-settings`, `tenacity`, `structlog`, `langchain-core`, `python-dotenv`。
+- **主要依赖**：`anyio`, `httpx`, `mcp`, `pydantic`, `pydantic-settings`, `tenacity`, `structlog`, `python-dotenv`。
 - **构建体系**：`hatchling` 负责构建编辑/发行版；`pyproject.toml` 已在 `[tool.hatch.build.targets.wheel]` 中声明 `src/tiangong_lca_spec` 为打包目录。
 - **机密配置**：使用 `.secrets/secrets.toml` 注入 OpenAI、远程 MCP/TIDAS 凭据。首次配置可执行 `cp .secrets/secrets.example.toml .secrets/secrets.toml` 后替换占位符。
 - **代码规范**：
