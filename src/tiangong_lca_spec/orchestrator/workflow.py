@@ -1,11 +1,9 @@
-"""LangGraph-based orchestration of the full Tiangong LCA spec coding pipeline."""
+"""Sequential orchestration of the full Tiangong LCA spec coding pipeline."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, TypedDict
-
-from langgraph.graph import END, StateGraph
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import SpecCodingError
@@ -38,7 +36,7 @@ class WorkflowState(TypedDict, total=False):
 
 
 class WorkflowOrchestrator:
-    """Compose all pipeline stages with LangGraph."""
+    """Compose all pipeline stages using straightforward sequential execution."""
 
     def __init__(
         self,
@@ -49,25 +47,6 @@ class WorkflowOrchestrator:
         self._process_extraction = ProcessExtractionService(llm, self._settings)
         self._flow_alignment = FlowAlignmentService(self._settings)
         self._tidas = TidasValidationService(self._settings)
-        self._graph = self._build_graph()
-
-    def _build_graph(self) -> StateGraph:
-        graph = StateGraph(WorkflowState)
-        graph.add_node("preprocess", self._preprocess)
-        graph.add_node("extract_processes", self._extract_processes)
-        graph.add_node("align_flows", self._align_flows)
-        graph.add_node("merge_datasets", self._merge_datasets)
-        graph.add_node("validate", self._validate)
-        graph.add_node("finalize", self._finalize)
-
-        graph.set_entry_point("preprocess")
-        graph.add_edge("preprocess", "extract_processes")
-        graph.add_edge("extract_processes", "align_flows")
-        graph.add_edge("align_flows", "merge_datasets")
-        graph.add_edge("merge_datasets", "validate")
-        graph.add_edge("validate", "finalize")
-        graph.add_edge("finalize", END)
-        return graph.compile()
 
     def run_from_path(self, paper_path: Path | str) -> WorkflowResult:
         path = Path(paper_path)
@@ -75,7 +54,13 @@ class WorkflowOrchestrator:
         return self.run(paper_md_json)
 
     def run(self, paper_md_json: str) -> WorkflowResult:
-        state = self._graph.invoke({"paper_md_json": paper_md_json})
+        state: WorkflowState = {"paper_md_json": paper_md_json}
+        state = self._preprocess(state)
+        state = self._extract_processes(state)
+        state = self._align_flows(state)
+        state = self._merge_datasets(state)
+        state = self._validate(state)
+        state = self._finalize(state)
         result = state.get("result")
         if not result:
             raise SpecCodingError("Workflow did not produce a result")
@@ -90,8 +75,6 @@ class WorkflowOrchestrator:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
-
-    # LangGraph node functions -------------------------------------------------
 
     def _preprocess(self, state: WorkflowState) -> WorkflowState:
         paper_md_json = state.get("paper_md_json")

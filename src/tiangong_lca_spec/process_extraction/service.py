@@ -1,11 +1,9 @@
-"""High-level process extraction orchestration built on LangGraph."""
+"""High-level process extraction orchestration built on sequential stages."""
 
 from __future__ import annotations
 
 import json
 from typing import Any, TypedDict
-
-from langgraph.graph import END, StateGraph
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import ProcessExtractionError, SpecCodingError
@@ -44,7 +42,7 @@ class ExtractionState(TypedDict, total=False):
 
 
 class ProcessExtractionService:
-    """Coordinates process extraction by composing LangGraph nodes."""
+    """Coordinates process extraction by running staged helpers sequentially."""
 
     def __init__(
         self,
@@ -56,25 +54,13 @@ class ProcessExtractionService:
         self._parent_extractor = ParentProcessExtractor(llm)
         self._classifier = ProcessClassifier(llm)
         self._location_normalizer = LocationNormalizer(llm)
-        self._graph = self._build_graph()
-
-    def _build_graph(self) -> StateGraph:
-        graph = StateGraph(ExtractionState)
-        graph.add_node("extract_sections", self._extract_sections)
-        graph.add_node("classify_process", self._classify_process)
-        graph.add_node("normalize_location", self._normalize_location)
-        graph.add_node("finalize", self._finalize)
-
-        graph.set_entry_point("extract_sections")
-        graph.add_edge("extract_sections", "classify_process")
-        graph.add_edge("classify_process", "normalize_location")
-        graph.add_edge("normalize_location", "finalize")
-        graph.add_edge("finalize", END)
-
-        return graph.compile()
 
     def extract(self, clean_text: str) -> list[dict[str, Any]]:
-        state = self._graph.invoke({"clean_text": clean_text})
+        state: ExtractionState = {"clean_text": clean_text}
+        state = self._extract_sections(state)
+        state = self._classify_process(state)
+        state = self._normalize_location(state)
+        state = self._finalize(state)
         blocks = state.get("process_blocks") or []
         if not blocks:
             raise ProcessExtractionError("No process blocks generated")

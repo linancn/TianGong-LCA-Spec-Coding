@@ -1,4 +1,4 @@
-"""Bridges LangGraph MCP tools into the synchronous service layer."""
+"""Synchronous bridge that exposes MCP tools to the workflow."""
 
 from __future__ import annotations
 

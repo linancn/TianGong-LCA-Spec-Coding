@@ -1,6 +1,6 @@
 ## 天工 LCA Spec Coding 项目
 
-基于 LangGraph 的 Tiangong LCA 规范化工作流，实现流程检索、对齐、提取与 TIDAS 校验的一体化管线。本仓库使用 `uv` 作为官方包管理与环境构建工具，并要求 Python 版本 **>= 3.12**。
+基于分阶段 Python 脚本的 Tiangong LCA 规范化工作流，实现流程检索、对齐、提取与 TIDAS 校验的一体化管线。本仓库使用 `uv` 作为官方包管理与环境构建工具，并要求 Python 版本 **>= 3.12**。
 
 ### 运行前提
 
@@ -64,7 +64,7 @@
 - `src/tiangong_lca_spec/core`：配置、日志、数据模型与通用工具。
 - `src/tiangong_lca_spec/flow_search`：MCP 流检索客户端与验证逻辑。
 - `src/tiangong_lca_spec/flow_alignment`：交换量与候选流对齐策略。
-- `src/tiangong_lca_spec/process_extraction`：文献解析、LangGraph 抽取与结果合并。
+- `src/tiangong_lca_spec/process_extraction`：文献解析、提取与结果合并的分步实现。
 - `src/tiangong_lca_spec/tidas_validation`：TIDAS 校验调用封装。
 - `src/tiangong_lca_spec/orchestrator`：整体编排管线。
 

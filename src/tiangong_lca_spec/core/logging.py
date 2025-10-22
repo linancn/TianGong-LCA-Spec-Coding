@@ -14,9 +14,8 @@ def configure_logging(
     *,
     settings: Settings | None = None,
 ) -> None:
-    """Configure standard logging, structlog, and LangGraph instrumentation."""
+    """Configure standard logging and structlog loggers."""
     resolved_settings = settings or get_settings()
-    resolved_settings.apply_langsmith_environment()
     effective_level = level or resolved_settings.log_level
     numeric_level = getattr(logging, effective_level.upper(), logging.INFO)
 
@@ -39,17 +38,8 @@ def configure_logging(
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
         cache_logger_on_first_use=True,
     )
-    _configure_langgraph_logging(numeric_level)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """Return a bound structlog logger."""
     return structlog.get_logger(name)
-
-
-def _configure_langgraph_logging(level: int) -> None:
-    """Ensure LangGraph loggers propagate with the configured level."""
-    for logger_name in ("langgraph", "langgraph.pregel", "langgraph.graph"):
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(level)
-        logger.propagate = True
