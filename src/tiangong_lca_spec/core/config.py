@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     mcp_base_url: HttpUrl = "https://lcamcp.tiangong.earth/mcp"
     mcp_api_key: str | None = None
     mcp_transport: Literal["streamable_http"] = "streamable_http"
-    flow_search_service_name: str = "TianGong_LCA_Remote"
+    flow_search_service_name: str = "tiangong_lca_remote"
     flow_search_tool_name: str = "Search_flows_Tool"
     flow_search_max_parallel: int = 1
 
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
 
     def mcp_service_configs(self) -> dict[str, dict[str, Any]]:
         """Return a mapping of MCP service names to their configuration blocks."""
-        flow_service_name = self.flow_search_service_name or "TianGong_LCA_Remote"
+        flow_service_name = self.flow_search_service_name or "tiangong_lca_remote"
         tidas_service_name = self.tidas_service_name
         if not tidas_service_name:
             tidas_service_name = self.tidas_tool_name.removesuffix("_Tool")
@@ -139,7 +139,7 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
     data = _read_toml(secrets_path)
     overrides: dict[str, Any] = {}
 
-    flow_cfg = _extract_section(data, "TianGong_LCA_Remote", "mcp", "flow_search")
+    flow_cfg = _extract_section(data, "tiangong_lca_remote", "mcp", "flow_search")
     if flow_cfg:
         overrides.update(
             {
