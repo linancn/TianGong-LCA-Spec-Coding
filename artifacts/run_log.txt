@@ -1,39 +1,39 @@
-2025-10-18 15:06:34 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:06:34 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:06:34 [info     ] process_extraction.section_extraction
 2025-10-18 15:07:46 [info     ] process_extraction.classification
 2025-10-18 15:07:52 [info     ] process_extraction.location_normalization
 2025-10-18 15:07:56 [info     ] flow_alignment.start           exchange_count=22 process='Coal Gasification to Methanol (CGTM) - China'
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=Methanol process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Methanol', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Hard coal' process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Hard coal', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Fresh water' process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Crude oil' process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Crude oil', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Electricity, medium voltage' process='Coal Gasification to Methanol (CGTM) - China'
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=Air process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Air', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Electricity, medium voltage', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Fresh water', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Synthetic gas' process='Coal Gasification to Methanol (CGTM) - China'
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=HP-steam process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=Water process='Coal Gasification to Methanol (CGTM) - China'
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=Methane process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Methane', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Electricity, medium voltage' process='Coal Gasification to Methanol (CGTM) - China'
@@ -51,21 +51,21 @@
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Ammonia', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Water', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Gangue', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=MP-N2 process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'MP-N2', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=Slag process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=CO2 process='Coal Gasification to Methanol (CGTM) - China'
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Flue gas' process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Flue gas', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Slag', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange='Sulphur (elemental)' process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Sulphur (elemental)', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
-2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['TianGong_LCA_Remote', 'Tidas_Data_Validate']
+2025-10-18 15:07:56 [debug    ] mcp_tool_client.initialized    servers=['tiangong_lca_remote', 'Tidas_Data_Validate']
 2025-10-18 15:07:56 [info     ] flow_search.lookup             exchange=Effluents process='Coal Gasification to Methanol (CGTM) - China'
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'Effluents', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}
 2025-10-18 15:07:56 [info     ] flow_search.request            arguments={'exchange_name': 'CO2', 'description': None, 'process_name': 'Coal Gasification to Methanol (CGTM) - China'}

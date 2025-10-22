@@ -74,15 +74,15 @@
 
 `tiangong_lca_spec.core.config.Settings` 默认提供两类 MCP 端点：
 
-- `TianGong_LCA_Remote`：用于流程数据检索，需要 Bearer Token。
+- `tiangong_lca_remote`：用于流程数据检索，需要 Bearer Token。
 - `Tidas_Data_Validate`：用于本地 TIDAS 校验，可选密钥。
 
 所有密钥与端点信息统一保存在 `.secrets/secrets.toml` 中（已在 `.gitignore` 中排除）。初始模板示例如下：
 
 ```toml
-[TianGong_LCA_Remote]
+[tiangong_lca_remote]
 transport = "streamable_http"
-service_name = "TianGong_LCA_Remote"
+service_name = "tiangong_lca_remote"
 url = "https://lcamcp.tiangong.earth/mcp"
 api_key = "<replace-with-tiangong-token>"
 
@@ -103,7 +103,7 @@ from tiangong_lca_spec.core.config import get_mcp_service_configs
 
 service_configs = get_mcp_service_configs()
 # {
-#   "TianGong_LCA_Remote": {
+#   "tiangong_lca_remote": {
 #       "transport": "streamable_http",
 #       "url": "https://lcamcp.tiangong.earth/mcp",
 #       "headers": {"Authorization": "Bearer ..."}
