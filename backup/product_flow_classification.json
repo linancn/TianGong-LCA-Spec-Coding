@@ -1,0 +1,8 @@
+{
+"name": {
+"baseName": "Power storage battery",
+"treatmentStandardsRoutes": "Production of lead batteries",
+"mixAndLocationTypes": "Production mix, in the factory"
+},
+"common:generalComment": "Battery storage, or battery energy storage systems (BESS), are devices that enable energy from renewables, like solar and wind, to be stored and then released when the power is needed most. A battery storage power station is a type of energy storage power station that uses a group of batteries to store electrical energy. Battery storage is the fastest responding dispatchable source of power on electric grids, and it is used to stabilise those grids."
+}

@@ -79,18 +79,18 @@ def _build_section_prompt() -> str:
     module_guidelines = (
         "Populate these required fields whenever evidence exists:\n"
         "- processInformation.dataSetInformation:\n"
-        "  * `name`: \"Subprocess for Parent process\" (e.g., \"Coal mining and "
-        "processing for Coal Gasification to MeOH (CGTM)\").\n"
+        '  * `name`: "Subprocess for Parent process" (e.g., "Coal mining and '
+        'processing for Coal Gasification to MeOH (CGTM)").\n'
         "  * `specinfo.baseName`: core activity label.\n"
         "  * `specinfo.treatmentStandardsRoutes`: technical route, feedstock, or "
         "standards.\n"
         "  * `specinfo.mixAndLocationTypes`: market or geographic qualifier "
-        "(e.g., \"at plant, Germany\").\n"
+        '(e.g., "at plant, Germany").\n'
         "  * `specinfo.functionalUnitFlowProperties`: quantitative reference / "
         "functional unit.\n"
         "  * `time.referenceYear`: explicit reference year; fall back to publication "
         "year; if still missing, leave empty and the system will normalise.\n"
-        "  * `geography.@location`: explicit ISO/ILCD location; if absent, use \"GLO\" "
+        '  * `geography.@location`: explicit ISO/ILCD location; if absent, use "GLO" '
         "to match normalisation defaults.\n"
         "  * `technology`: short description of included technology and system "
         "boundary.\n"
@@ -104,12 +104,12 @@ def _build_section_prompt() -> str:
         "dataCutOffAndCompletenessPrinciples` and the list of `referenceToDataSource` "
         "entries (short descriptions of cited sources).\n"
         "- exchanges.exchange (for each flow):\n"
-        "  * `exchangeDirection`: \"Input\" or \"Output\".\n"
+        '  * `exchangeDirection`: "Input" or "Output".\n'
         "  * `meanAmount`, `unit`, and `resultingAmount`.\n"
         "  * `exchangeName` / `flowName`: align with wording in the paper.\n"
         "  * `generalComment1`: capture data source, representativeness, quality, and key "
         "modelling assumptions succinctly.\n"
-        "  * `@dataSetInternalID`: sequential identifiers as strings starting from \"0\"."
+        '  * `@dataSetInternalID`: sequential identifiers as strings starting from "0".'
     )
     metadata_fields = [
         field
