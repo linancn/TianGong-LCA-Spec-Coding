@@ -273,7 +273,7 @@ def _normalise_exchanges(section: Any) -> dict[str, Any]:
         exchanges_iter = []
 
     normalised: list[dict[str, Any]] = []
-    for index, exchange in enumerate(exchanges_iter, start=1):
+    for index, exchange in enumerate(exchanges_iter, start=0):
         item = _ensure_dict(exchange)
         item["@dataSetInternalID"] = str(index)
         item.pop("functionType", None)

@@ -102,10 +102,11 @@ class WorkflowResult:
 ## 6. Process Extraction 模块
 - 预处理：`preprocess_paper` 聚合 markdown 段落、剔除 `<think>` 与参考文献、限制最大长度。
 - LangGraph 节点：
-  - `extract_sections`：依赖注入的 LLM（实现 `LanguageModelProtocol`）输出流程信息、行政信息、模型信息和 `exchange_list`。
-  - `classify_process`：补写 ISIC 分类并挂载至 `classificationInformation.classification`。
+  - `extract_sections`：先用 `ParentProcessExtractor` 枚举文中所有父级/总过程，再将文本按父级关键词切片，并对每个父级分别调用 `SectionExtractor` 获取流程数据；缺失的父级会回退到全量文本重试，并记录未覆盖告警，同时监控截断输出。
+    - 第一次提示中明确约束：只有在原文以章节、表格或叙述明确给出了独立单元过程及其 LCI 时才新增条目；原料预处理、共享公用工程等未具备独立功能单位的内容需并入对应子过程的 `common:generalComment`。
+  - `classify_process`：补写 ISIC 分类并挂载至 `classificationInformation.common:classification`。
   - `normalize_location`：更新 `process_information.geography`。
-  - `finalize`：生成 `process_blocks`，同时保留 `exchange_list` 与 `{"exchange": ...}` 结构。
+  - `finalize`：生成 `process_blocks`，同时保留 `exchange_list` 与 `{"exchange": ...}` 结构；`build_tidas_process_dataset` 会补齐全部必填字段（含 `modellingAndValidation` 中的数据完整性与审查引用信息），规范化 `common:dataSetVersion` 等版本号格式，并保留 `LCIMethodAndAllocation.typeOfDataSet` 等关键可选字段。
 - 合并：`merge_results` 将匹配流写回 exchange 并添加 `matchingDetail`；`determine_functional_unit` 选取首个非废弃输出构建功能单位字符串。
 
 ## 7. TIDAS Validation 模块

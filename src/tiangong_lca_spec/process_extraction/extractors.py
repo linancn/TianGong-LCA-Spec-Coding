@@ -50,6 +50,67 @@ def _render_summary(title: str, pointer: str, depth: int = 2) -> str:
 @cache
 def _build_section_prompt() -> str:
     repo = get_schema_repository()
+    process_guidelines = (
+        "Process extraction guidelines:\n"
+        "1. Process definition: a concrete activity that produces a product or service, "
+        "consumes resources (energy, materials, land, transport, services), and has "
+        "quantified LCI exchanges.\n"
+        "2. Only create a process when quantifiable LCI data is provided; descriptive text "
+        "without amounts is ignored.\n"
+        "3. When both parent and subprocess data are present, create entries for each "
+        "subprocess. Treat the parent dataset as the aggregation of its subprocesses and "
+        "document that relation in `common:generalComment` or `notes` instead of creating "
+        "an additional record.\n"
+        "4. Do not promote a single exchange from another dataset into its own process "
+        "unless the literature provides an independent LCI for it.\n"
+        "5. If the same activity has distinct LCI variants by geography, year, or technology "
+        "route, create separate records; otherwise merge them.\n"
+        "6. Always capture which subprocesses are bundled together, the functional unit, "
+        "and key allocation or shared-resource notes inside `common:generalComment` or "
+        "`notes`.\n"
+        "7. Treat shared preparation steps, raw material staging, or utility supply that "
+        "lack their own functional unit as supplemental information. Write such details "
+        "into the relevant subprocess `common:generalComment` instead of creating a new "
+        "process entry.\n"
+        "8. Only introduce a new process when the document explicitly labels a unit "
+        "operation (in tables, section headings, or prose) and associates it with its own "
+        "inventory or functional output."
+    )
+    module_guidelines = (
+        "Populate these required fields whenever evidence exists:\n"
+        "- processInformation.dataSetInformation:\n"
+        "  * `name`: \"Subprocess for Parent process\" (e.g., \"Coal mining and "
+        "processing for Coal Gasification to MeOH (CGTM)\").\n"
+        "  * `specinfo.baseName`: core activity label.\n"
+        "  * `specinfo.treatmentStandardsRoutes`: technical route, feedstock, or "
+        "standards.\n"
+        "  * `specinfo.mixAndLocationTypes`: market or geographic qualifier "
+        "(e.g., \"at plant, Germany\").\n"
+        "  * `specinfo.functionalUnitFlowProperties`: quantitative reference / "
+        "functional unit.\n"
+        "  * `time.referenceYear`: explicit reference year; fall back to publication "
+        "year; if still missing, leave empty and the system will normalise.\n"
+        "  * `geography.@location`: explicit ISO/ILCD location; if absent, use \"GLO\" "
+        "to match normalisation defaults.\n"
+        "  * `technology`: short description of included technology and system "
+        "boundary.\n"
+        "- administrativeInformation:\n"
+        "  * `common:commissionerAndGoal.common:intendedApplications`: summarise the "
+        "stated intended applications of the dataset.\n"
+        "- modellingAndValidation:\n"
+        "  * `LCIMethodAndAllocation.typeOfDataSet`, `LCIMethodAndAllocation."
+        "LCIMethodPrinciple`, and related allocation notes.\n"
+        "  * `dataSourcesTreatmentAndRepresentativeness."
+        "dataCutOffAndCompletenessPrinciples` and the list of `referenceToDataSource` "
+        "entries (short descriptions of cited sources).\n"
+        "- exchanges.exchange (for each flow):\n"
+        "  * `exchangeDirection`: \"Input\" or \"Output\".\n"
+        "  * `meanAmount`, `unit`, and `resultingAmount`.\n"
+        "  * `exchangeName` / `flowName`: align with wording in the paper.\n"
+        "  * `generalComment1`: capture data source, representativeness, quality, and key "
+        "modelling assumptions succinctly.\n"
+        "  * `@dataSetInternalID`: sequential identifiers as strings starting from \"0\"."
+    )
     metadata_fields = [
         field
         for field in repo.summarize_properties("tidas_processes.json", "/properties/processDataSet")
@@ -80,21 +141,35 @@ def _build_section_prompt() -> str:
     )
     return (
         "You are an expert LCA analyst. Extract structured content that conforms to the "
-        "TIDAS ILCD `processDataSet` schema. Return JSON with a top-level key `processDataSets` "
-        "whose value is an array of one or more objects matching the schema excerpts below. "
-        "If only a single process is identified, still return it as a single-element array. "
-        "Only include fields supported by the schema and omit entries that are not supported "
-        "by evidence in the paper.\n\n"
+        "TIDAS ILCD `processDataSet` schema. Before filling fields, follow the guidelines "
+        "below.\n\n"
+        f"{process_guidelines}\n\n"
+        f"{module_guidelines}\n\n"
+        "Return JSON with a top-level key `processDataSets` whose value is an array of one or more "
+        "objects matching the schema excerpts below. If only a single process is identified, still "
+        "return it as a single-element array. Only include fields supported by the schema and omit "
+        "entries that are not supported by evidence in the paper. Ensure the JSON is valid and do "
+        "not wrap the result in Markdown or a code block.\n\n"
         f"{metadata}\n\n"
         f"{process_info}\n\n"
         f"{modelling}\n\n"
         f"{administrative}\n\n"
-        f"{exchanges}\n\n"
-        "Ensure the JSON is valid. Do not wrap the result in Markdown or a code block."
+        f"{exchanges}"
     )
 
 
 SECTION_PROMPT = _build_section_prompt()
+
+PARENT_PROMPT = (
+    "You are analysing a life cycle assessment document. Identify every top-level or parent "
+    "process system described (for example, production routes, technology options, or supply "
+    "chains that contain multiple subprocesses with their own LCIs). Return JSON with the key "
+    "`parentProcesses`, whose value is an array. Each item must include `name` (string), optional "
+    "`aliases` (array of alternative names), optional `keywords` (array of distinguishing terms), "
+    "and optional `subprocessHints` (array summarising important subprocesses mentioned). Only "
+    "include parents that have at least one quantified subprocess in the text. Ensure every "
+    "parent mentioned in the document appears exactly once."
+)
 
 CLASSIFICATION_PROMPT = (
     "Derive the ISIC classification path for the process. Return a JSON array to populate "
@@ -114,10 +189,45 @@ LOCATION_PROMPT = (
 class SectionExtractor:
     llm: LanguageModelProtocol
 
-    def run(self, clean_text: str) -> dict[str, Any]:
+    def run(
+        self,
+        clean_text: str,
+        *,
+        focus_parent: str | None = None,
+        parent_aliases: list[str] | None = None,
+    ) -> dict[str, Any]:
         LOGGER.info("process_extraction.section_extraction")
-        response = self.llm.invoke({"prompt": SECTION_PROMPT, "context": clean_text})
-        return _ensure_dict(response)
+        prompt = SECTION_PROMPT
+        if focus_parent:
+            alias_text = ""
+            if parent_aliases:
+                filtered_aliases = [alias for alias in parent_aliases if alias]
+                if filtered_aliases:
+                    alias_text = f" (aliases: {', '.join(filtered_aliases)})"
+            focus_directive = (
+                "Focus exclusively on the parent process "
+                f"`{focus_parent}`{alias_text}. Extract every subprocess that the document "
+                "explicitly assigns to this parent (headings, tables, or prose with a named "
+                "unit process). Do not split out generic raw-material staging or shared "
+                "utilities unless the text states they operate as distinct unit processes. "
+                "Capture supplemental materials or shared resources in `common:generalComment`."
+            )
+            prompt = f"{SECTION_PROMPT}\n\n{focus_directive}"
+        payload = {"prompt": prompt, "context": clean_text}
+        response = self.llm.invoke(payload)
+        raw_content = getattr(response, "content", response)
+        truncated = False
+        if isinstance(raw_content, str):
+            stripped = raw_content.strip()
+            if stripped.endswith("...") or stripped.count("{") != stripped.count("}"):
+                truncated = True
+        data = _ensure_dict(response)
+        if truncated:
+            LOGGER.warning(
+                "process_extraction.section_extraction_truncated",
+                focus_parent=focus_parent,
+            )
+        return data
 
 
 @dataclass
@@ -140,6 +250,16 @@ class LocationNormalizer:
     def run(self, process_info: dict[str, Any]) -> dict[str, Any]:
         LOGGER.info("process_extraction.location_normalization")
         response = self.llm.invoke({"prompt": LOCATION_PROMPT, "context": process_info})
+        return _ensure_dict(response)
+
+
+@dataclass
+class ParentProcessExtractor:
+    llm: LanguageModelProtocol
+
+    def run(self, clean_text: str) -> dict[str, Any]:
+        LOGGER.info("process_extraction.parent_process_identification")
+        response = self.llm.invoke({"prompt": PARENT_PROMPT, "context": clean_text})
         return _ensure_dict(response)
 
 
