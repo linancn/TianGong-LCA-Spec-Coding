@@ -272,21 +272,11 @@ def _normalise_parent_processes(summary: dict[str, Any] | None) -> list[dict[str
         aliases_raw = entry.get("aliases") or entry.get("alias") or []
         keywords_raw = entry.get("keywords") or entry.get("keyTerms") or []
         hints_raw = entry.get("subprocessHints") or entry.get("subProcesses") or []
-        aliases = [
-            _stringify(alias)
-            for alias in _ensure_list(aliases_raw)
-            if _stringify(alias)
-        ]
+        aliases = [_stringify(alias) for alias in _ensure_list(aliases_raw) if _stringify(alias)]
         keywords = [
-            _stringify(keyword)
-            for keyword in _ensure_list(keywords_raw)
-            if _stringify(keyword)
+            _stringify(keyword) for keyword in _ensure_list(keywords_raw) if _stringify(keyword)
         ]
-        hints = [
-            _stringify(hint)
-            for hint in _ensure_list(hints_raw)
-            if _stringify(hint)
-        ]
+        hints = [_stringify(hint) for hint in _ensure_list(hints_raw) if _stringify(hint)]
         normalised.append(
             {
                 "name": name,
@@ -343,9 +333,8 @@ def _combine_parent_sections(
         if not dataset_entries:
             continue
         for dataset in dataset_entries:
-            identifier = (
-                _derive_dataset_identifier(dataset)
-                or json.dumps(dataset, sort_keys=True, default=str)
+            identifier = _derive_dataset_identifier(dataset) or json.dumps(
+                dataset, sort_keys=True, default=str
             )
             if identifier in seen_keys:
                 continue

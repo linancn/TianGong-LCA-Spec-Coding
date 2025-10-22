@@ -1,0 +1,9 @@
+
+{
+"name": {
+"baseName": "Coke production (Z01)",
+"treatmentStandardsRoutes": "Coking process",
+"mixAndLocationTypes": "Production mixing, in the factory"
+},
+"common:generalComment": "Coking refers to the process in which coking coal is heated to about 1000°C (high-temperature carbonization) in the absence of air. Through thermal decomposition and coking, coke, coke oven gas and other coking chemical products are produced. Metallurgical coke has a high carbon content, high porosity and high strength (especially high-temperature strength). It is an important fuel and reducing agent for blast furnace ironmaking, as well as a support and loosening agent for the entire blast furnace burden column. The coke oven gas produced as a by - product of coking has a high calorific value. It is an excellent gaseous fuel for open - hearth furnaces and heating furnaces, and is an important energy component in integrated steel enterprises."
+}
