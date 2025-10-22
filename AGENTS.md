@@ -22,14 +22,12 @@
 3. 所有 `api_key` 字段填写裸 token，框架会自动添加 `Bearer` 前缀。
 
 ## 3. 常用开发命令
-- 代码格式化与静态检查：
+- 每次 agent 运行最后都要执行的步骤：
   ```bash
   uv run black .
   uv run ruff check
-  ```
-- 语法/导入快速检查（不等价于完整测试）：
-  ```bash
   uv run python -m compileall src scripts
+  uv run pytest
   ```
 - 工作流示例运行位于 `scripts/` 目录，可通过 `uv run python scripts/<stage>.py ...` 执行。
 
@@ -41,4 +39,4 @@
 上述脚本用于查询地理、流、过程分类层级：若省略参数返回顶层；传入编码后返回下一级节点。
 
 ## 5. 文档同步要求
-- 若依赖、环境或开发流程发生变更，需同步更新本文件，确保说明与代码实现一致。
+- 每次 agent 运行最后都要执行的步骤。
