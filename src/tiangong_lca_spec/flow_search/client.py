@@ -5,12 +5,6 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 import httpx
-
-try:
-    from anyio.exceptions import TimeoutError as AnyioTimeoutError
-except ImportError:  # pragma: no cover - fallback for older anyio
-    AnyioTimeoutError = TimeoutError  # type: ignore[misc]
-
 from mcp import McpError
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
@@ -22,7 +16,7 @@ from tiangong_lca_spec.core.models import FlowQuery
 
 LOGGER = get_logger(__name__)
 
-TIMEOUT_ERRORS = (httpx.TimeoutException, AnyioTimeoutError, TimeoutError)
+TIMEOUT_ERRORS = (httpx.TimeoutException, TimeoutError)
 DEFAULT_CONTEXT_LIMIT = 800
 
 
