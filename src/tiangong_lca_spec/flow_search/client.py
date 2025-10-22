@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover - fallback for older anyio
     AnyioTimeoutError = TimeoutError  # type: ignore[misc]
 
-from mcp.exceptions import McpError
+from mcp import McpError
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from tiangong_lca_spec.core.config import Settings, get_settings

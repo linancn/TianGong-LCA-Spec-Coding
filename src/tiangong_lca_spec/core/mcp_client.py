@@ -7,9 +7,8 @@ from typing import Any, Mapping
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from httpx import HTTPStatusError
-from mcp import ClientSession, types
+from mcp import ClientSession, McpError, types
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.exceptions import McpError
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import SpecCodingError
