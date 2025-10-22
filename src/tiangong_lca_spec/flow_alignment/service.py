@@ -60,6 +60,7 @@ class FlowAlignmentService:
                 if misses:
                     unmatched.extend(misses)
                 origin_exchanges.setdefault(exchange_name, []).append(exchange)
+                continue
             except FlowSearchError as exc:
                 LOGGER.warning(
                     "flow_alignment.retry_serial",
