@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from _workflow_common import dump_json
+
 from tiangong_lca_spec.core.models import ProcessDataset
 
 
@@ -98,10 +99,12 @@ def main() -> None:
         "validation_report": validation,
     }
     dump_json(payload, args.output)
-    print(
+    message = (
         f"Workflow artifact written to {args.output} "
-        f"(datasets={len(datasets)}, alignment_entries={len(alignment)}, findings={len(validation)})"
+        f"(datasets={len(datasets)}, alignment_entries={len(alignment)}, "
+        f"findings={len(validation)})"
     )
+    print(message)
 
 
 if __name__ == "__main__":

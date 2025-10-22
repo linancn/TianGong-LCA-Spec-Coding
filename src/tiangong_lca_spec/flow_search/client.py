@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover - fallback for older anyio
     AnyioTimeoutError = TimeoutError  # type: ignore[misc]
 
-from langchain_core.tools.base import ToolException
+from mcp.exceptions import McpError
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from tiangong_lca_spec.core.config import Settings, get_settings
@@ -142,9 +142,13 @@ class FlowSearchClient:
             return False
         cause: Exception | None = exc.__cause__  # type: ignore[assignment]
         while cause:
-            if isinstance(cause, ToolException):
+            if isinstance(cause, httpx.HTTPStatusError):
+                status = cause.response.status_code
+                if status == 413 or status >= 500:
+                    return True
+            if isinstance(cause, McpError):
                 message = str(cause)
-                if "HTTP error: 500" in message or "413" in message:
+                if "413" in message or "payload too large" in message.lower():
                     return True
             cause = cause.__cause__  # type: ignore[assignment]
         return False

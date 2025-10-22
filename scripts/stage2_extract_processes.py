@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from _workflow_common import OpenAIResponsesLLM, dump_json, load_secrets
+
 from tiangong_lca_spec.process_extraction import ProcessExtractionService
 
 

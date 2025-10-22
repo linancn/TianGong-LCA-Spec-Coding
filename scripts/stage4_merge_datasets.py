@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from _workflow_common import dump_json
+
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 from tiangong_lca_spec.process_extraction.merge import (
     determine_functional_unit,

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
-import tomllib
 from openai import APIConnectionError, APIStatusError, OpenAI
 
 

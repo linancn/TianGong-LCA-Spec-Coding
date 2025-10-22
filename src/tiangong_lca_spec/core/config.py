@@ -116,6 +116,7 @@ class Settings(BaseSettings):
             tidas_service_name: self.tidas_mcp_config(),
         }
 
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return a cached settings instance."""
