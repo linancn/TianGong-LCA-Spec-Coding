@@ -157,3 +157,5 @@ weaviate/weaviate_data
 .log
 uv.lock
 .ruff_cache/
+
+artifacts/
