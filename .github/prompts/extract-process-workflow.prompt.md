@@ -24,7 +24,7 @@
   - `json_utils.py`：清洗 LLM 输出，修正 JSON 与括号不平衡。
   - `mcp_client.py`：使用官方 `mcp` SDK（Streamable HTTP + `ClientSession`）建立持久会话，提供同步 `invoke_tool` / `invoke_json_tool`。
 - `flow_search/`：封装 MCP 流检索（重试、候选过滤、命中/未命中组装）。
-- `flow_alignment/`：并行对齐交换量，生成 `matched/unmatched` 及 `origin_exchanges`。
+- `flow_alignment/`：并行对齐交换量，支持基于 LLM 的候选筛选（回退至相似度评分），输出 `matched` 结果和带占位符的 `origin_exchanges`。
 - `process_extraction/`：完成预处理、父级拆分、分类、地理标准化与 `processDataSet` 归并。
 - `tidas_validation/`：调用 TIDAS MCP 工具并转化为 `TidasValidationFinding`。
 - `orchestrator/`：顺序式 orchestrator，将各阶段串联成单一入口。
@@ -37,7 +37,7 @@
 | ---- | ---- | ---- | ---- |
 | 1 | `stage1_preprocess.py` | `stage1_clean_text.json` | 解析论文 Markdown/JSON，输出 `clean_text`。 |
 | 2 | `stage2_extract_processes.py` | `stage2_process_blocks.json` | 使用 OpenAI Responses 生成流程块。 |
-| 3 | `stage3_align_flows.py` | `stage3_alignment.json` | 调用 `FlowAlignmentService` 对齐交换量。 |
+| 3 | `stage3_align_flows.py` | `stage3_alignment.json` | 调用 `FlowAlignmentService` 对齐交换量，仅保留匹配结果。 |
 | 4 | `stage4_merge_datasets.py` | `stage4_process_datasets.json` | 合并流程块、候选流与功能单位。 |
 | 5 | `stage5_validate.py` | `stage5_validation.json` | 调用 TIDAS MCP 工具（支持 `--skip`）。 |
 | 6 | `stage6_finalize.py` | `workflow_result.json` | 汇总流程数据集、对齐信息与校验报告。 |
@@ -58,6 +58,8 @@ uv run python scripts/stage6_finalize.py \
   --alignment artifacts/stage3_alignment.json \
   --validation artifacts/stage5_validation.json
 ```
+
+- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本现仅写出 `stage3_alignment.json`，未命中的交换不会落盘，CLI 日志会提示跳过的数量。
 
 ## 3. 核心数据结构
 ```python
@@ -113,12 +115,12 @@ class WorkflowResult:
 - 运行 Stage 3 前先快速抽样核查：选 1~2 个交换量搭建 `FlowQuery` 调试，确认服务是否返回候选（避免整批跑空）。
 - 每个交换量至少发起一次 MCP 检索；如果 3 次以内仍失败，才将该交换标记为 `UnmatchedFlow` 并写入原因。
 - 采用指数退避重试；捕获 `httpx.HTTPStatusError` / `McpError`，必要时剥离上下文以规避 413/5xx。
-- `FlowSearchService` 负责相似度过滤、缓存命中记录与 `UnmatchedFlow` 组合；流程结束后务必审阅 `matched` / `unmatched` 列表，确认命中率与日志一致。
+- `FlowSearchService` 负责相似度过滤、缓存命中记录与 `UnmatchedFlow` 组合；Stage 3 结束后需根据日志统计确认命中率，并记录仍未命中的交换量。
 - 如果日志出现大量 `flow_search.filtered_out` 且无命中，优先检查：① `exchangeName`/`unit` 是否缺失或拼写异常；② `clean_text` 是否传入过长上下文导致噪声；③ `.secrets` 中是否设置更大的 `timeout` 以应对慢响应。
 - `mcp_tool_client.close_failed` 警告通常由请求完成后清理协程触发，属正常现象；若频繁超时，可调低 `flow_search_max_parallel` 或分批执行 Stage 3。
 
 ## 5. Flow Alignment
-- 每个流程块的交换量在独立线程提交检索任务，聚合 `matched_flows`、`unmatched_flows` 与 `origin_exchanges`。
+- 每个流程块的交换量在独立线程提交检索任务，聚合 `matched_flows` 与 `origin_exchanges`；未命中只在日志中计数提醒。
 - 匹配成功时写回 `referenceToFlowDataSet`，失败则保留原始交换量并记录原因。
 - 过程中输出 `flow_alignment.start`、`flow_alignment.exchange_failed` 等结构化日志，便于诊断。
 

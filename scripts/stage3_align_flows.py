@@ -9,7 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from _workflow_common import dump_json
+from _workflow_common import OpenAIResponsesLLM, dump_json, load_secrets
 
 from tiangong_lca_spec.flow_alignment import FlowAlignmentService
 
@@ -40,14 +40,19 @@ def _read_clean_text(path: Path) -> str:
 
 def _serialise_alignment(entry: dict[str, Any]) -> dict[str, Any]:
     matched = entry.get("matched_flows") or []
-    unmatched = entry.get("unmatched_flows") or []
     origin = entry.get("origin_exchanges") or {}
     return {
         "process_name": entry.get("process_name"),
         "matched_flows": [asdict(candidate) for candidate in matched],
-        "unmatched_flows": [asdict(item) for item in unmatched],
         "origin_exchanges": origin,
     }
+
+
+def _maybe_create_llm(path: Path | None) -> OpenAIResponsesLLM | None:
+    if path is None or not path.exists():
+        return None
+    api_key, model = load_secrets(path)
+    return OpenAIResponsesLLM(api_key=api_key, model=model)
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,6 +75,18 @@ def parse_args() -> argparse.Namespace:
         default=Path("artifacts/stage3_alignment.json"),
         help="Where to store the alignment results.",
     )
+    parser.add_argument(
+        "--unmatched-output",
+        type=Path,
+        default=Path("artifacts/stage3_unmatched_flows.json"),
+        help="Deprecated. Unmatched exchanges are no longer written to disk.",
+    )
+    parser.add_argument(
+        "--secrets",
+        type=Path,
+        default=Path(".secrets/secrets.toml"),
+        help="Secrets file containing OpenAI credentials for LLM-based alignment.",
+    )
     return parser.parse_args()
 
 
@@ -78,8 +95,10 @@ def main() -> None:
     process_blocks = _read_process_blocks(args.process_blocks)
     clean_text = _read_clean_text(args.clean_text)
 
-    service = FlowAlignmentService()
+    llm = _maybe_create_llm(args.secrets)
+    service = FlowAlignmentService(llm=llm)
     alignment_entries: list[dict[str, Any]] = []
+    total_unmatched = 0
     try:
         for block in process_blocks:
             dataset = block.get("processDataSet")
@@ -87,10 +106,14 @@ def main() -> None:
                 raise SystemExit("Each process block must contain 'processDataSet'")
             result = service.align_exchanges(dataset, clean_text)
             alignment_entries.append(_serialise_alignment(result))
+            unmatched = result.get("unmatched_flows") or []
+            total_unmatched += len(unmatched)
     finally:
         service.close()
 
     dump_json({"alignment": alignment_entries}, args.output)
+    if total_unmatched:
+        print(f"Skipped storing {total_unmatched} unmatched exchanges.")
     print(f"Aligned flows for {len(alignment_entries)} processes -> {args.output}")
 
 

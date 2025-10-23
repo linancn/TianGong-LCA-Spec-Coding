@@ -150,6 +150,7 @@ def _placeholder_reference(name: str) -> dict[str, Any]:
         "@version": "00.00.000",
         "@uri": f"https://tiangong.earth/flows/{identifier}",
         "common:shortDescription": _multilang(name),
+        "tiangong:placeholder": True,
     }
 
 
