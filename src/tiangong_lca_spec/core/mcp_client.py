@@ -25,16 +25,16 @@ class _ServerConnection:
     session: ClientSession
     closed: bool = False
 
-    async def close(self) -> None:
+    def close(self) -> None:
         if self.closed:
             return
         self.closed = True
         try:
             if self.session_cm is not None:
-                await self.session_cm.__aexit__(None, None, None)
+                self.session_cm.__exit__(None, None, None)
         finally:
             if self.client_cm is not None:
-                await self.client_cm.__aexit__(None, None, None)
+                self.client_cm.__exit__(None, None, None)
 
 
 class MCPToolClient:
@@ -70,12 +70,8 @@ class MCPToolClient:
         """Call a remote MCP tool and return payload plus optional attachments."""
         if self._closed:
             raise RuntimeError("Cannot invoke MCP tool on a closed client")
-        payload, attachments = self._portal.call(
-            self._invoke_tool_async,
-            server_name,
-            tool_name,
-            dict(arguments or {}),
-        )
+        connection = self._ensure_connection(server_name)
+        payload, attachments = self._call_tool(connection, server_name, tool_name, arguments)
         return payload, attachments
 
     def invoke_json_tool(
@@ -105,7 +101,17 @@ class MCPToolClient:
             return
         self._closed = True
         try:
-            self._portal.call(self._close_connections_async)
+            for server_name, connection in list(self._connections.items()):
+                try:
+                    connection.close()
+                    LOGGER.debug("mcp_tool_client.session_closed", server=server_name)
+                except Exception as exc:  # pragma: no cover - best effort shutdown
+                    LOGGER.warning(
+                        "mcp_tool_client.close_failed",
+                        server=server_name,
+                        error=str(exc),
+                    )
+            self._connections.clear()
         finally:
             self._portal_cm.__exit__(None, None, None)
             LOGGER.debug("mcp_tool_client.closed")
@@ -120,21 +126,72 @@ class MCPToolClient:
 
     # Internal helpers -----------------------------------------------------------
 
-    async def _invoke_tool_async(
+    def _ensure_connection(self, server_name: str) -> _ServerConnection:
+        connection = self._connections.get(server_name)
+        if connection is not None:
+            return connection
+
+        config = self._connection_configs.get(server_name)
+        if not config:
+            raise SpecCodingError(f"MCP server '{server_name}' is not configured")
+        transport = config.get("transport", "streamable_http")
+        if transport != "streamable_http":
+            raise SpecCodingError(f"Unsupported MCP transport '{transport}' for '{server_name}'")
+
+        url = config.get("url")
+        if not url:
+            raise SpecCodingError(f"MCP server '{server_name}' is missing a URL")
+
+        headers = config.get("headers")
+        timeout = config.get("timeout") or self._settings.request_timeout or 30
+
+        client_async_cm = streamablehttp_client(
+            url,
+            headers=headers,
+            timeout=float(timeout),
+        )
+        client_cm = self._portal.wrap_async_context_manager(client_async_cm)
+        try:
+            read_stream, write_stream, _ = client_cm.__enter__()
+        except Exception:
+            client_cm.__exit__(None, None, None)
+            raise
+
+        session_async_cm = ClientSession(read_stream, write_stream)
+        session_cm = self._portal.wrap_async_context_manager(session_async_cm)
+        try:
+            session = session_cm.__enter__()
+            self._portal.call(session.initialize)
+        except Exception:
+            session_cm.__exit__(None, None, None)
+            client_cm.__exit__(None, None, None)
+            raise
+
+        connection = _ServerConnection(
+            client_cm=client_cm,
+            session_cm=session_cm,
+            session=session,
+        )
+        self._connections[server_name] = connection
+        LOGGER.debug("mcp_tool_client.session_opened", server=server_name)
+        return connection
+
+    def _call_tool(
         self,
+        connection: _ServerConnection,
         server_name: str,
         tool_name: str,
-        arguments: Mapping[str, Any],
+        arguments: Mapping[str, Any] | None,
     ) -> tuple[Any, Any]:
-        connection = await self._ensure_connection(server_name)
+        args = dict(arguments or {})
         LOGGER.debug(
             "mcp_tool_client.invoke",
             server=server_name,
             tool=tool_name,
-            keys=list(arguments.keys()),
+            keys=list(args.keys()),
         )
         try:
-            result = await connection.session.call_tool(tool_name, arguments)
+            result = self._portal.call(connection.session.call_tool, tool_name, args)
         except (McpError, HTTPStatusError) as exc:
             raise SpecCodingError(f"MCP tool '{tool_name}' call failed") from exc
 
@@ -155,64 +212,6 @@ class MCPToolClient:
                 payload = texts
         attachments = self._collect_attachments(result)
         return payload, attachments or None
-
-    async def _ensure_connection(self, server_name: str) -> _ServerConnection:
-        connection = self._connections.get(server_name)
-        if connection is not None:
-            return connection
-
-        config = self._connection_configs.get(server_name)
-        if not config:
-            raise SpecCodingError(f"MCP server '{server_name}' is not configured")
-        transport = config.get("transport", "streamable_http")
-        if transport != "streamable_http":
-            raise SpecCodingError(f"Unsupported MCP transport '{transport}' for '{server_name}'")
-
-        url = config.get("url")
-        if not url:
-            raise SpecCodingError(f"MCP server '{server_name}' is missing a URL")
-
-        headers = config.get("headers")
-        timeout = config.get("timeout") or self._settings.request_timeout or 30
-
-        client_cm = streamablehttp_client(
-            url,
-            headers=headers,
-            timeout=float(timeout),
-        )
-        session_cm = None
-        try:
-            read_stream, write_stream, _ = await client_cm.__aenter__()
-            session_cm = ClientSession(read_stream, write_stream)
-            session = await session_cm.__aenter__()
-            await session.initialize()
-        except Exception:
-            if session_cm is not None:
-                await session_cm.__aexit__(None, None, None)
-            await client_cm.__aexit__(None, None, None)
-            raise
-
-        connection = _ServerConnection(
-            client_cm=client_cm,
-            session_cm=session_cm,
-            session=session,
-        )
-        self._connections[server_name] = connection
-        LOGGER.debug("mcp_tool_client.session_opened", server=server_name)
-        return connection
-
-    async def _close_connections_async(self) -> None:
-        for server_name, connection in list(self._connections.items()):
-            try:
-                await connection.close()
-                LOGGER.debug("mcp_tool_client.session_closed", server=server_name)
-            except Exception as exc:  # pragma: no cover - best effort shutdown
-                LOGGER.warning(
-                    "mcp_tool_client.close_failed",
-                    server=server_name,
-                    error=str(exc),
-                )
-        self._connections.clear()
 
     @staticmethod
     def _collect_text(result: types.CallToolResult) -> str:

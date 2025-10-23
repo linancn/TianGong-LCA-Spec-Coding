@@ -74,7 +74,16 @@ def _build_section_prompt() -> str:
         "process entry.\n"
         "8. Only introduce a new process when the document explicitly labels a unit "
         "operation (in tables, section headings, or prose) and associates it with its own "
-        "inventory or functional output."
+        "inventory or functional output.\n"
+        "9. Stage 3 flow alignment performs serial MCP lookups; consolidate table rows "
+        "into roughly 8-12 representative exchanges per process, but carry detailed "
+        "sub-rows (amounts, units, qualifiers) into `generalComment1` or process "
+        "notes so no information is lost.\n"
+        "10. Normalize exchange names to Tiangong/ILCD canonical wording (e.g., "
+        '"Electricity, medium voltage", "Carbon dioxide, fossil") and enrich '
+        "`generalComment1` with common synonyms, aliases/abbreviations (e.g., "
+        '"COG", "DAC"), chemical formulas or CAS numbers, and bilingual descriptors '
+        "to improve flow search hit-rate."
     )
     module_guidelines = (
         "Populate these required fields whenever evidence exists:\n"
