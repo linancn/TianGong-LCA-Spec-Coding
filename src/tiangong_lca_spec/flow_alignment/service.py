@@ -5,11 +5,19 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from json import dumps
 from typing import Any, Callable, Iterable
+from uuid import uuid4
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import FlowAlignmentError, FlowSearchError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, FlowQuery, UnmatchedFlow
+from tiangong_lca_spec.flow_alignment.selector import (
+    CandidateSelector,
+    LanguageModelProtocol,
+    LLMCandidateSelector,
+    SelectorDecision,
+    SimilarityCandidateSelector,
+)
 from tiangong_lca_spec.flow_search import search_flows
 
 LOGGER = get_logger(__name__)
@@ -25,10 +33,18 @@ class FlowAlignmentService:
         settings: Settings | None = None,
         *,
         flow_search_fn: FlowSearchCallable | None = None,
+        selector: CandidateSelector | None = None,
+        llm: LanguageModelProtocol | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._profile = self._settings.profile
         self._flow_search = flow_search_fn or search_flows
+        if selector is not None:
+            self._selector = selector
+        elif llm is not None:
+            self._selector = LLMCandidateSelector(llm)
+        else:
+            self._selector = SimilarityCandidateSelector()
 
     def align_exchanges(
         self, process_dataset: dict[str, Any], paper_md: str | None = None
@@ -56,11 +72,16 @@ class FlowAlignmentService:
             exchange_name = self._safe_exchange_name(exchange)
             try:
                 matches, misses = future.result()
-                if matches:
-                    matched.extend(matches)
-                if misses:
-                    unmatched.extend(misses)
-                origin_exchanges.setdefault(exchange_name, []).append(exchange)
+                updated_exchange = self._consume_search_result(
+                    exchange,
+                    query,
+                    matches,
+                    misses,
+                    matched,
+                    unmatched,
+                    process_name,
+                )
+                origin_exchanges.setdefault(exchange_name, []).append(updated_exchange)
                 continue
             except FlowSearchError as exc:
                 LOGGER.warning(
@@ -71,11 +92,16 @@ class FlowAlignmentService:
                 )
                 try:
                     matches, misses = self._flow_search(query)
-                    if matches:
-                        matched.extend(matches)
-                    if misses:
-                        unmatched.extend(misses)
-                    origin_exchanges.setdefault(exchange_name, []).append(exchange)
+                    updated_exchange = self._consume_search_result(
+                        exchange,
+                        query,
+                        matches,
+                        misses,
+                        matched,
+                        unmatched,
+                        process_name,
+                    )
+                    origin_exchanges.setdefault(exchange_name, []).append(updated_exchange)
                     continue
                 except Exception as serial_exc:  # pylint: disable=broad-except
                     LOGGER.error(
@@ -87,17 +113,9 @@ class FlowAlignmentService:
                 LOGGER.error(
                     "flow_alignment.exchange_failed", exchange=exchange_name, error=str(exc)
                 )
-            unmatched.append(
-                UnmatchedFlow(
-                    base_name=exchange_name,
-                    general_comment=self._stringify(
-                        exchange.get("generalComment1")
-                        or exchange.get("generalComment")
-                        or exchange.get("comment")
-                    ),
-                    process_name=process_name,
-                )
-            )
+            placeholder = self._apply_placeholder_reference(exchange)
+            origin_exchanges.setdefault(exchange_name, []).append(placeholder)
+            unmatched.append(self._build_unmatched_flow(exchange, process_name, exchange_name))
 
         return {
             "process_name": process_name,
@@ -105,6 +123,122 @@ class FlowAlignmentService:
             "unmatched_flows": unmatched,
             "origin_exchanges": origin_exchanges,
         }
+
+    def _consume_search_result(
+        self,
+        exchange: dict[str, Any],
+        query: FlowQuery,
+        matches: list[FlowCandidate],
+        misses: list[UnmatchedFlow],
+        matched_acc: list[FlowCandidate],
+        unmatched_acc: list[UnmatchedFlow],
+        process_name: str | None,
+    ) -> dict[str, Any]:
+        if misses:
+            unmatched_acc.extend(misses)
+
+        decision = self._selector.select(query, exchange, matches)
+        candidate = decision.candidate
+        if candidate is not None:
+            updated_exchange = self._apply_candidate_reference(exchange, decision)
+            if candidate.uuid:
+                matched_acc.append(candidate)
+            else:
+                unmatched_acc.append(
+                    self._build_unmatched_flow(
+                        exchange, process_name, self._safe_exchange_name(exchange)
+                    )
+                )
+            return updated_exchange
+
+        unmatched_acc.append(
+            self._build_unmatched_flow(exchange, process_name, self._safe_exchange_name(exchange))
+        )
+        return self._apply_placeholder_reference(exchange)
+
+    def _apply_candidate_reference(
+        self, exchange: dict[str, Any], decision: SelectorDecision
+    ) -> dict[str, Any]:
+        enriched = dict(exchange)
+        candidate = decision.candidate
+        if candidate is None:
+            return self._apply_placeholder_reference(enriched)
+        if candidate.uuid:
+            enriched["referenceToFlowDataSet"] = self._candidate_reference(candidate)
+        else:
+            enriched["referenceToFlowDataSet"] = self._placeholder_reference(
+                enriched.get("exchangeName")
+                or enriched.get("name")
+                or enriched.get("flowName")
+                or "Unspecified flow"
+            )
+        detail = enriched.get("matchingDetail")
+        if not isinstance(detail, dict):
+            detail = {}
+        detail["selectedCandidate"] = {
+            "uuid": candidate.uuid,
+            "base_name": candidate.base_name,
+            "version": candidate.version,
+            "geography": candidate.geography,
+            "classification": candidate.classification,
+            "general_comment": candidate.general_comment,
+            "reasoning": candidate.reasoning,
+            "score": decision.score,
+            "selector": decision.strategy,
+            "evaluation_reason": decision.reasoning,
+        }
+        enriched["matchingDetail"] = detail
+        return enriched
+
+    def _apply_placeholder_reference(self, exchange: dict[str, Any]) -> dict[str, Any]:
+        enriched = dict(exchange)
+        if not self._has_reference(enriched.get("referenceToFlowDataSet")):
+            enriched["referenceToFlowDataSet"] = self._placeholder_reference(
+                enriched.get("exchangeName")
+                or enriched.get("name")
+                or enriched.get("flowName")
+                or "Unspecified flow"
+            )
+        return enriched
+
+    @staticmethod
+    def _candidate_reference(candidate: FlowCandidate) -> dict[str, Any]:
+        version = candidate.version or "01.00.000"
+        uuid = candidate.uuid or str(uuid4())
+        return {
+            "@type": "flow data set",
+            "@refObjectId": uuid,
+            "@version": version,
+            "@uri": f"https://tiangong.earth/flows/{uuid}",
+            "common:shortDescription": FlowAlignmentService._multilang(
+                candidate.base_name or "Matched flow"
+            ),
+        }
+
+    @staticmethod
+    def _placeholder_reference(name: str) -> dict[str, Any]:
+        identifier = str(uuid4())
+        return {
+            "@type": "flow data set",
+            "@refObjectId": identifier,
+            "@version": "00.00.000",
+            "@uri": f"https://tiangong.earth/flows/{identifier}",
+            "common:shortDescription": FlowAlignmentService._multilang(name),
+            "tiangong:placeholder": True,
+        }
+
+    @staticmethod
+    def _has_reference(value: Any) -> bool:
+        if isinstance(value, dict):
+            return "@refObjectId" in value
+        if isinstance(value, list):
+            return all(isinstance(item, dict) and "@refObjectId" in item for item in value)
+        return False
+
+    @staticmethod
+    def _multilang(text: str) -> dict[str, Any]:
+        label = text or "Unnamed flow"
+        return {"@xml:lang": "en", "#text": label}
 
     def _build_query(
         self, exchange: dict[str, Any], process_name: str | None, paper_md: str | None
@@ -118,6 +252,22 @@ class FlowAlignmentService:
             ),
             process_name=process_name,
             paper_md=paper_md,
+        )
+
+    def _build_unmatched_flow(
+        self,
+        exchange: dict[str, Any],
+        process_name: str | None,
+        exchange_name: str | None,
+    ) -> UnmatchedFlow:
+        return UnmatchedFlow(
+            base_name=exchange_name or self._safe_exchange_name(exchange),
+            general_comment=self._stringify(
+                exchange.get("generalComment1")
+                or exchange.get("generalComment")
+                or exchange.get("comment")
+            ),
+            process_name=process_name,
         )
 
     @property
