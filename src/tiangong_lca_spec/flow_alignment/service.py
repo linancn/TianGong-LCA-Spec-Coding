@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from json import dumps
 from typing import Any, Callable, Iterable
 
 from tiangong_lca_spec.core.config import Settings, get_settings
@@ -89,9 +90,11 @@ class FlowAlignmentService:
             unmatched.append(
                 UnmatchedFlow(
                     base_name=exchange_name,
-                    general_comment=exchange.get("generalComment1")
-                    or exchange.get("generalComment")
-                    or exchange.get("comment"),
+                    general_comment=self._stringify(
+                        exchange.get("generalComment1")
+                        or exchange.get("generalComment")
+                        or exchange.get("comment")
+                    ),
                     process_name=process_name,
                 )
             )
@@ -108,9 +111,11 @@ class FlowAlignmentService:
     ) -> FlowQuery:
         return FlowQuery(
             exchange_name=self._safe_exchange_name(exchange),
-            description=exchange.get("generalComment1")
-            or exchange.get("generalComment")
-            or exchange.get("comment"),
+            description=self._stringify(
+                exchange.get("generalComment1")
+                or exchange.get("generalComment")
+                or exchange.get("comment")
+            ),
             process_name=process_name,
             paper_md=paper_md,
         )
@@ -153,12 +158,42 @@ class FlowAlignmentService:
 
     @staticmethod
     def _safe_exchange_name(exchange: dict[str, Any]) -> str:
-        return (
+        raw_name = (
             exchange.get("exchangeName")
             or exchange.get("name")
             or exchange.get("flowName")
             or "unknown_exchange"
         )
+        resolved = FlowAlignmentService._stringify(raw_name)
+        return resolved or "unknown_exchange"
+
+    @staticmethod
+    def _stringify(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, dict):
+            text = value.get("#text") or value.get("text") or value.get("@value")
+            if text is not None:
+                return str(text)
+            for candidate in value.values():
+                candidate_text = FlowAlignmentService._stringify(candidate)
+                if candidate_text:
+                    return candidate_text
+            return dumps(value, ensure_ascii=False)
+        if isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray, str)):
+            parts: list[str] = []
+            for item in value:
+                text = FlowAlignmentService._stringify(item)
+                if text:
+                    parts.append(text)
+            if parts:
+                return "; ".join(parts)
+            return None
+        return str(value)
 
 
 def align_exchanges(process_dataset: dict[str, Any], paper_md: str | None = None) -> dict[str, Any]:
