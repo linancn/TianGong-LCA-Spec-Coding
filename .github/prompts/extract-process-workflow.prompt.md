@@ -2,6 +2,16 @@
 
 本说明汇总工作流相关信息：模块职责、分阶段脚本、核心数据结构与关键校验要点，帮助 Codex 在多阶段协作中保持一致行为。
 
+## 0. 执行约定（避免无效迭代）
+- **先读原始资料与脚本参数**：开始编写或调用脚本前，快速确认 `scripts/stage*.py --help`，避免遗漏必需参数或产物路径。
+- **必须走标准阶段脚本**：除非用户特别说明，优先调用 `stage1`→`stage6`，不要手写长 JSON 或跳步生成中间文件。若缺少凭据（OpenAI、MCP、TIDAS），需第一时间告知用户并等待指示。
+- **在调用 LLM/MCP 前做输入校验**：例如检查 `clean_text` 是否非空、是否含有表格与单位，必要时提示用户补充。
+- **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 5 校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
+- **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
+- **长耗时命令提前调参**：Stage 2/3 可能超过 15 分钟；在受限环境下先提升命令超时（如外层 CLI 15min 限制）或增加 `.secrets` 中的 `timeout` 字段，避免半途被杀导致反复重跑。
+- **限定重试次数**：对同一 LLM/MCP 调用的重试不超过 2 次，且每次调整 prompt 或上下文都要说明理由；若问题持续，转为人工分析并同步用户。
+- **记录关键假设**：任何推断（单位补全、地理默认值、分类路径）都要写入 `notes` / `generalComment`，避免后续比对时反复确认。
+
 ## 1. 模块概览（`src/tiangong_lca_spec`）
 - `core/`
   - `config.py`：集中管理 MCP/TIDAS 端点、重试与并发策略及产物目录。
@@ -96,8 +106,13 @@ class WorkflowResult:
 
 ## 4. Flow Search
 - `FlowSearchClient` 使用 `MCPToolClient.invoke_json_tool` 访问远程 `Search_flows_Tool`，根据 `FlowQuery` 自动构造检索上下文。
+- `stage3_align_flows.py` 是唯一入口：不要人工在 Stage 2 直接拼接 `referenceToFlowDataSet`，而是让 Stage 3 读取 Stage 2 的 `process_blocks` 并触发检索。
+- 运行 Stage 3 前先快速抽样核查：选 1~2 个交换量搭建 `FlowQuery` 调试，确认服务是否返回候选（避免整批跑空）。
+- 每个交换量至少发起一次 MCP 检索；如果 3 次以内仍失败，才将该交换标记为 `UnmatchedFlow` 并写入原因。
 - 采用指数退避重试；捕获 `httpx.HTTPStatusError` / `McpError`，必要时剥离上下文以规避 413/5xx。
-- `FlowSearchService` 负责相似度过滤、缓存命中记录与 `UnmatchedFlow` 组合。
+- `FlowSearchService` 负责相似度过滤、缓存命中记录与 `UnmatchedFlow` 组合；流程结束后务必审阅 `matched` / `unmatched` 列表，确认命中率与日志一致。
+- 如果日志出现大量 `flow_search.filtered_out` 且无命中，优先检查：① `exchangeName`/`unit` 是否缺失或拼写异常；② `clean_text` 是否传入过长上下文导致噪声；③ `.secrets` 中是否设置更大的 `timeout` 以应对慢响应。
+- `mcp_tool_client.close_failed` 警告通常由请求完成后清理协程触发，属正常现象；若频繁超时，可调低 `flow_search_max_parallel` 或分批执行 Stage 3。
 
 ## 5. Flow Alignment
 - 每个流程块的交换量在独立线程提交检索任务，聚合 `matched_flows`、`unmatched_flows` 与 `origin_exchanges`。
@@ -110,6 +125,11 @@ class WorkflowResult:
   - `extract_sections` 按父级或别名分段；若未命中则回退全篇文本。
   - 若 LLM 未返回 `processDataSets` / `processDataSet`，抛出 `ProcessExtractionError`。
   - `finalize` 通过 `build_tidas_process_dataset` 补齐 ILCD/TIDAS 必填字段，并保留原始 `exchange_list`。
+- LLM 输出校验清单：
+  1. 顶层必须是 `processDataSets` 数组；
+  2. 每个流程需包含 `processInformation.dataSetInformation.specinfo` 的四个字段；
+  3. 所有 `exchanges.exchange` 项需带 `exchangeDirection`、`meanAmount`、`unit`。
+- 若需要对表格数值做清洗（单位补全、重复行合并），先写纯 Python 脚本验证逻辑，再落回 `ProcessExtractionService`；避免直接在回答里逐行手填。
 - `merge_results` 合入对齐候选并生成功能单位字符串。
 
 ## 7. TIDAS Validation
