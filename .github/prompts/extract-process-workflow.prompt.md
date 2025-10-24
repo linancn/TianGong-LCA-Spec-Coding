@@ -9,7 +9,7 @@
 - **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 5 校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
 - **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
 - **控制交换数量**：Stage 3 的流检索串行执行（`flow_search_max_parallel=1`），每个 `exchange` 都会独立调用 MCP。Stage 2 汇总表格时，应将同类资源/排放合并成 8~12 个代表性交换（例如统一为 `Electricity, medium voltage`、`Carbon dioxide, fossil`），但要在 `generalComment` 或 `notes` 中保留原始表格的细分条目、单位、上下游去向等信息，保障信息增益充足的同时避免长时间串行检索。
-- **补充检索线索**：为每个 `exchange` 的 `generalComment1` 写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数。这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。
+- **补充检索线索**：为每个 `exchange` 的 `generalComment1` 写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数，这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。高频基础流（`Electricity, medium voltage`、`Water, process`、`Steam, low pressure`、`Oxygen`、`Hydrogen`、`Natural gas, processed` 等）要求至少列出 2~3 个中英文别称或典型描述（如“grid electricity 10–30 kV”“中压电”“technological water”“饱和蒸汽 0.4 MPa”“O₂, CAS 7782-44-7”），并说明状态/纯度/来源。缺少这些线索时 MCP 往往只返回中文短名或低相似度候选，Stage 3 会落回占位符。
 - **规范流名称**：优先采用 Tiangong/ILCD 常用流名，不保留论文里的括号或工艺限定（如 `Electricity for electrolysis (PV)`）。规范名称能显著提高 Stage 3 命中率，减少重复检索与超时。
 - **长耗时命令提前调参**：Stage 2/3 可能超过 15 分钟；在受限环境下先提升命令超时（如外层 CLI 15min 限制）或增加 `.secrets` 中的 `timeout` 字段，避免半途被杀导致反复重跑。
 - **限定重试次数**：对同一 LLM/MCP 调用的重试不超过 2 次，且每次调整 prompt 或上下文都要说明理由；若问题持续，转为人工分析并同步用户。
@@ -129,11 +129,13 @@ class WorkflowResult:
 - 处理要点：
   - `extract_sections` 按父级或别名分段；若未命中则回退全篇文本。
   - 若 LLM 未返回 `processDataSets` / `processDataSet`，抛出 `ProcessExtractionError`。
+  - 表格字段需统一换算到易于对齐的基础单位（例如 t→kg、Nm³ 保持立方米、体积按密度说明假设），并在 `generalComment1` 或 `notes` 标注换算逻辑。
   - `finalize` 通过 `build_tidas_process_dataset` 补齐 ILCD/TIDAS 必填字段，并保留原始 `exchange_list`。
 - LLM 输出校验清单：
   1. 顶层必须是 `processDataSets` 数组；
   2. 每个流程需包含 `processInformation.dataSetInformation.specinfo` 的四个字段；
   3. 所有 `exchanges.exchange` 项需带 `exchangeDirection`、`meanAmount`、`unit`。
+- 引导 LLM 不输出 `referenceToFlowDataSet` 占位符，Stage 3 会在对齐后写回；保留 `@dataSetInternalID` 以支撑 Stage 4/5 与 TIDAS 校验。
 - 若需要对表格数值做清洗（单位补全、重复行合并），先写纯 Python 脚本验证逻辑，再落回 `ProcessExtractionService`；避免直接在回答里逐行手填。
 - `merge_results` 合入对齐候选并生成功能单位字符串。
 
