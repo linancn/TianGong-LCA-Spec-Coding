@@ -118,6 +118,8 @@ def _build_section_prompt() -> str:
         "  * `exchangeName` / `flowName`: align with wording in the paper.\n"
         "  * `generalComment1`: capture data source, representativeness, quality, and key "
         "modelling assumptions succinctly.\n"
+        "  * Omit `referenceToFlowDataSet` and other `referenceTo...` placeholders; Stage 3 "
+        "will populate flow references after alignment.\n"
         '  * `@dataSetInternalID`: sequential identifiers as strings starting from "0".'
     )
     metadata_fields = [

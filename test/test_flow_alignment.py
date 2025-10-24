@@ -86,6 +86,8 @@ def test_align_exchanges_records_unmatched_when_retry_fails() -> None:
         assert result["matched_flows"] == []
         assert len(result["unmatched_flows"]) == 1
         assert result["unmatched_flows"][0].base_name == "Flow B"
-        assert result["origin_exchanges"] == {}
+        origin = result["origin_exchanges"]["Flow B"][0]
+        assert origin["exchangeName"] == "Flow B"
+        assert origin["referenceToFlowDataSet"]["tiangong:placeholder"] is True
     finally:
         service.close()
