@@ -126,7 +126,7 @@ def _build_section_prompt() -> str:
         "  * `meanAmount`, `unit`, and `resultingAmount`.\n"
         "  * `exchangeName` / `flowName`: align with wording in the paper.\n"
         "  * `generalComment`: output a single string in the format described above "
-        '(`FlowSearch hints: en_synonyms=... | ... | usage_context=...`). Include '
+        "(`FlowSearch hints: en_synonyms=... | ... | usage_context=...`). Include "
         "bilingual synonyms, abbreviations, chemical identifiers, state/purity, source "
         "or supply pathway, and explicit usage context. If any element is missing, keep "
         "the placeholder `NA`. After the structured segments, append concise notes on "

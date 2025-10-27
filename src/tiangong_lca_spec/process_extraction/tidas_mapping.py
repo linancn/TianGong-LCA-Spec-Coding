@@ -554,6 +554,8 @@ def _compose_flow_treatment(flow_name: str, name_components: dict[str, Any]) -> 
     if standards:
         segments.append(standards)
     return _semicolon_join(segments)
+
+
 def _normalise_lcia_results(section: Any) -> dict[str, Any]:
     results = _ensure_dict(section)
     lcia_result = _ensure_dict(results.get("LCIAResult"))
