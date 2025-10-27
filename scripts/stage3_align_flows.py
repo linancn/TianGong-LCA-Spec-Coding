@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -117,8 +116,7 @@ def main() -> None:
     llm = _maybe_create_llm(args.secrets)
     service = FlowAlignmentService(llm=llm)
     alignment_entries: list[dict[str, Any]] = []
-    process_summaries: list[tuple[str, int, int, int]] = []
-    total_unmatched = 0
+    process_summaries: list[tuple[str, int]] = []
     try:
         for block in process_blocks:
             dataset = block.get("processDataSet")
@@ -137,24 +135,16 @@ def main() -> None:
 
             result = service.align_exchanges(dataset, clean_text)
             alignment_entries.append(_serialise_alignment(result, process_id))
-            unmatched = result.get("unmatched_flows") or []
-            total_unmatched += len(unmatched)
-            matched_count = len(result.get("matched_flows") or [])
             result_name = result.get("process_name") or process_name
             process_label = _format_process_label(result_name, process_id)
-            process_summaries.append((process_label, matched_count, len(unmatched), len(exchanges)))
+            process_summaries.append((process_label, len(exchanges)))
     finally:
         service.close()
 
     dump_json({"alignment": alignment_entries}, args.output)
-    if total_unmatched:
-        print(f"Skipped storing {total_unmatched} unmatched exchanges.")
     print(f"Aligned flows for {len(alignment_entries)} processes -> {args.output}")
-    for label, matched_count, unmatched_count, total in process_summaries:
-        print(
-            f" - {label}: {matched_count} matched / {unmatched_count} unmatched "
-            f"out of {total} exchanges"
-        )
+    for label, total in process_summaries:
+        print(f" - {label}: processed {total} exchanges")
 
 
 def _resolve_process_id(block: dict[str, Any], dataset: dict[str, Any]) -> str | None:
@@ -332,13 +322,9 @@ def _format_process_label(process_name: str | None, process_id: str | None) -> s
 
 
 def _serialise_alignment(entry: dict[str, Any], process_id: str | None = None) -> dict[str, Any]:
-    matched = entry.get("matched_flows") or []
     origin = entry.get("origin_exchanges") or {}
-    unmatched = entry.get("unmatched_flows") or []
     payload = {
         "process_name": entry.get("process_name"),
-        "matched_flows": [asdict(candidate) for candidate in matched],
-        "unmatched_flows": [asdict(item) for item in unmatched],
         "origin_exchanges": origin,
     }
     if process_id:

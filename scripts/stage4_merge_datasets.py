@@ -65,14 +65,17 @@ def _hydrate_flow_candidates(entry: dict[str, Any]) -> list[FlowCandidate]:
 
 
 def _serialise_dataset(dataset: ProcessDataset) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "process_information": deepcopy(dataset.process_information),
         "modelling_and_validation": deepcopy(dataset.modelling_and_validation),
         "administrative_information": deepcopy(dataset.administrative_information),
         "exchanges": [deepcopy(exchange) for exchange in dataset.exchanges],
-        "notes": deepcopy(dataset.notes),
         "process_data_set": deepcopy(dataset.process_data_set),
     }
+    notes = getattr(dataset, "notes", None)
+    if notes is not None:
+        payload["notes"] = deepcopy(notes)
+    return payload
 
 
 def parse_args() -> argparse.Namespace:
