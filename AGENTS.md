@@ -4,6 +4,7 @@
 
 ## 1. 开发环境
 - **Python 版本**：≥ 3.12，推荐用 `uv toolchain` 管理；默认虚拟环境位于 `.venv/`。
+- **命令运行**：工作站默认不暴露系统级 `python` 可执行文件，使用 `uv run python …` 或 `uv run -- python script.py` 执行 Python 代码；单行脚本可写成 `uv run python - <<'PY'`。
 - **依赖安装**：
   ```bash
   uv sync                # 安装运行依赖
