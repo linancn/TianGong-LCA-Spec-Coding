@@ -61,7 +61,7 @@ uv run python scripts/stage6_finalize.py \
   --validation artifacts/stage5_validation.json
 ```
 
-- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本现仅写出 `stage3_alignment.json`，未命中的交换不会落盘，CLI 日志会提示跳过的数量。
+- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`，缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
 
 ## 3. 核心数据结构
 ```python
@@ -123,6 +123,7 @@ class WorkflowResult:
 
 ## 5. Flow Alignment
 - 每个流程块的交换量在独立线程提交检索任务，聚合 `matched_flows` 与 `origin_exchanges`；未命中只在日志中计数提醒。
+- Stage 3 脚本会先检查 Stage 2 生成的 `exchangeName` 以及 `generalComment` 中的 `FlowSearch hints:` 前缀，必要时从同义词字段推断缺失名称，避免缺乏语义标签的交换直接进入 MCP 检索。
 - 匹配成功时写回 `referenceToFlowDataSet`，失败则保留原始交换量并记录原因。
 - 过程中输出 `flow_alignment.start`、`flow_alignment.exchange_failed` 等结构化日志，便于诊断。
 
