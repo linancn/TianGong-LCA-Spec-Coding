@@ -462,9 +462,10 @@ def _normalise_exchanges(
             item["generalComment"] = _ensure_multilang(comment_value, fallback="")
         else:
             item.pop("generalComment", None)
-        # Stage 2 must not carry placeholder flow references; Stage 3 flow alignment
-        # will populate `referenceToFlowDataSet` once MCP matching succeeds.
-        if "referenceToFlowDataSet" in item:
+        # Preserve genuine flow references (from alignment) but drop empty placeholders,
+        # so Stage 3 can inject authoritative matches when available.
+        reference = item.get("referenceToFlowDataSet")
+        if not _has_reference(reference):
             item.pop("referenceToFlowDataSet", None)
         if not _stringify(item.get("common:other")).strip():
             item.pop("common:other", None)
