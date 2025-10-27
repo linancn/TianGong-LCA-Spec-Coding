@@ -16,6 +16,7 @@ from .extractors import (
     ProcessClassifier,
     SectionExtractor,
 )
+from .hints import enrich_exchange_hints
 from .tidas_mapping import build_tidas_process_dataset
 
 LOGGER = get_logger(__name__)
@@ -200,6 +201,17 @@ class ProcessExtractionService:
                 raise ProcessExtractionError("Process dataset missing in block")
 
             normalized_dataset = build_tidas_process_dataset(process_dataset)
+
+            process_name = _extract_process_name(normalized_dataset)
+            geography_hint = _extract_geography(normalized_dataset)
+            exchanges_container = normalized_dataset.get("exchanges") or {}
+            if isinstance(exchanges_container, dict):
+                exchange_items = exchanges_container.get("exchange", [])
+                if isinstance(exchange_items, list):
+                    for exchange in exchange_items:
+                        enrich_exchange_hints(
+                            exchange, process_name=process_name, geography=geography_hint
+                        )
 
             final_block: dict[str, Any] = {
                 "processDataSet": normalized_dataset,
@@ -462,6 +474,39 @@ def _normalise_exchange_container(exchanges: Any) -> dict[str, Any]:
     if isinstance(exchange_value, dict):
         return {"exchange": [exchange_value]}
     return {"exchange": []}
+
+
+def _extract_process_name(dataset: dict[str, Any]) -> str | None:
+    process_info = dataset.get("processInformation")
+    if not isinstance(process_info, dict):
+        return None
+    data_info = process_info.get("dataSetInformation")
+    if not isinstance(data_info, dict):
+        return None
+    name = data_info.get("name")
+    if isinstance(name, dict):
+        base_name = name.get("baseName")
+        if isinstance(base_name, dict):
+            return _stringify(
+                base_name.get("#text") or base_name.get("@value") or base_name.get("text")
+            )
+        return _stringify(base_name)
+    return _stringify(name)
+
+
+def _extract_geography(dataset: dict[str, Any]) -> str | None:
+    process_info = dataset.get("processInformation")
+    if not isinstance(process_info, dict):
+        return None
+    geography = process_info.get("geography")
+    if isinstance(geography, dict):
+        for key in ("shortName", "#text", "description", "locationOfOperation", "region"):
+            if key in geography:
+                value = _stringify(geography[key])
+                if value:
+                    return value
+    value = _stringify(geography)
+    return value or None
 
 
 def _extract_process_id(container: dict[str, Any]) -> str | None:

@@ -51,7 +51,12 @@ def _read_clean_text(path: Path) -> str:
         if not isinstance(value, str):
             raise SystemExit(f"'clean_text' must be a string in {path}")
         return value
-    raise SystemExit(f"Unexpected clean text format in {path}")
+    raise SystemExit(
+        (
+            f"Unexpected clean text format in {path}; expected plain markdown or JSON "
+            "with 'clean_text'."
+        )
+    )
 
 
 def _serialise_alignment(entry: dict[str, Any]) -> dict[str, Any]:
@@ -82,8 +87,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--clean-text",
         type=Path,
-        default=Path("artifacts/stage1_clean_text.json"),
-        help="Clean text JSON emitted by stage1_preprocess.",
+        default=Path("artifacts/stage1_clean_text.md"),
+        help="Clean markdown emitted by stage1_preprocess.",
     )
     parser.add_argument(
         "--output",

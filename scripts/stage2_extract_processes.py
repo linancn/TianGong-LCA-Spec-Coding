@@ -23,7 +23,12 @@ def _read_clean_text(path: Path) -> str:
         if not isinstance(value, str):
             raise SystemExit(f"'clean_text' must be a string in {path}")
         return value
-    raise SystemExit(f"Unexpected clean text format in {path}")
+    raise SystemExit(
+        (
+            f"Unexpected clean text format in {path}; expected plain markdown or JSON "
+            "with 'clean_text'."
+        )
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,8 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--clean-text",
         type=Path,
-        default=Path("artifacts/stage1_clean_text.json"),
-        help="Clean text JSON emitted by stage1_preprocess.",
+        default=Path("artifacts/stage1_clean_text.md"),
+        help="Clean markdown emitted by stage1_preprocess.",
     )
     parser.add_argument(
         "--secrets",
@@ -46,14 +51,45 @@ def parse_args() -> argparse.Namespace:
         default=Path("artifacts/stage2_process_blocks.json"),
         help="Where to write the extracted process blocks JSON.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip extraction if the output file already exists and appears valid.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=Path(".cache/openai/stage2"),
+        help="Directory used to cache OpenAI responses for resumable runs.",
+    )
+    parser.add_argument(
+        "--disable-cache",
+        action="store_true",
+        help="Disable disk caching even if a cache directory is provided.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.resume and args.output.exists():
+        try:
+            existing = json.loads(args.output.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = None
+        if isinstance(existing, dict) and existing.get("process_blocks"):
+            print(f"Stage 2 output already present at {args.output}; skipping due to --resume.")
+            return
+        print("Existing output is missing or invalid; continuing extraction.")
+
     clean_text = _read_clean_text(args.clean_text)
     api_key, model = load_secrets(args.secrets)
-    llm = OpenAIResponsesLLM(api_key=api_key, model=model)
+    llm = OpenAIResponsesLLM(
+        api_key=api_key,
+        model=model,
+        cache_dir=args.cache_dir if not args.disable_cache else None,
+        use_cache=not args.disable_cache,
+    )
     service = ProcessExtractionService(llm)
     process_blocks = service.extract(clean_text)
     dump_json({"process_blocks": process_blocks}, args.output)

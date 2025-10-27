@@ -48,6 +48,7 @@ class Settings(BaseSettings):
 
     cache_dir: Path = Path("artifacts/cache")
     artifacts_dir: Path = Path("artifacts")
+    flow_hint_catalog_path: Path | None = None
 
     model_config = SettingsConfigDict(env_prefix="LCA_", env_file=(), extra="ignore")
 
