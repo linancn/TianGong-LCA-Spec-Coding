@@ -458,13 +458,10 @@ def _normalise_exchanges(
         )
         short_description = _compose_short_description(exchange_name, item, name_components)
         comment_value = item.get("generalComment")
-        if not comment_value and "generalComment1" in item:
-            comment_value = item.pop("generalComment1")
         if comment_value:
             item["generalComment"] = _ensure_multilang(comment_value, fallback="")
         else:
             item.pop("generalComment", None)
-            item.pop("generalComment1", None)
         reference = item.get("referenceToFlowDataSet")
         if _has_reference(reference):
             if isinstance(reference, dict):
