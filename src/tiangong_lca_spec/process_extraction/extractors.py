@@ -81,10 +81,18 @@ def _build_section_prompt() -> str:
         "`generalComment` so downstream alignment can trace every "
         "source datum.\n"
         "10. Normalize exchange names to Tiangong/ILCD canonical wording (e.g., "
-        '"Electricity, medium voltage", "Carbon dioxide, fossil") and enrich '
-        "`generalComment` with common synonyms, aliases/abbreviations (e.g., "
-        '"COG", "DAC"), chemical formulas or CAS numbers, and bilingual descriptors '
-        "to improve flow search hit-rate."
+        '"Electricity, medium voltage", "Carbon dioxide, fossil") and ensure every '
+        "`generalComment` begins with the exact prefix `FlowSearch hints:` followed by "
+        "the pipe-delimited template "
+        "`en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | "
+        "state_purity=... | source_or_pathway=... | usage_context=...`. Populate each "
+        "slot with rich bilingual synonyms, aliases/abbreviations, chemical identifiers, "
+        "and state/source descriptors gathered from the paper; if a field is unknown, "
+        "write `NA`. Append the original table reference, assumptions, or calculation "
+        "notes after the template so downstream alignment retains provenance. High-use "
+        "utilities (grid electricity, water, steam, oxygen, hydrogen, natural gas, etc.) "
+        "must list at least two English and two Chinese descriptors or usage scenarios to "
+        "maximise MCP recall."
     )
     module_guidelines = (
         "Populate these required fields whenever evidence exists:\n"
@@ -117,8 +125,12 @@ def _build_section_prompt() -> str:
         '  * `exchangeDirection`: "Input" or "Output".\n'
         "  * `meanAmount`, `unit`, and `resultingAmount`.\n"
         "  * `exchangeName` / `flowName`: align with wording in the paper.\n"
-        "  * `generalComment`: capture data source, representativeness, quality, and key "
-        "modelling assumptions succinctly.\n"
+        "  * `generalComment`: output a single string in the format described above "
+        '(`FlowSearch hints: en_synonyms=... | ... | usage_context=...`). Include '
+        "bilingual synonyms, abbreviations, chemical identifiers, state/purity, source "
+        "or supply pathway, and explicit usage context. If any element is missing, keep "
+        "the placeholder `NA`. After the structured segments, append concise notes on "
+        "data provenance, allocation, conversions, or table references.\n"
         "  * Omit `referenceToFlowDataSet` and other `referenceTo...` placeholders; Stage 3 "
         "will populate flow references after alignment.\n"
         '  * `@dataSetInternalID`: sequential identifiers as strings starting from "0".'

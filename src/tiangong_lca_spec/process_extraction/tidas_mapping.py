@@ -462,17 +462,10 @@ def _normalise_exchanges(
             item["generalComment"] = _ensure_multilang(comment_value, fallback="")
         else:
             item.pop("generalComment", None)
-        reference = item.get("referenceToFlowDataSet")
-        if _has_reference(reference):
-            if isinstance(reference, dict):
-                reference["common:shortDescription"] = _ensure_multilang(
-                    short_description, fallback=short_description or exchange_name
-                )
-                item["referenceToFlowDataSet"] = reference
-        else:
-            item["referenceToFlowDataSet"] = _build_flow_reference(
-                short_description or exchange_name
-            )
+        # Stage 2 must not carry placeholder flow references; Stage 3 flow alignment
+        # will populate `referenceToFlowDataSet` once MCP matching succeeds.
+        if "referenceToFlowDataSet" in item:
+            item.pop("referenceToFlowDataSet", None)
         if not _stringify(item.get("common:other")).strip():
             item.pop("common:other", None)
         item.pop("exchangeName", None)
@@ -561,17 +554,6 @@ def _compose_flow_treatment(flow_name: str, name_components: dict[str, Any]) -> 
     if standards:
         segments.append(standards)
     return _semicolon_join(segments)
-
-
-def _build_flow_reference(description: str) -> dict[str, Any]:
-    label = description.strip()
-    if not label:
-        label = "Unspecified flow"
-    reference = _build_reference("flow data set", label)
-    reference["common:shortDescription"] = _ensure_multilang(label, fallback=label)
-    return reference
-
-
 def _normalise_lcia_results(section: Any) -> dict[str, Any]:
     results = _ensure_dict(section)
     lcia_result = _ensure_dict(results.get("LCIAResult"))
