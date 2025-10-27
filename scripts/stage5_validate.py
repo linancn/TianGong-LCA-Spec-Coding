@@ -33,7 +33,6 @@ def _read_process_datasets(path: Path) -> list[ProcessDataset]:
                 modelling_and_validation=item.get("modelling_and_validation", {}),
                 administrative_information=item.get("administrative_information", {}),
                 exchanges=item.get("exchanges", []),
-                notes=item.get("notes"),
                 process_data_set=item.get("process_data_set"),
             )
         )

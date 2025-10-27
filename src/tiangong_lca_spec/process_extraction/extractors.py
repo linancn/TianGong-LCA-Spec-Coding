@@ -199,7 +199,7 @@ CLASSIFICATION_PROMPT = (
     "Derive the ISIC classification path for the process. Return a JSON array to populate "
     "`dataSetInformation.classificationInformation.common:classification.common:class`, "
     "where each object contains '@level' (string), '@classId', and '#text'. Levels should "
-    "progress sequentially from '1'."
+    "progress sequentially from '0'."
 )
 
 LOCATION_PROMPT = (
