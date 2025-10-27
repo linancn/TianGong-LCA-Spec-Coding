@@ -3,7 +3,8 @@
 本说明汇总工作流相关信息：模块职责、分阶段脚本、核心数据结构与关键校验要点，帮助 Codex 在多阶段协作中保持一致行为。
 
 ## 0. 执行约定（避免无效迭代）
-- **先读原始资料与脚本参数**：开始编写或调用脚本前，快速确认 `scripts/stage*.py --help`，避免遗漏必需参数或产物路径。
+- **先读原始资料**：动手前快速梳理论文原文或 `clean_text`，确认章节结构、数据表与功能单位。
+- **直接执行标准命令**：默认沿用下方列出的 Stage 1~6 CLI 模板（输入/输出路径遵循仓库约定），无需反复运行 `--help`。如需自定义参数，再单独查阅帮助。
 - **必须走标准阶段脚本**：除非用户特别说明，优先调用 `stage1`→`stage6`，不要手写长 JSON 或跳步生成中间文件。若缺少凭据（OpenAI、MCP、TIDAS），需第一时间告知用户并等待指示。
 - **在调用 LLM/MCP 前做输入校验**：例如检查 `clean_text` 是否非空、是否含有表格与单位，必要时提示用户补充。
 - **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 5 校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
@@ -14,7 +15,7 @@
 - **规范流名称**：优先采用 Tiangong/ILCD 常用流名，不保留论文里的括号或工艺限定（如 `Electricity for electrolysis (PV)`）。规范名称能显著提高 Stage 3 命中率，减少重复检索与超时。
 - **长耗时命令提前调参**：Stage 2/3 可能超过 15 分钟；在受限环境下先提升命令超时（如外层 CLI 15min 限制）或增加 `.secrets` 中的 `timeout` 字段，避免半途被杀导致反复重跑。
 - **限定重试次数**：对同一 LLM/MCP 调用的重试不超过 2 次，且每次调整 prompt 或上下文都要说明理由；若问题持续，转为人工分析并同步用户。
-- **记录关键假设**：任何推断（单位补全、地理默认值、分类路径）都要写入 `notes` / `generalComment`，避免后续比对时反复确认。
+- **记录关键假设**：任何推断（单位补全、地理默认值、分类路径）都要写入 `generalComment` / `generalComment1`，避免后续比对时反复确认。
 
 ## 1. 模块概览（`src/tiangong_lca_spec`）
 - `core/`
@@ -100,7 +101,6 @@ class ProcessDataset:
     modelling_and_validation: dict[str, Any]
     administrative_information: dict[str, Any]
     exchanges: list[dict[str, Any]] = field(default_factory=list)
-    notes: Any | None = None
     process_data_set: dict[str, Any] | None = None
 
 @dataclass(slots=True)
@@ -131,8 +131,8 @@ class WorkflowResult:
 - 处理要点：
   - `extract_sections` 按父级或别名分段；若未命中则回退全篇文本。
   - 若 LLM 未返回 `processDataSets` / `processDataSet`，抛出 `ProcessExtractionError`。
-  - 表格字段需统一换算到易于对齐的基础单位（例如 t→kg、Nm³ 保持立方米、体积按密度说明假设），并在 `generalComment1` 或 `notes` 标注换算逻辑。
-  - `finalize` 通过 `build_tidas_process_dataset` 补齐 ILCD/TIDAS 必填字段，产出仅含 `processDataSet`（附 `notes`、`process_id` 等元数据）的流程块；Stage 2 不再返回旧版 `exchange_list` 缓存。
+  - 表格字段需统一换算到易于对齐的基础单位（例如 t→kg、Nm³ 保持立方米、体积按密度说明假设），并在 `generalComment` / `generalComment1` 标注换算逻辑。
+  - `finalize` 通过 `build_tidas_process_dataset` 补齐 ILCD/TIDAS 必填字段，产出仅含 `processDataSet`（附 `process_id` 等元数据）的流程块；Stage 2 不再返回旧版 `exchange_list` 缓存。
 - LLM 输出校验清单：
   1. 顶层必须是 `processDataSets` 数组；
   2. 每个流程需包含 `processInformation.dataSetInformation.name` 中的四个子字段：`baseName`、`treatmentStandardsRoutes`、`mixAndLocationTypes`、`functionalUnitFlowProperties`；

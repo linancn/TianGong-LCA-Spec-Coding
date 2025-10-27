@@ -106,29 +106,27 @@ class ProcessExtractionService:
 
         state["sections"] = sections
 
-        dataset_entries, notes_bundle = _collect_datasets_and_notes(sections)
+        dataset_entries = _collect_datasets(sections)
         if not dataset_entries and parents:
             sections = self._section_extractor.run(clean_text)
             state["sections"] = sections
-            dataset_entries, notes_bundle = _collect_datasets_and_notes(sections)
+            dataset_entries = _collect_datasets(sections)
         if not dataset_entries:
             raise ProcessExtractionError(
                 "Section extraction must return `processDataSets` or `processDataSet`"
             )
 
         blocks: list[dict[str, Any]] = []
-        for index, (process_id, dataset) in enumerate(dataset_entries):
+        for process_id, dataset in dataset_entries:
             process_information = dataset.setdefault("processInformation", {})
             administrative = dataset.setdefault("administrativeInformation", {})
             modelling = dataset.setdefault("modellingAndValidation", {})
-            note_value = _select_note_value(process_id, index, notes_bundle)
 
             block: dict[str, Any] = {
                 "processDataSet": dataset,
                 "process_information": process_information,
                 "administrative_information": administrative,
                 "modelling_and_validation": modelling,
-                "notes": note_value,
             }
             if process_id:
                 block["process_id"] = process_id
@@ -200,16 +198,11 @@ class ProcessExtractionService:
             process_dataset = block.get("processDataSet")
             if not isinstance(process_dataset, dict):
                 raise ProcessExtractionError("Process dataset missing in block")
-            notes = block.get("notes")
 
-            normalized_dataset = build_tidas_process_dataset(
-                process_dataset,
-                notes=notes,
-            )
+            normalized_dataset = build_tidas_process_dataset(process_dataset)
 
             final_block: dict[str, Any] = {
                 "processDataSet": normalized_dataset,
-                "notes": notes,
             }
             if process_id := block.get("process_id"):
                 final_block["process_id"] = process_id
@@ -283,7 +276,6 @@ def _combine_parent_sections(
     parent_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
     aggregated_datasets: list[dict[str, Any]] = []
-    aggregated_notes: list[Any] = []
     seen_keys: set[str] = set()
 
     for parent, section in parent_sections:
@@ -301,17 +293,12 @@ def _combine_parent_sections(
                 continue
             seen_keys.add(identifier)
             aggregated_datasets.append(dataset)
-        notes = section.get("notes")
-        if notes is not None:
-            aggregated_notes.extend(_ensure_list(notes))
 
     combined: dict[str, Any] = {}
     if parent_summary:
         combined["parentProcesses"] = parent_summary.get("parentProcesses") or parent_summary
     if aggregated_datasets:
         combined["processDataSets"] = aggregated_datasets
-    if aggregated_notes:
-        combined["notes"] = aggregated_notes
     if not combined:
         combined = parent_sections[0][1] if parent_sections else {}
     return combined
@@ -327,18 +314,16 @@ def _has_process_datasets(section: dict[str, Any]) -> bool:
     return False
 
 
-def _collect_datasets_and_notes(
+def _collect_datasets(
     sections: dict[str, Any],
-) -> tuple[list[tuple[str | None, dict[str, Any]]], dict[str, Any]]:
+) -> list[tuple[str | None, dict[str, Any]]]:
     datasets = _normalise_dataset_list(sections.get("processDataSets"))
     if not datasets:
         datasets = _normalise_dataset_list(sections.get("processDataSet"))
     if datasets:
-        entries = [(_derive_dataset_identifier(dataset), dataset) for dataset in datasets]
-        return entries, _parse_notes(sections.get("notes"))
+        return [(_derive_dataset_identifier(dataset), dataset) for dataset in datasets]
 
-    entries = _merge_modules_into_datasets(sections)
-    return entries, _parse_notes(sections.get("notes"))
+    return _merge_modules_into_datasets(sections)
 
 
 def _normalise_dataset_list(value: Any) -> list[dict[str, Any]]:
@@ -477,61 +462,6 @@ def _normalise_exchange_container(exchanges: Any) -> dict[str, Any]:
     if isinstance(exchange_value, dict):
         return {"exchange": [exchange_value]}
     return {"exchange": []}
-
-
-def _parse_notes(raw_notes: Any) -> dict[str, Any]:
-    bundle = _empty_notes_bundle()
-    if raw_notes is None:
-        return bundle
-
-    if isinstance(raw_notes, list):
-        for entry in raw_notes:
-            if isinstance(entry, dict):
-                process_id = _extract_process_id(entry)
-                payload = _extract_note_payload(entry)
-                if process_id:
-                    bundle["by_id"][process_id] = payload
-                else:
-                    bundle["sequence"].append(payload)
-            else:
-                bundle["sequence"].append(entry)
-        return bundle
-
-    if isinstance(raw_notes, dict):
-        process_id = _extract_process_id(raw_notes)
-        payload = _extract_note_payload(raw_notes)
-        if process_id:
-            bundle["by_id"][process_id] = payload
-        else:
-            bundle["scalar"] = payload
-        return bundle
-
-    bundle["scalar"] = raw_notes
-    return bundle
-
-
-def _empty_notes_bundle() -> dict[str, Any]:
-    return {"by_id": {}, "sequence": [], "scalar": None}
-
-
-def _extract_note_payload(entry: dict[str, Any]) -> Any:
-    for key in ("note", "text", "value", "content"):
-        if key in entry:
-            return entry[key]
-    return {key: value for key, value in entry.items() if key not in PROCESS_ID_KEYS} or None
-
-
-def _select_note_value(
-    process_id: str | None,
-    index: int,
-    notes_bundle: dict[str, Any],
-) -> Any:
-    if process_id and process_id in notes_bundle.get("by_id", {}):
-        return notes_bundle["by_id"][process_id]
-    sequence = notes_bundle.get("sequence", [])
-    if index < len(sequence):
-        return sequence[index]
-    return notes_bundle.get("scalar")
 
 
 def _extract_process_id(container: dict[str, Any]) -> str | None:

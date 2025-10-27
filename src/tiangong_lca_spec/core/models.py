@@ -43,7 +43,6 @@ class ProcessDataset:
     modelling_and_validation: dict[str, Any]
     administrative_information: dict[str, Any]
     exchanges: list[Mapping[str, Any]] = field(default_factory=list)
-    notes: Any | None = None
     process_data_set: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -61,10 +60,7 @@ class ProcessDataset:
         base_dataset["administrativeInformation"] = self.administrative_information
         base_dataset["exchanges"] = {"exchange": [dict(exchange) for exchange in self.exchanges]}
 
-        return build_tidas_process_dataset(
-            base_dataset,
-            notes=self.notes,
-        )
+        return build_tidas_process_dataset(base_dataset)
 
 
 @dataclass(slots=True)
