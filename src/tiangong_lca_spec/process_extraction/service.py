@@ -121,13 +121,6 @@ class ProcessExtractionService:
             process_information = dataset.setdefault("processInformation", {})
             administrative = dataset.setdefault("administrativeInformation", {})
             modelling = dataset.setdefault("modellingAndValidation", {})
-            exchanges = dataset.get("exchanges", {}).get("exchange")
-            exchange_list: list[dict[str, Any]] = []
-            if isinstance(exchanges, list):
-                exchange_list = exchanges
-            elif exchanges:
-                exchange_list = [exchanges]
-
             note_value = _select_note_value(process_id, index, notes_bundle)
 
             block: dict[str, Any] = {
@@ -135,7 +128,6 @@ class ProcessExtractionService:
                 "process_information": process_information,
                 "administrative_information": administrative,
                 "modelling_and_validation": modelling,
-                "exchange_list": exchange_list,
                 "notes": note_value,
             }
             if process_id:
@@ -209,36 +201,19 @@ class ProcessExtractionService:
             if not isinstance(process_dataset, dict):
                 raise ProcessExtractionError("Process dataset missing in block")
             notes = block.get("notes")
-            exchange_list = block.get("exchange_list") or []
 
             normalized_dataset = build_tidas_process_dataset(
                 process_dataset,
                 notes=notes,
             )
 
-            exchanges = normalized_dataset.get("exchanges", {}).get("exchange")
-            if isinstance(exchanges, list):
-                exchange_block = {"exchange": exchanges}
-            elif exchanges:
-                exchange_block = {"exchange": [exchanges]}
-            else:
-                exchange_block = {"exchange": exchange_list}
-
-            final_blocks.append(
-                {
-                    "process_information": normalized_dataset.get("processInformation", {}),
-                    "administrative_information": normalized_dataset.get(
-                        "administrativeInformation", {}
-                    ),
-                    "modelling_and_validation": normalized_dataset.get(
-                        "modellingAndValidation", {}
-                    ),
-                    "exchange_list": exchange_block.get("exchange") or [],
-                    "notes": notes,
-                    "processDataSet": normalized_dataset,
-                    "exchanges": exchange_block,
-                }
-            )
+            final_block: dict[str, Any] = {
+                "processDataSet": normalized_dataset,
+                "notes": notes,
+            }
+            if process_id := block.get("process_id"):
+                final_block["process_id"] = process_id
+            final_blocks.append(final_block)
 
         state["process_blocks"] = final_blocks
         return state

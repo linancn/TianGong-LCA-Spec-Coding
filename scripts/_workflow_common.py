@@ -21,6 +21,8 @@ class OpenAIResponsesLLM:
     def invoke(self, input_data: dict[str, Any]) -> str:
         prompt = input_data.get("prompt") or ""
         context = input_data.get("context")
+        response_format = input_data.get("response_format")
+        text_config = input_data.get("text")
         if isinstance(context, (dict, list)):
             user_content = json.dumps(context, ensure_ascii=False)
         else:
@@ -33,7 +35,13 @@ class OpenAIResponsesLLM:
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                response = self._client.responses.create(model=self._model, input=payload)
+                kwargs: dict[str, Any] = {"model": self._model, "input": payload}
+                if response_format:
+                    text_config = dict(text_config or {})
+                    text_config["format"] = response_format
+                if text_config:
+                    kwargs["text"] = text_config
+                response = self._client.responses.create(**kwargs)
                 if getattr(response, "output_text", None):
                     return response.output_text
                 parts: list[str] = []

@@ -90,13 +90,13 @@ def _merge_exchange_candidates(
     merged: list[dict[str, Any]] = []
     for exchange in exchanges:
         enriched = dict(exchange)
-        base_name = (enriched.get("exchangeName") or enriched.get("name") or "").lower()
+        base_name = _exchange_base_name(enriched).lower()
         candidate = candidate_map.get(base_name)
         if candidate and candidate.uuid:
             enriched["referenceToFlowDataSet"] = _reference_from_candidate(candidate)
         elif not _has_reference(enriched.get("referenceToFlowDataSet")):
             enriched["referenceToFlowDataSet"] = _placeholder_reference(
-                enriched.get("exchangeName") or base_name or "Unspecified flow"
+                _exchange_base_name(enriched) or "Unspecified flow"
             )
         if candidate:
             enriched.setdefault("matchingDetail", asdict(candidate))
@@ -112,9 +112,43 @@ def _ensure_list(exchanges: Iterable[dict[str, Any]] | dict[str, Any]) -> list[d
     return list(exchanges or [])
 
 
+def _exchange_base_name(exchange: dict[str, Any]) -> str:
+    name = exchange.get("exchangeName") or exchange.get("name") or exchange.get("flowName")
+    if name:
+        return str(name)
+    reference = exchange.get("referenceToFlowDataSet")
+    if isinstance(reference, dict):
+        text = _short_description_text(reference.get("common:shortDescription"))
+        if text:
+            parts = [part.strip() for part in text.split(";")]
+            return parts[0] if parts else text.strip()
+    return ""
+
+
+def _short_description_text(value: Any) -> str:
+    if isinstance(value, dict):
+        text = value.get("#text") or value.get("text")
+        if text:
+            return str(text)
+        for candidate in value.values():
+            candidate_text = _short_description_text(candidate)
+            if candidate_text:
+                return candidate_text
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            candidate = _short_description_text(item)
+            if candidate:
+                return candidate
+        return ""
+    if value is None:
+        return ""
+    return str(value)
+
+
 def determine_functional_unit(exchanges: list[dict[str, Any]]) -> str | None:
     for exchange in exchanges:
-        name = (exchange.get("exchangeName") or "").lower()
+        name = _exchange_base_name(exchange).lower()
         if not name:
             continue
         if _is_waste(name):
@@ -122,7 +156,7 @@ def determine_functional_unit(exchanges: list[dict[str, Any]]) -> str | None:
         amount = exchange.get("resultingAmount") or exchange.get("amount")
         unit = exchange.get("unit") or exchange.get("resultingAmountUnit")
         if amount and unit:
-            return f"{amount} {unit} {exchange.get('exchangeName')}"
+            return f"{amount} {unit} {_exchange_base_name(exchange)}"
     return None
 
 
@@ -150,7 +184,6 @@ def _placeholder_reference(name: str) -> dict[str, Any]:
         "@version": "00.00.000",
         "@uri": f"https://tiangong.earth/flows/{identifier}",
         "common:shortDescription": _multilang(name),
-        "tiangong:placeholder": True,
     }
 
 
