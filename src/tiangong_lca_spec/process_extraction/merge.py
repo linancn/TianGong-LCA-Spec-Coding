@@ -62,7 +62,6 @@ def merge_results(
             modelling_and_validation=modelling,
             administrative_information=administrative,
             exchanges=merged_exchanges,
-            notes=block.get("notes"),
             process_data_set=process_dataset,
         )
         datasets.append(dataset)

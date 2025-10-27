@@ -64,19 +64,14 @@ LCI_METHOD_APPROACH_OPTIONS = [
 ]
 
 
-def build_tidas_process_dataset(
-    process_dataset: dict[str, Any],
-    *,
-    notes: Any | None = None,
-) -> dict[str, Any]:
+def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, Any]:
     """Return a normalised deep copy of the provided process dataset."""
 
     dataset = _apply_root_metadata(process_dataset)
     dataset["@locations"] = BASE_METADATA["@locations"]
     process_information = dataset.setdefault("processInformation", {})
     normalised_process_information, name_components = _normalise_process_information(
-        process_information,
-        notes=notes,
+        process_information
     )
     dataset["processInformation"] = normalised_process_information
     modelling = _normalise_modelling_and_validation(dataset.get("modellingAndValidation"))
@@ -114,13 +109,10 @@ def _apply_root_metadata(process_dataset: dict[str, Any]) -> dict[str, Any]:
 
 def _normalise_process_information(
     process_information: Any,
-    *,
-    notes: Any | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     info = _ensure_dict(process_information)
     dataset_info, name_components = _normalise_dataset_information(
         info.get("dataSetInformation"),
-        notes=notes,
     )
     info["dataSetInformation"] = dataset_info
     qref = _normalise_quantitative_reference(info.get("quantitativeReference"))
@@ -144,8 +136,6 @@ def _normalise_process_information(
 
 def _normalise_dataset_information(
     data_info: Any,
-    *,
-    notes: Any | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     info = _ensure_dict(data_info)
     specinfo = _ensure_dict(info.pop("specinfo", None))
@@ -174,7 +164,6 @@ def _normalise_dataset_information(
         base_name_text,
         specinfo,
         _stringify(info.get("common:generalComment")),
-        _stringify(notes),
     )
     refreshed_name_block: dict[str, Any] = {}
     refreshed_name_block["baseName"] = _ensure_multilang(
@@ -233,11 +222,6 @@ def _normalise_dataset_information(
     info["classificationInformation"] = classification_info
 
     general_comment = _stringify(info.get("common:generalComment")).strip()
-    note_text = _stringify(notes).strip()
-    if note_text:
-        general_comment = (
-            f"{general_comment}\n{note_text}".strip() if general_comment else note_text
-        )
     if general_comment:
         info["common:generalComment"] = general_comment
     else:
@@ -306,7 +290,6 @@ def _derive_name_components(
     base_name: str,
     specinfo: dict[str, Any],
     general_comment: str,
-    notes: str,
 ) -> dict[str, Any]:
     base = base_name.strip() or "Unnamed process"
     product, initial_route = _split_product_and_route(base)
@@ -315,8 +298,6 @@ def _derive_name_components(
         expanded_sources.append(_stringify(value))
     if general_comment:
         expanded_sources.append(general_comment)
-    if notes:
-        expanded_sources.append(notes)
     route = _resolve_route(product, initial_route, expanded_sources)
     feedstock = _extract_feedstock(expanded_sources, product)
     standards = _shorten_standard_text(_extract_standards(expanded_sources))
