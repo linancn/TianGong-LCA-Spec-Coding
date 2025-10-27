@@ -5,7 +5,7 @@
 ## 0. 执行约定（避免无效迭代）
 - **先读原始资料**：动手前快速梳理论文原文或 `clean_text`，确认章节结构、数据表与功能单位。
 - **直接执行标准命令**：默认沿用下方列出的 Stage 1~6 CLI 模板（输入/输出路径遵循仓库约定），无需反复运行 `--help`。如需自定义参数，再单独查阅帮助。
-- **必须走标准阶段脚本**：除非用户特别说明，优先调用 `stage1`→`stage6`，不要手写长 JSON 或跳步生成中间文件。若缺少凭据（OpenAI、MCP、TIDAS），需第一时间告知用户并等待指示。
+- **必须走标准阶段脚本**：除非用户特别说明，优先调用 `stage1`→`stage6`，不要手写长 JSON 或跳步生成中间文件。若缺少凭据（OpenAI、MCP、TIDAS），需第一时间告知用户并等待指示。入库需求可在 `stage6` 之后通过 `stage7_publish` 执行。
 - **在调用 LLM/MCP 前做输入校验**：例如检查 `clean_text` 是否非空、是否含有表格与单位，必要时提示用户补充。
 - **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 5 校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
 - **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
@@ -30,7 +30,7 @@
 - `process_extraction/`：完成预处理、父级拆分、分类、地理标准化与 `processDataSet` 归并。
 - `tidas_validation/`：调用 TIDAS MCP 工具并转化为 `TidasValidationFinding`。
 - `orchestrator/`：顺序式 orchestrator，将各阶段串联成单一入口。
-- `scripts/`：阶段化 CLI（`stage1`~`stage6`）和回归入口 `run_test_workflow.py`。
+- `scripts/`：阶段化 CLI（`stage1`~`stage7`）和回归入口 `run_test_workflow.py`。
 
 ## 2. 分阶段脚本
 脚本默认读写 `artifacts/` 下的中间文件，可通过参数重定向。
@@ -43,6 +43,7 @@
 | 4 | `stage4_merge_datasets.py` | `stage4_process_datasets.json` | 合并流程块、候选流与功能单位。 |
 | 5 | `stage5_validate.py` | `stage5_validation.json` | 调用 TIDAS MCP 工具（支持 `--skip`）。 |
 | 6 | `stage6_finalize.py` | `workflow_result.json` | 汇总流程数据集、对齐信息与校验报告。 |
+| 7 (可选) | `stage7_publish.py` | `stage7_publish_preview.json` | 读取 Stage3/4/6 产物，构造 `Database_CRUD_Tool` 负载；默认干跑，可加 `--commit` 发布流和流程数据。 |
 
 推荐执行序列（仓库根目录）：
 ```bash
@@ -59,6 +60,10 @@ uv run python scripts/stage6_finalize.py \
   --process-datasets artifacts/stage4_process_datasets.json \
   --alignment artifacts/stage3_alignment.json \
   --validation artifacts/stage5_validation.json
+uv run python scripts/stage7_publish.py \
+  --publish-flows --publish-processes \
+  --update-alignment --update-datasets \
+  --commit  # 若仅预览可省略 --commit
 ```
 
 - `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`，缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
@@ -155,7 +160,7 @@ class WorkflowResult:
 
 ## 9. 验证建议
 - 单元测试优先覆盖：`json_utils` 清洗、`FlowSearchService` 过滤/缓存、`FlowAlignmentService` 降级处理、流程抽取各阶段的错误分支与 `merge_results` 容错。
-- 集成验证：使用最小论文样例依次执行 `stage1`→`stage6`，核对产物 schema、命中统计与 TIDAS 报告。
+- 集成验证：使用最小论文样例依次执行 `stage1`→`stage6`，核对产物 schema、命中统计与 TIDAS 报告；如需验证发布流程，再追加 `stage7_publish` 的干跑。
 - 观测：启用 `configure_logging` JSON 输出并筛选 `flow_alignment.exchange_failed`、`process_extraction.parents_uncovered` 等关键事件，快速定位异常阶段。
 
 ## 10. 分类与地理辅助资源
