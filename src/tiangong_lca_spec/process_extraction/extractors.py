@@ -66,8 +66,7 @@ def _build_section_prompt() -> str:
         "5. If the same activity has distinct LCI variants by geography, year, or technology "
         "route, create separate records; otherwise merge them.\n"
         "6. Always capture which subprocesses are bundled together, the functional unit, "
-        "and key allocation or shared-resource notes inside `common:generalComment` or "
-        "`generalComment1`.\n"
+        "and key allocation or shared-resource notes inside `common:generalComment`.\n"
         "7. Treat shared preparation steps, raw material staging, or utility supply that "
         "lack their own functional unit as supplemental information. Write such details "
         "into the relevant subprocess `common:generalComment` instead of creating a new "
@@ -79,11 +78,11 @@ def _build_section_prompt() -> str:
         "reproduce each table row or inventory line as its own `exchange` entry. Never "
         "merge, drop, or average distinct rows—even if values are similar. Preserve the "
         "original units, qualifiers, scenario labels, and footnotes inside "
-        "`generalComment`/`generalComment1` so downstream alignment can trace every "
+        "`generalComment` so downstream alignment can trace every "
         "source datum.\n"
         "10. Normalize exchange names to Tiangong/ILCD canonical wording (e.g., "
         '"Electricity, medium voltage", "Carbon dioxide, fossil") and enrich '
-        "`generalComment1` with common synonyms, aliases/abbreviations (e.g., "
+        "`generalComment` with common synonyms, aliases/abbreviations (e.g., "
         '"COG", "DAC"), chemical formulas or CAS numbers, and bilingual descriptors '
         "to improve flow search hit-rate."
     )
@@ -118,7 +117,7 @@ def _build_section_prompt() -> str:
         '  * `exchangeDirection`: "Input" or "Output".\n'
         "  * `meanAmount`, `unit`, and `resultingAmount`.\n"
         "  * `exchangeName` / `flowName`: align with wording in the paper.\n"
-        "  * `generalComment1`: capture data source, representativeness, quality, and key "
+        "  * `generalComment`: capture data source, representativeness, quality, and key "
         "modelling assumptions succinctly.\n"
         "  * Omit `referenceToFlowDataSet` and other `referenceTo...` placeholders; Stage 3 "
         "will populate flow references after alignment.\n"

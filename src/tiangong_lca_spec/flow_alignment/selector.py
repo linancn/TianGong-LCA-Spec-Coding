@@ -179,11 +179,7 @@ class LLMCandidateSelector:
 
     @staticmethod
     def _stringify_comment(exchange: dict[str, Any]) -> str | None:
-        comment = (
-            exchange.get("generalComment1")
-            or exchange.get("generalComment")
-            or exchange.get("comment")
-        )
+        comment = exchange.get("generalComment") or exchange.get("comment")
         if comment is None:
             return None
         if isinstance(comment, dict):
