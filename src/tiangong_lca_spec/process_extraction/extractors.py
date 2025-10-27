@@ -75,10 +75,12 @@ def _build_section_prompt() -> str:
         "8. Only introduce a new process when the document explicitly labels a unit "
         "operation (in tables, section headings, or prose) and associates it with its own "
         "inventory or functional output.\n"
-        "9. Stage 3 flow alignment performs serial MCP lookups; consolidate table rows "
-        "into roughly 8-12 representative exchanges per process, but carry detailed "
-        "sub-rows (amounts, units, qualifiers) into `generalComment1` or process "
-        "notes so no information is lost.\n"
+        "9. Stage 3 flow alignment performs serial MCP lookups; therefore you must "
+        "reproduce each table row or inventory line as its own `exchange` entry. Never "
+        "merge, drop, or average distinct rows—even if values are similar. Preserve the "
+        "original units, qualifiers, scenario labels, and footnotes inside "
+        "`generalComment`/`generalComment1` so downstream alignment can trace every "
+        "source datum.\n"
         "10. Normalize exchange names to Tiangong/ILCD canonical wording (e.g., "
         '"Electricity, medium voltage", "Carbon dioxide, fossil") and enrich '
         "`generalComment1` with common synonyms, aliases/abbreviations (e.g., "
@@ -224,7 +226,11 @@ class SectionExtractor:
                 "Capture supplemental materials or shared resources in `common:generalComment`."
             )
             prompt = f"{SECTION_PROMPT}\n\n{focus_directive}"
-        payload = {"prompt": prompt, "context": clean_text}
+        payload = {
+            "prompt": prompt,
+            "context": clean_text,
+            "response_format": {"type": "json_object"},
+        }
         response = self.llm.invoke(payload)
         raw_content = getattr(response, "content", response)
         truncated = False
@@ -260,7 +266,13 @@ class LocationNormalizer:
 
     def run(self, process_info: dict[str, Any]) -> dict[str, Any]:
         LOGGER.info("process_extraction.location_normalization")
-        response = self.llm.invoke({"prompt": LOCATION_PROMPT, "context": process_info})
+        response = self.llm.invoke(
+            {
+                "prompt": LOCATION_PROMPT,
+                "context": process_info,
+                "response_format": {"type": "json_object"},
+            }
+        )
         return _ensure_dict(response)
 
 
@@ -270,7 +282,13 @@ class ParentProcessExtractor:
 
     def run(self, clean_text: str) -> dict[str, Any]:
         LOGGER.info("process_extraction.parent_process_identification")
-        response = self.llm.invoke({"prompt": PARENT_PROMPT, "context": clean_text})
+        response = self.llm.invoke(
+            {
+                "prompt": PARENT_PROMPT,
+                "context": clean_text,
+                "response_format": {"type": "json_object"},
+            }
+        )
         return _ensure_dict(response)
 
 

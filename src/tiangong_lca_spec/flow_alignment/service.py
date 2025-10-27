@@ -167,10 +167,7 @@ class FlowAlignmentService:
             enriched["referenceToFlowDataSet"] = self._candidate_reference(candidate)
         else:
             enriched["referenceToFlowDataSet"] = self._placeholder_reference(
-                enriched.get("exchangeName")
-                or enriched.get("name")
-                or enriched.get("flowName")
-                or "Unspecified flow"
+                self._safe_exchange_name(enriched)
             )
         detail = enriched.get("matchingDetail")
         if not isinstance(detail, dict):
@@ -194,10 +191,7 @@ class FlowAlignmentService:
         enriched = dict(exchange)
         if not self._has_reference(enriched.get("referenceToFlowDataSet")):
             enriched["referenceToFlowDataSet"] = self._placeholder_reference(
-                enriched.get("exchangeName")
-                or enriched.get("name")
-                or enriched.get("flowName")
-                or "Unspecified flow"
+                self._safe_exchange_name(enriched)
             )
         return enriched
 
@@ -224,7 +218,7 @@ class FlowAlignmentService:
             "@version": "00.00.000",
             "@uri": f"https://tiangong.earth/flows/{identifier}",
             "common:shortDescription": FlowAlignmentService._multilang(name),
-            "tiangong:placeholder": True,
+            "unmatched:placeholder": True,
         }
 
     @staticmethod
@@ -245,11 +239,7 @@ class FlowAlignmentService:
     ) -> FlowQuery:
         return FlowQuery(
             exchange_name=self._safe_exchange_name(exchange),
-            description=self._stringify(
-                exchange.get("generalComment1")
-                or exchange.get("generalComment")
-                or exchange.get("comment")
-            ),
+            description=self._stringify(exchange.get("generalComment") or exchange.get("comment")),
             process_name=process_name,
             paper_md=paper_md,
         )
@@ -263,9 +253,7 @@ class FlowAlignmentService:
         return UnmatchedFlow(
             base_name=exchange_name or self._safe_exchange_name(exchange),
             general_comment=self._stringify(
-                exchange.get("generalComment1")
-                or exchange.get("generalComment")
-                or exchange.get("comment")
+                exchange.get("generalComment") or exchange.get("comment")
             ),
             process_name=process_name,
         )
@@ -312,10 +300,22 @@ class FlowAlignmentService:
             exchange.get("exchangeName")
             or exchange.get("name")
             or exchange.get("flowName")
+            or FlowAlignmentService._extract_short_description_base(
+                exchange.get("referenceToFlowDataSet")
+            )
             or "unknown_exchange"
         )
         resolved = FlowAlignmentService._stringify(raw_name)
         return resolved or "unknown_exchange"
+
+    @staticmethod
+    def _extract_short_description_base(reference: Any) -> str | None:
+        if isinstance(reference, dict):
+            text = FlowAlignmentService._stringify(reference.get("common:shortDescription"))
+            if text:
+                parts = [part.strip() for part in text.split(";")]
+                return parts[0] if parts else text.strip()
+        return None
 
     @staticmethod
     def _stringify(value: Any) -> str | None:

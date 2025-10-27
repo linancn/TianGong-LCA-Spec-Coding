@@ -110,9 +110,17 @@ SAMPLE_PROCESS_DATASET = {
         "exchange": [
             {
                 "@dataSetInternalID": "1",
-                "exchangeName": "Electricity, medium voltage",
                 "exchangeDirection": "Input",
-                "referenceToFlowDataSet": {"@refObjectId": "00000000-0000-0000-0000-000000000000"},
+                "referenceToFlowDataSet": {
+                    "@type": "flow data set",
+                    "@refObjectId": "00000000-0000-0000-0000-000000000000",
+                    "@version": "00.00.000",
+                    "@uri": "https://example.com/flows/electricity",
+                    "common:shortDescription": {
+                        "@xml:lang": "en",
+                        "#text": "Electricity, medium voltage; ; ; 1.0 kWh",
+                    },
+                },
                 "meanAmount": "1.0",
                 "resultingAmount": "1.0",
                 "dataDerivationTypeStatus": "Measured",

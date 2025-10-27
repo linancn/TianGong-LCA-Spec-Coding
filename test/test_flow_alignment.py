@@ -8,6 +8,10 @@ from tiangong_lca_spec.flow_alignment.service import FlowAlignmentService
 
 
 def _build_dataset(exchange_name: str = "Flow A") -> dict[str, object]:
+    short_description = {
+        "@xml:lang": "en",
+        "#text": f"{exchange_name}; ; ; ",
+    }
     return {
         "processInformation": {
             "dataSetInformation": {
@@ -19,7 +23,17 @@ def _build_dataset(exchange_name: str = "Flow A") -> dict[str, object]:
         "exchanges": {
             "exchange": [
                 {
-                    "exchangeName": exchange_name,
+                    "referenceToFlowDataSet": {
+                        "@type": "flow data set",
+                        "@refObjectId": "11111111-1111-1111-1111-111111111111",
+                        "@version": "00.00.000",
+                        "@uri": "https://example.com/flows/default",
+                        "common:shortDescription": short_description,
+                        "unmatched:placeholder": True,
+                    },
+                    "exchangeDirection": "Input",
+                    "meanAmount": "1.0",
+                    "unit": "kg",
                 }
             ]
         },
@@ -45,7 +59,12 @@ def test_align_exchanges_does_not_emit_unmatched_on_success() -> None:
         assert result["matched_flows"], "Expected matches to be recorded"
         assert result["unmatched_flows"] == [], "No unmatched flows should be emitted"
         origin = result["origin_exchanges"]["Flow A"]
-        assert origin[0]["exchangeName"] == "Flow A"
+        assert (
+            origin[0]["referenceToFlowDataSet"]["common:shortDescription"]["#text"]
+            .split(";")[0]
+            .strip()
+            == "Flow A"
+        )
     finally:
         service.close()
 
@@ -87,7 +106,8 @@ def test_align_exchanges_records_unmatched_when_retry_fails() -> None:
         assert len(result["unmatched_flows"]) == 1
         assert result["unmatched_flows"][0].base_name == "Flow B"
         origin = result["origin_exchanges"]["Flow B"][0]
-        assert origin["exchangeName"] == "Flow B"
-        assert origin["referenceToFlowDataSet"]["tiangong:placeholder"] is True
+        short_desc = origin["referenceToFlowDataSet"]["common:shortDescription"]["#text"]
+        assert short_desc.split(";")[0].strip() == "Flow B"
+        assert origin["referenceToFlowDataSet"]["unmatched:placeholder"] is True
     finally:
         service.close()

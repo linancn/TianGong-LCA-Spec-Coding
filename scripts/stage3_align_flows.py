@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,21 @@ def _read_process_blocks(path: Path) -> list[dict[str, Any]]:
     blocks = payload["process_blocks"]
     if not isinstance(blocks, list):
         raise SystemExit(f"'process_blocks' must be a list in {path}")
+    for index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            raise SystemExit(f"Process block #{index} must be an object: {path}")
+        if "processDataSet" not in block:
+            raise SystemExit(
+                "Each process block must contain 'processDataSet'. Stage 2 now writes "
+                "normalised exchanges directly inside the dataset; legacy 'exchange_list' "
+                "is no longer emitted."
+            )
+        if "exchange_list" in block and block["exchange_list"]:
+            print(
+                "stage3_align_flows: ignoring legacy 'exchange_list' data; use "
+                "'processDataSet.exchanges' instead.",
+                file=sys.stderr,
+            )
     return blocks
 
 
