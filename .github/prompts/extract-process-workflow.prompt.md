@@ -1,11 +1,18 @@
 # 天工 LCA 数据抽取工作流指引
 
-本说明聚焦数据抽取与流程编排：梳理分阶段脚本、核心模块、数据结构与关键校验要点，支持 Codex 在业务执行中保持统一策略。
+本说明聚焦数据抽取与流程编排：梳理分阶段脚本、核心模块、数据结构与关键校验要点，支持 Codex 在业务执行中保持统一策略。关于开发环境与通用协作规范，请参阅仓库根目录的 `AGENTS.md`。
+
+流程抽取工作流的角色划分如下：
+- **Stage 1（预处理）**：解析原始论文/资料，输出结构化 `clean_text` 供后续调用。
+- **Stage 2（流程生成）**：Codex 驱动 LLM 提取流程块，补充 `FlowSearch hints` 与换算假设，是后续对齐的基础资料。
+- **Stage 3（流对齐）**：结合 MCP 检索结果与人工上下文，确认每个交换量对应的标准流并记录未命中原因。
+- **Stage 4~6（合并/校验/终稿）**：合并流程数据集、对齐信息与 TIDAS 校验报告，形成可直接入库的 `workflow_result.json`。
 
 ## 0. 执行约定（避免无效迭代）
 - **先读原始资料**：动手前快速梳理论文原文或 `clean_text`，确认章节结构、数据表与功能单位。
 - **直接执行标准命令**：默认沿用下方列出的 Stage 1~6 CLI 模板（输入/输出路径遵循仓库约定），无需反复运行 `--help`。如需自定义参数，再单独查阅帮助。
 - **必须走标准阶段脚本**：除非用户特别说明，优先调用 `stage1`→`stage6`，不要手写长 JSON 或跳步生成中间文件。若缺少凭据（OpenAI、MCP、TIDAS），需第一时间告知用户并等待指示。入库需求可在 `stage6` 之后通过 `stage7_publish` 执行。
+- **默认凭据已备妥**：标准环境下 `.secrets/secrets.toml` 由运维预先配置，Codex 直接开始执行各阶段即可；只有在脚本实际抛出缺少凭据或连接失败的异常时，再回溯检查密钥配置。
 - **在调用 LLM/MCP 前做输入校验**：例如检查 `clean_text` 是否非空、是否含有表格与单位，必要时提示用户补充。
 - **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 5 校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
 - **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
@@ -39,7 +46,7 @@
 | ---- | ---- | ---- | ---- |
 | 1 | `stage1_preprocess.py` | `stage1_clean_text.json` | 解析论文 Markdown/JSON，输出 `clean_text`。 |
 | 2 | `stage2_extract_processes.py` | `stage2_process_blocks.json` | 使用 OpenAI Responses 生成流程块。 |
-| 3 | `stage3_align_flows.py` | `stage3_alignment.json` | 调用 `FlowAlignmentService` 对齐交换量，仅保留匹配结果。 |
+| 3 | `stage3_align_flows.py` | `stage3_alignment.json` | 调用 `FlowAlignmentService` 对齐交换量，输出 `matched_flows`、`unmatched_flows` 与 `origin_exchanges`。 |
 | 4 | `stage4_merge_datasets.py` | `stage4_process_datasets.json` | 合并流程块、候选流与功能单位。 |
 | 5 | `stage5_validate.py` | `stage5_validation.json` | 调用 TIDAS MCP 工具（支持 `--skip`）。 |
 | 6 | `stage6_finalize.py` | `workflow_result.json` | 汇总流程数据集、对齐信息与校验报告。 |
@@ -66,7 +73,7 @@ uv run python scripts/stage7_publish.py \
   --commit  # 若仅预览可省略 --commit
 ```
 
-- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`，缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
+- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`（字段要求见 §0），缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
 
 ## 3. 核心数据结构
 ```python
@@ -130,7 +137,7 @@ class WorkflowResult:
 
 ## 5. Flow Alignment
 - 每个流程块的交换量在独立线程提交检索任务，聚合 `matched_flows` 与 `origin_exchanges`；未命中只在日志中计数提醒。
-- Stage 3 脚本会先检查 Stage 2 生成的 `exchangeName` 以及 `generalComment` 中的 `FlowSearch hints:` 前缀，必要时从同义词字段推断缺失名称，避免缺乏语义标签的交换直接进入 MCP 检索。
+- Stage 3 脚本会按 §0 的 `FlowSearch hints` 规范校验 Stage 2 产物，必要时从同义词字段推断缺失名称，避免缺乏语义标签的交换直接进入 MCP 检索。
 - 匹配成功时写回 `referenceToFlowDataSet`，失败则保留原始交换量并记录原因。
 - 过程中输出 `flow_alignment.start`、`flow_alignment.exchange_failed` 等结构化日志，便于诊断。
 
