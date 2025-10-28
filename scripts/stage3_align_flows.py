@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Stage 3: align extracted exchanges against TianGong flow datasets."""
+"""Stage 3: align exchanges and materialise ILCD artifacts."""
 
 from __future__ import annotations
 
@@ -12,6 +12,10 @@ from typing import Any, Iterable
 from _workflow_common import OpenAIResponsesLLM, dump_json, load_secrets
 
 from tiangong_lca_spec.flow_alignment import FlowAlignmentService
+from tiangong_lca_spec.workflow.artifacts import (
+    DEFAULT_FORMAT_SOURCE_UUID,
+    generate_artifacts,
+)
 
 
 def _read_process_blocks(path: Path) -> list[dict[str, Any]]:
@@ -86,12 +90,6 @@ def parse_args() -> argparse.Namespace:
         help="Where to store the alignment results.",
     )
     parser.add_argument(
-        "--unmatched-output",
-        type=Path,
-        default=Path("artifacts/stage3_unmatched_flows.json"),
-        help="Deprecated. Unmatched exchanges are no longer written to disk.",
-    )
-    parser.add_argument(
         "--secrets",
         type=Path,
         default=Path(".secrets/secrets.toml"),
@@ -104,6 +102,41 @@ def parse_args() -> argparse.Namespace:
             "Proceed even when exchanges are missing 'FlowSearch hints' metadata. "
             "By default the command aborts so that Stage 2 outputs can be fixed first."
         ),
+    )
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=Path("artifacts"),
+        help="Directory where ILCD process/flow/source JSON files will be written.",
+    )
+    parser.add_argument(
+        "--process-datasets",
+        dest="process_datasets",
+        type=Path,
+        default=Path("artifacts/process_datasets.json"),
+        help="Where to store merged process dataset structures.",
+    )
+    parser.add_argument(
+        "--validation-output",
+        type=Path,
+        default=Path("artifacts/tidas_validation.json"),
+        help="Where to store the local TIDAS validation report.",
+    )
+    parser.add_argument(
+        "--workflow-output",
+        type=Path,
+        default=Path("artifacts/workflow_result.json"),
+        help="Final workflow bundle combining datasets, alignment, and validation.",
+    )
+    parser.add_argument(
+        "--skip-artifact-validation",
+        action="store_true",
+        help="Skip running the local `tidas_tools.validate` command after exporting artifacts.",
+    )
+    parser.add_argument(
+        "--format-source-uuid",
+        default=DEFAULT_FORMAT_SOURCE_UUID,
+        help="UUID to use for the generated ILCD format source stub.",
     )
     return parser.parse_args()
 
@@ -145,6 +178,31 @@ def main() -> None:
     print(f"Aligned flows for {len(alignment_entries)} processes -> {args.output}")
     for label, total in process_summaries:
         print(f" - {label}: processed {total} exchanges")
+
+    summary = generate_artifacts(
+        process_blocks=process_blocks,
+        alignment_entries=alignment_entries,
+        artifact_root=args.artifact_root,
+        merged_output=args.process_datasets,
+        validation_output=args.validation_output,
+        workflow_output=args.workflow_output,
+        format_source_uuid=args.format_source_uuid,
+        run_validation=not args.skip_artifact_validation,
+    )
+
+    print(
+        f"Artifacts exported to {args.artifact_root} "
+        f"(processes={summary.process_count}, flows={summary.flow_count}, "
+        f"sources={summary.source_count})"
+    )
+    if summary.validation_report:
+        print(
+            f"Validation findings count={len(summary.validation_report)} "
+            f"-> {args.validation_output}"
+        )
+    else:
+        print(f"Validation succeeded -> {args.validation_output}")
+    print(f"Workflow bundle written to {args.workflow_output}")
 
 
 def _resolve_process_id(block: dict[str, Any], dataset: dict[str, Any]) -> str | None:

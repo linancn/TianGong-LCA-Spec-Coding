@@ -5,16 +5,15 @@ This document focuses on data extraction and workflow orchestration: it outlines
 The process extraction workflow splits responsibilities as follows:
 - **Stage 1 (Preprocessing)**: Parse the source paper/material and output structured `clean_text` for downstream steps.
 - **Stage 2 (Process generation)**: Codex drives the LLM to extract process blocks, add `FlowSearch hints`, and document conversion assumptions—the foundational input for alignment.
-- **Stage 3 (Flow alignment)**: Combine MCP search results and operator context to confirm the standard flow for each exchange and record the reason when no match is found.
-- **Stage 4-6 (Merge/Validation/Finalization)**: Merge process datasets, alignment information, and TIDAS validation reports to produce `workflow_result.json` that is ready for ingestion.
+- **Stage 3 (Flow alignment & artifact export)**: Combine MCP search results and operator context to confirm the standard flow for each exchange, then merge the results, generate ILCD artifacts under `artifacts/`, run local validation, and assemble `workflow_result.json` for downstream tasks.
 
 ## 0. Execution Ground Rules (Avoid Wasted Iterations)
 - **Read the source material first**: Before you start, quickly review the original paper or `clean_text` to confirm chapter layout, data tables, and the functional unit.
-- **Run the standard commands directly**: By default, follow the Stage 1-6 CLI templates listed below (input/output paths follow repository conventions) without repeatedly calling `--help`. Only open the help text when you truly need custom parameters.
-- **Always run the staged scripts**: Unless the user explicitly instructs otherwise, invoke `stage1` → `stage6`. Do not handcraft large JSON payloads or skip stages to fabricate intermediate files. If credentials (OpenAI, MCP, TIDAS) are missing, notify the user immediately and wait for guidance. You can execute `stage7_publish` after Stage 6 when publication is required.
+- **Run the standard commands directly**: By default, follow the Stage 1-3 CLI templates listed below (input/output paths follow repository conventions) without repeatedly calling `--help`. Only open the help text when you truly need custom parameters.
+- **Always run the staged scripts**: Unless the user explicitly instructs otherwise, invoke `stage1` → `stage3`. Do not handcraft large JSON payloads or skip stages to fabricate intermediate files. If credentials (OpenAI, MCP, TIDAS) are missing, notify the user immediately and wait for guidance. You can execute `stage4_publish` after Stage 3 when publication is required.
 - **Assume credentials are provisioned**: In standard environments `.secrets/secrets.toml` is preconfigured by operations, so Codex can start from any stage. Only revisit credential settings when scripts actually raise missing-credential errors or connection failures.
 - **Validate inputs before calling the LLM/MCP**: Check whether `clean_text` is non-empty and contains tables and units as expected; prompt the user to supplement the data when necessary.
-- **Final JSON requirements**: The delivered `workflow_result.json` must be generated from data that has already passed Stage 5 validation. Remove debugging fields, empty structures, and temporary notes so every process dataset strictly follows the schema and is “clean” enough for direct ingestion.
+- **Final JSON requirements**: The delivered `workflow_result.json` must be generated from data that has already passed the Stage 3 artifact validation step. Remove debugging fields, empty structures, and temporary notes so every process dataset strictly follows the schema and is “clean” enough for direct ingestion.
 - **Smoke test MCP once**: Write a quick five-line Python snippet (import `FlowSearchService` and construct a `FlowQuery`) to test a single exchange, confirm credentials and network connectivity, and only then launch Stage 3. This avoids learning about configuration errors after long timeouts.
 - **Control the number of exchanges**: Stage 3 issues MCP requests sequentially (`flow_search_max_parallel=1`); each `exchange` triggers an independent call. Stage 2 must reproduce the literature table row by row—every original line becomes its own `exchange` (no merging, averaging, or omission). Capture scenario notes and footnotes in `generalComment` so Stage 3 can align each row to its original context.
 - **Enrich the search hints**: For every `exchange.generalComment`, add common synonyms (semantic equivalents such as “electric power supply”), aliases or abbreviations (“COG”, “DAC”), chemical formulas/CAS numbers, and key parameters with Chinese-English pairs. Doing so lets FlowSearchService exploit multilingual synonym expansion and richer context to improve recall. For high-frequency base flows (`Electricity, medium voltage`, `Water, process`, `Steam, low pressure`, `Oxygen`, `Hydrogen`, `Natural gas, processed`, etc.), list at least two or three Chinese/English aliases or typical descriptions (e.g., “grid electricity 10–30 kV”, “中压电”, “technological water”, “饱和蒸汽 0.4 MPa”, “O₂, CAS 7782-44-7”) and describe state/purity/source. `generalComment` must begin with `FlowSearch hints:` and follow the structure `en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | state_purity=... | source_or_pathway=... | usage_context=...`. Use `NA` for missing fields to keep placeholders, then append table references or conversion assumptions at the end. Without these clues, MCP often returns short Chinese names or low-similarity candidates, forcing Stage 3 to fall back to placeholders.
@@ -37,20 +36,17 @@ The process extraction workflow splits responsibilities as follows:
 - `process_extraction/`: Handles preprocessing, parent splitting, classification, location normalization, and `processDataSet` consolidation.
 - `tidas_validation/`: Invokes the TIDAS MCP tool and converts responses into `TidasValidationFinding`.
 - `orchestrator/`: Provides a sequential orchestrator that links all stages into a single entry point.
-- `scripts/`: Staged CLIs (`stage1`–`stage7`) and the regression entry point `run_test_workflow.py`.
+- `scripts/`: Staged CLIs (`stage1`–`stage4`) and the regression entry point `run_test_workflow.py`.
 
 ## 2. Staged Scripts
 Scripts read and write intermediate files under `artifacts/` by default; override the paths with CLI arguments when needed.
 
-| Stage | Script | Artifact | Description |
+| Stage | Script | Artifacts | Description |
 | ---- | ---- | ---- | ---- |
 | 1 | `stage1_preprocess.py` | `stage1_clean_text.json` | Parse Markdown/JSON papers and output `clean_text`. |
 | 2 | `stage2_extract_processes.py` | `stage2_process_blocks.json` | Use OpenAI Responses to generate process blocks. |
-| 3 | `stage3_align_flows.py` | `stage3_alignment.json` | Invoke `FlowAlignmentService` to align exchanges and produce `matched_flows`, `unmatched_flows`, and `origin_exchanges`. |
-| 4 | `stage4_merge_datasets.py` | `stage4_process_datasets.json` | Merge process blocks, candidate flows, and functional units. |
-| 5 | `stage5_validate.py` | `stage5_validation.json` | Call the TIDAS MCP tool (supports `--skip`). |
-| 6 | `stage6_finalize.py` | `workflow_result.json` | Aggregate process datasets, alignment data, and validation reports. |
-| 7 (optional) | `stage7_publish.py` | `stage7_publish_preview.json` | Read Stage 3/4/6 outputs and build the `Database_CRUD_Tool` payload; runs as a dry run by default, add `--commit` to publish flows and process datasets. |
+| 3 | `stage3_align_flows.py` | `stage3_alignment.json`, `process_datasets.json`, `tidas_validation.json`, `workflow_result.json`, plus ILCD JSON archives under `artifacts/processes|flows|sources/` | Invoke `FlowAlignmentService`, enforce hint quality, merge aligned results, materialise ILCD artifacts, and run `tidas_tools.validate`. |
+| 4 (optional) | `stage4_publish.py` | `stage4_publish_preview.json` | Read Stage 3 outputs and build the `Database_CRUD_Tool` payload; runs as a dry run by default, add `--commit` to publish flows and process datasets. |
 
 Recommended execution sequence (from the repository root):
 ```bash
@@ -59,15 +55,7 @@ uv run python scripts/stage2_extract_processes.py --clean-text artifacts/stage1_
 uv run python scripts/stage3_align_flows.py \
   --process-blocks artifacts/stage2_process_blocks.json \
   --clean-text artifacts/stage1_clean_text.json
-uv run python scripts/stage4_merge_datasets.py \
-  --process-blocks artifacts/stage2_process_blocks.json \
-  --alignment artifacts/stage3_alignment.json
-uv run python scripts/stage5_validate.py --process-datasets artifacts/stage4_process_datasets.json
-uv run python scripts/stage6_finalize.py \
-  --process-datasets artifacts/stage4_process_datasets.json \
-  --alignment artifacts/stage3_alignment.json \
-  --validation artifacts/stage5_validation.json
-uv run python scripts/stage7_publish.py \
+uv run python scripts/stage4_publish.py \
   --publish-flows --publish-processes \
   --update-alignment --update-datasets \
   --commit  # omit --commit to preview only
@@ -152,22 +140,22 @@ class WorkflowResult:
   1. The top level must be a `processDataSets` array.
   2. Each process needs the four subfields under `processInformation.dataSetInformation.name`: `baseName`, `treatmentStandardsRoutes`, `mixAndLocationTypes`, `functionalUnitFlowProperties`.
   3. Every `exchanges.exchange` entry must include `exchangeDirection`, `meanAmount`, and `unit`.
-- Prompt the LLM not to emit `referenceToFlowDataSet` placeholders—Stage 3 adds them after alignment. Keep `@dataSetInternalID` so Stage 4/5 and TIDAS validation can use it.
+- Prompt the LLM not to emit `referenceToFlowDataSet` placeholders—Stage 3 adds them after alignment. Keep `@dataSetInternalID` so the artifact builder and validation logic in Stage 3 can use it.
 - When table values need cleaning (filling units, merging duplicates), prototype the logic in plain Python first and then integrate it into `ProcessExtractionService`; avoid editing rows manually in a response.
 - `merge_results` incorporates alignment candidates and builds the functional unit string.
-- When Stage 3/4 scripts deserialize `process_blocks`, always pull exchanges from `processDataSet.exchanges` instead of the deprecated `exchange_list`.
+- When Stage 3 logic deserializes `process_blocks`, always pull exchanges from `processDataSet.exchanges` instead of the deprecated `exchange_list`.
 
 ## 7. TIDAS Validation
-- `TidasValidationService` calls `Tidas_Data_Validate_Tool` for each dataset and parses JSON or structured error text into `TidasValidationFinding`.
-- If the remote tool is temporarily unavailable, run `stage5_validate.py` with `--skip` to continue.
+- The Stage 3 export step runs `uv run python -m tidas_tools.validate -i artifacts` to confirm ILCD compliance and records the findings in `tidas_validation.json`.
+- If the local validator is temporarily unavailable, rerun Stage 3 with `--skip-artifact-validation` and document the reason; treat Stage 7 as preview-only until validation passes.
 
 ## 8. Workflow Orchestration
 - `WorkflowOrchestrator` runs the stages sequentially: `preprocess` → `extract_processes` → `align_flows` → `merge_datasets` → `validate` → `finalize`.
-- It returns a `WorkflowResult` that `stage6_finalize.py` or external integrations can consume directly.
+- It returns a `WorkflowResult` that Stage 3 now writes to `workflow_result.json`, or that external integrations can consume directly.
 
 ## 9. Validation Recommendations
 - Prioritize unit tests for JSON cleaning (`json_utils`), FlowSearchService filtering/caching, FlowAlignmentService fallback handling, error branches across process extraction stages, and `merge_results` resilience.
-- For integration checks, run `stage1` → `stage6` on a minimal paper sample, then verify schema compliance, match statistics, and TIDAS reports; add a dry-run `stage7_publish` if you need to validate the publication flow.
+- For integration checks, run `stage1` → `stage3` on a minimal paper sample, then verify schema compliance, match statistics, and validation reports; add a dry-run `stage4_publish` if you need to validate the publication flow.
 - Monitoring: enable `configure_logging` JSON output and filter for events such as `flow_alignment.exchange_failed` and `process_extraction.parents_uncovered` to quickly pinpoint failing stages.
 
 ## 10. Classification and Location Reference Resources

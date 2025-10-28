@@ -5,16 +5,15 @@
 流程抽取工作流的角色划分如下：
 - **Stage 1（预处理）**：解析原始论文/资料，输出结构化 `clean_text` 供后续调用。
 - **Stage 2（流程生成）**：Codex 驱动 LLM 提取流程块，补充 `FlowSearch hints` 与换算假设，是后续对齐的基础资料。
-- **Stage 3（流对齐）**：结合 MCP 检索结果与人工上下文，确认每个交换量对应的标准流并记录未命中原因。
-- **Stage 4~6（合并/校验/终稿）**：合并流程数据集、对齐信息与 TIDAS 校验报告，形成可直接入库的 `workflow_result.json`。
+- **Stage 3（流对齐与制品导出）**：结合 MCP 检索结果与人工上下文，确认每个交换量的标准流，并进一步合并结果、生成 `artifacts/` 下的 ILCD 制品、执行本地校验，最终汇总 `workflow_result.json`。
 
 ## 0. 执行约定（避免无效迭代）
 - **先读原始资料**：动手前快速梳理论文原文或 `clean_text`，确认章节结构、数据表与功能单位。
-- **直接执行标准命令**：默认沿用下方列出的 Stage 1~6 CLI 模板（输入/输出路径遵循仓库约定），无需反复运行 `--help`。如需自定义参数，再单独查阅帮助。
-- **必须走标准阶段脚本**：除非用户特别说明，优先调用 `stage1`→`stage6`，不要手写长 JSON 或跳步生成中间文件。若缺少凭据（OpenAI、MCP、TIDAS），需第一时间告知用户并等待指示。入库需求可在 `stage6` 之后通过 `stage7_publish` 执行。
+- **直接执行标准命令**：默认沿用下方列出的 Stage 1~3 CLI 模板（输入/输出路径遵循仓库约定），无需反复运行 `--help`。如需自定义参数，再单独查阅帮助。
+- **必须走标准阶段脚本**：除非用户特别说明，优先调用 `stage1`→`stage3`，不要手写长 JSON 或跳步生成中间文件。若缺少凭据（OpenAI、MCP、TIDAS），需第一时间告知用户并等待指示。入库需求可在 `stage3` 之后通过 `stage4_publish` 执行。
 - **默认凭据已备妥**：标准环境下 `.secrets/secrets.toml` 由运维预先配置，Codex 直接开始执行各阶段即可；只有在脚本实际抛出缺少凭据或连接失败的异常时，再回溯检查密钥配置。
 - **在调用 LLM/MCP 前做输入校验**：例如检查 `clean_text` 是否非空、是否含有表格与单位，必要时提示用户补充。
-- **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 5 校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
+- **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 3 制品校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
 - **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
 - **控制交换数量**：Stage 3 的流检索串行执行（`flow_search_max_parallel=1`），每个 `exchange` 都会独立调用 MCP。Stage 2 现要求逐行复刻文献表格——每条原始清单行都要生成独立的 `exchange`（不得合并、平均或省略）。如表格含情景或脚注信息，请完整写入 `generalComment`，以便 Stage 3 能按原始来源逐条对齐。
 - **补充检索线索**：为每个 `exchange` 的 `generalComment` 写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数，这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。高频基础流（`Electricity, medium voltage`、`Water, process`、`Steam, low pressure`、`Oxygen`、`Hydrogen`、`Natural gas, processed` 等）要求至少列出 2~3 个中英文别称或典型描述（如“grid electricity 10–30 kV”“中压电”“technological water”“饱和蒸汽 0.4 MPa”“O₂, CAS 7782-44-7”），并说明状态/纯度/来源。`generalComment` 必须以 `FlowSearch hints:` 开头，并按 `en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | state_purity=... | source_or_pathway=... | usage_context=...` 的结构填写，缺项使用 `NA` 保持字段占位，末尾再补充表格引用或换算假设。缺少这些线索时 MCP 往往只返回中文短名或低相似度候选，Stage 3 会落回占位符。
@@ -37,7 +36,7 @@
 - `process_extraction/`：完成预处理、父级拆分、分类、地理标准化与 `processDataSet` 归并。
 - `tidas_validation/`：调用 TIDAS MCP 工具并转化为 `TidasValidationFinding`。
 - `orchestrator/`：顺序式 orchestrator，将各阶段串联成单一入口。
-- `scripts/`：阶段化 CLI（`stage1`~`stage7`）和回归入口 `run_test_workflow.py`。
+- `scripts/`：阶段化 CLI（`stage1`~`stage4`）和回归入口 `run_test_workflow.py`。
 
 ## 2. 分阶段脚本
 脚本默认读写 `artifacts/` 下的中间文件，可通过参数重定向。
@@ -46,11 +45,8 @@
 | ---- | ---- | ---- | ---- |
 | 1 | `stage1_preprocess.py` | `stage1_clean_text.json` | 解析论文 Markdown/JSON，输出 `clean_text`。 |
 | 2 | `stage2_extract_processes.py` | `stage2_process_blocks.json` | 使用 OpenAI Responses 生成流程块。 |
-| 3 | `stage3_align_flows.py` | `stage3_alignment.json` | 调用 `FlowAlignmentService` 对齐交换量，输出 `matched_flows`、`unmatched_flows` 与 `origin_exchanges`。 |
-| 4 | `stage4_merge_datasets.py` | `stage4_process_datasets.json` | 合并流程块、候选流与功能单位。 |
-| 5 | `stage5_validate.py` | `stage5_validation.json` | 调用 TIDAS MCP 工具（支持 `--skip`）。 |
-| 6 | `stage6_finalize.py` | `workflow_result.json` | 汇总流程数据集、对齐信息与校验报告。 |
-| 7 (可选) | `stage7_publish.py` | `stage7_publish_preview.json` | 读取 Stage3/4/6 产物，构造 `Database_CRUD_Tool` 负载；默认干跑，可加 `--commit` 发布流和流程数据。 |
+| 3 | `stage3_align_flows.py` | `stage3_alignment.json`、`process_datasets.json`、`tidas_validation.json`、`workflow_result.json`，以及 `artifacts/processes|flows|sources/` 下的 ILCD JSON | 调用 `FlowAlignmentService` 对齐交换量并验证提示质量，随后合并结果、生成 ILCD 制品并运行 `tidas_tools.validate`。 |
+| 4 (可选) | `stage4_publish.py` | `stage4_publish_preview.json` | 读取 Stage 3 产物，构造 `Database_CRUD_Tool` 负载；默认干跑，可加 `--commit` 发布流和流程数据。 |
 
 推荐执行序列（仓库根目录）：
 ```bash
@@ -59,15 +55,7 @@ uv run python scripts/stage2_extract_processes.py --clean-text artifacts/stage1_
 uv run python scripts/stage3_align_flows.py \
   --process-blocks artifacts/stage2_process_blocks.json \
   --clean-text artifacts/stage1_clean_text.json
-uv run python scripts/stage4_merge_datasets.py \
-  --process-blocks artifacts/stage2_process_blocks.json \
-  --alignment artifacts/stage3_alignment.json
-uv run python scripts/stage5_validate.py --process-datasets artifacts/stage4_process_datasets.json
-uv run python scripts/stage6_finalize.py \
-  --process-datasets artifacts/stage4_process_datasets.json \
-  --alignment artifacts/stage3_alignment.json \
-  --validation artifacts/stage5_validation.json
-uv run python scripts/stage7_publish.py \
+uv run python scripts/stage4_publish.py \
   --publish-flows --publish-processes \
   --update-alignment --update-datasets \
   --commit  # 若仅预览可省略 --commit
@@ -152,22 +140,22 @@ class WorkflowResult:
   1. 顶层必须是 `processDataSets` 数组；
   2. 每个流程需包含 `processInformation.dataSetInformation.name` 中的四个子字段：`baseName`、`treatmentStandardsRoutes`、`mixAndLocationTypes`、`functionalUnitFlowProperties`；
   3. 所有 `exchanges.exchange` 项需带 `exchangeDirection`、`meanAmount`、`unit`。
-- 引导 LLM 不输出 `referenceToFlowDataSet` 占位符，Stage 3 会在对齐后写回；保留 `@dataSetInternalID` 以支撑 Stage 4/5 与 TIDAS 校验。
+- 引导 LLM 不输出 `referenceToFlowDataSet` 占位符，Stage 3 会在对齐后写回；保留 `@dataSetInternalID` 以支撑 Stage 3 的制品生成与校验。
 - 若需要对表格数值做清洗（单位补全、重复行合并），先写纯 Python 脚本验证逻辑，再落回 `ProcessExtractionService`；避免直接在回答里逐行手填。
 - `merge_results` 合入对齐候选并生成功能单位字符串。
-- Stage 3/4 等脚本在反序列化 `process_blocks` 时，务必从 `processDataSet.exchanges` 获取交换量，勿再依赖 `exchange_list`。
+- Stage 3 相关逻辑在反序列化 `process_blocks` 时，务必从 `processDataSet.exchanges` 获取交换量，勿再依赖 `exchange_list`。
 
 ## 7. TIDAS Validation
-- `TidasValidationService` 逐个数据集调用 `Tidas_Data_Validate_Tool`，解析 JSON 或结构化错误文本生成 `TidasValidationFinding`。
-- 当远程工具暂不可用时，可在 `stage5_validate.py` 传入 `--skip` 继续流程。
+- Stage 3 的制品导出步骤会执行 `uv run python -m tidas_tools.validate -i artifacts` 校验 ILCD 结构，并将结果写入 `tidas_validation.json`。
+- 若本地校验工具暂不可用，可在 Stage 3 追加 `--skip-artifact-validation` 并记录原因；在恢复校验前，`stage4_publish` 仅以干跑模式使用。
 
 ## 8. 工作流编排
 - `WorkflowOrchestrator` 顺序执行：`preprocess` → `extract_processes` → `align_flows` → `merge_datasets` → `validate` → `finalize`。
-- 返回 `WorkflowResult`，供 `stage6_finalize.py` 或外部集成直接消费。
+- 返回 `WorkflowResult`，Stage 3 会写入 `workflow_result.json`，外部集成也可直接消费。
 
 ## 9. 验证建议
 - 单元测试优先覆盖：`json_utils` 清洗、`FlowSearchService` 过滤/缓存、`FlowAlignmentService` 降级处理、流程抽取各阶段的错误分支与 `merge_results` 容错。
-- 集成验证：使用最小论文样例依次执行 `stage1`→`stage6`，核对产物 schema、命中统计与 TIDAS 报告；如需验证发布流程，再追加 `stage7_publish` 的干跑。
+- 集成验证：使用最小论文样例依次执行 `stage1`→`stage3`，核对产物 schema、命中统计与校验报告；如需验证发布流程，再追加 `stage4_publish` 的干跑。
 - 观测：启用 `configure_logging` JSON 输出并筛选 `flow_alignment.exchange_failed`、`process_extraction.parents_uncovered` 等关键事件，快速定位异常阶段。
 
 ## 10. 分类与地理辅助资源
