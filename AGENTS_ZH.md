@@ -28,10 +28,11 @@
 2. 编辑 `.secrets/secrets.toml`：
    - `[OPENAI]`：`API_KEY`, `MODEL`（默认 `gpt-5` 可覆盖）。
    - `[tiangong_lca_remote]`：`url`, `service_name`, `tool_name`, `api_key`。
-   - `[tidas_data_validate]`：`url`, `tool_name`, 可选 `api_key`。
 3. `api_key` 字段直接写入明文 token，框架会自动带上 `Bearer` 前缀。
 4. 建议在跑 Stage 3 前，先用 1~2 个样例交换调用 `FlowSearchService` 进行连通性自测（可参考工作流提示文档中的 Python 片段）。
 - 若运维已预先配置 `.secrets/secrets.toml`，Codex 默认直接使用，无需在执行前反复确认。仅当脚本报出缺少凭据或连接失败时，再检查本地配置。
+
+本地 TIDAS 校验改为 `uv run tidas-validate -i artifacts` CLI，由 Stage 3 自动执行，无需额外的 MCP 凭据。
 
 ## 4. 质量保障与自检
 - 在修改 Python 源代码后，按序执行：

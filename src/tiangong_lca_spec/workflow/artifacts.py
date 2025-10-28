@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
-from tiangong_lca_spec.process_extraction.merge import (
-    determine_functional_unit,
-    merge_results,
-)
+from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
+from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = "00000000-0000-0000-0000-0000000000f0"
 
@@ -462,25 +459,16 @@ def _ensure_directories(root: Path) -> None:
 
 
 def _run_validation(artifact_root: Path) -> list[dict[str, Any]]:
-    proc = subprocess.run(
-        ["uv", "run", "python", "-m", "tidas_tools.validate", "-i", str(artifact_root)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode == 0:
-        if proc.stdout.strip():
-            print(proc.stdout.strip())
-        return []
-    suggestion = proc.stdout.strip() or proc.stderr.strip() or "See console output"
-    return [
-        {
-            "severity": "error",
-            "message": "tidas_tools.validate failed",
-            "path": None,
-            "suggestion": suggestion,
-        }
-    ]
+    service = TidasValidationService()
+    try:
+        findings = service.validate_directory(artifact_root)
+    finally:
+        service.close()
+
+    for finding in findings:
+        if finding.severity != "info":
+            print(finding.message)
+    return [asdict(finding) for finding in findings]
 
 
 def _dump_json(payload: Any, path: Path) -> None:

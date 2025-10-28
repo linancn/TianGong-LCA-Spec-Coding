@@ -28,10 +28,11 @@ This guide focuses on general conventions for engineering collaboration, helping
 2. Edit `.secrets/secrets.toml`:
    - `[OPENAI]`: `API_KEY`, `MODEL` (default `gpt-5`, override as needed).
    - `[tiangong_lca_remote]`: `url`, `service_name`, `tool_name`, `api_key`.
-   - `[tidas_data_validate]`: `url`, `tool_name`, optional `api_key`.
 3. Write plaintext tokens directly into `api_key`; the framework automatically prepends `Bearer`.
 4. Before running Stage 3, call `FlowSearchService` with one or two sample exchanges to perform a connectivity self-test (see the workflow prompt document for Python snippets).
 - If operations has already provisioned `.secrets/secrets.toml`, Codex uses it as-is. Only revisit the local configuration when scripts raise missing-credential errors or connection failures.
+
+Local TIDAS validation now relies on the CLI command `uv run tidas-validate -i artifacts`, which Stage 3 executes automatically. No additional MCP credentials are required for this step.
 
 ## 4. Quality Assurance and Self-Checks
 - After modifying Python source code, run:

@@ -70,14 +70,9 @@
 
 完成 `uv sync` 后即可进行模块开发与单元测试，确保在符合 Python 3.12 及以上版本的环境中运行。
 
-### MCP 服务配置与密钥管理
+### MCP 服务配置与校验
 
-`tiangong_lca_spec.core.config.Settings` 默认提供两类 MCP 端点：
-
-- `tiangong_lca_remote`：用于流程数据检索，需要 Bearer Token。
-- `Tidas_Data_Validate`：用于本地 TIDAS 校验，可选密钥。
-
-所有密钥与端点信息统一保存在 `.secrets/secrets.toml` 中（已在 `.gitignore` 中排除）。初始模板示例如下：
+`tiangong_lca_spec.core.config.Settings` 默认提供 `tiangong_lca_remote` MCP 端点，用于流程数据检索并需要 Bearer Token。配置信息统一保存在 `.secrets/secrets.toml` 中（已在 `.gitignore` 中排除），初始模板示例如下：
 
 ```toml
 [tiangong_lca_remote]
@@ -85,13 +80,6 @@ transport = "streamable_http"
 service_name = "tiangong_lca_remote"
 url = "https://lcamcp.tiangong.earth/mcp"
 api_key = "<replace-with-tiangong-token>"
-
-[tidas_data_validate]
-transport = "streamable_http"
-service_name = "Tidas_Data_Validate"
-tool_name = "Tidas_Data_Validate_Tool"
-url = "http://192.168.1.140:9278/mcp"
-api_key = "<optional-tidas-token>"
 ```
 
 > `api_key` 字段只需要填写裸 token，程序会自动补全 `Bearer ` 前缀。
@@ -107,12 +95,14 @@ service_configs = get_mcp_service_configs()
 #       "transport": "streamable_http",
 #       "url": "https://lcamcp.tiangong.earth/mcp",
 #       "headers": {"Authorization": "Bearer ..."}
-#   },
-#   "Tidas_Data_Validate": {
-#       "transport": "streamable_http",
-#       "url": "http://192.168.1.140:9278/mcp"
 #   }
 # }
+```
+
+TIDAS 校验已改为本地 CLI，Stage 3 及整体编排会自动运行：
+
+```bash
+uv run tidas-validate -i artifacts
 ```
 
 如需调整服务名称或地址，可直接在 `.secrets/secrets.toml` 对应节内覆盖 `service_name`、`url` 等字段，或使用实际环境变量覆盖 `LCA_*` 前缀的设置。
