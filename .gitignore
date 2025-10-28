@@ -154,7 +154,7 @@ pdfs
 uv.lock
 .ruff_cache/
 
-artifacts/
+/artifacts/
 
 test.md
 /temp/
