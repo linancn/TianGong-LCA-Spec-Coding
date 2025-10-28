@@ -15,6 +15,15 @@ from tiangong_lca_spec.process_extraction.merge import determine_functional_unit
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = "00000000-0000-0000-0000-0000000000f0"
+SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
+    "images": ("0", "Images"),
+    "data set formats": ("1", "Data set formats"),
+    "databases": ("2", "Databases"),
+    "compliance systems": ("3", "Compliance systems"),
+    "statistical classifications": ("4", "Statistical classifications"),
+    "publications and communications": ("5", "Publications and communications"),
+    "other source types": ("6", "Other source types"),
+}
 
 
 @dataclass(slots=True)
@@ -262,6 +271,74 @@ def _build_waste_classification() -> dict[str, Any]:
     return {"common:classification": {"common:class": classes}}
 
 
+def _source_classification_entry(class_id: str, label: str) -> dict[str, Any]:
+    return {
+        "common:classification": {
+            "common:class": {
+                "@level": "0",
+                "@classId": class_id,
+                "#text": label,
+            }
+        }
+    }
+
+
+def _build_source_classification(
+    reference_node: dict[str, Any], uuid_value: str, format_source_uuid: str
+) -> dict[str, Any]:
+    existing = reference_node.get("classificationInformation")
+    if isinstance(existing, dict) and existing.get("common:classification"):
+        return existing
+
+    ref_uuid = str(reference_node.get("@refObjectId") or "").lower()
+    short_desc = _extract_text(reference_node.get("common:shortDescription")).lower()
+    uri = str(reference_node.get("@uri") or "").lower()
+
+    def _match_any(haystack: str, keywords: tuple[str, ...]) -> bool:
+        return any(keyword in haystack for keyword in keywords if keyword)
+
+    class_id, label = SOURCE_CLASSIFICATIONS["other source types"]
+    if uuid_value.lower() == format_source_uuid.lower() or _match_any(
+        short_desc, ("format", "schema")
+    ):
+        class_id, label = SOURCE_CLASSIFICATIONS["data set formats"]
+    elif ref_uuid == DEFAULT_FORMAT_SOURCE_UUID:
+        class_id, label = SOURCE_CLASSIFICATIONS["data set formats"]
+    elif _match_any(short_desc, ("ilcd data network", "compliance", "conformity", "certification")) or _match_any(
+        uri, ("compliance", "conformity")
+    ):
+        class_id, label = SOURCE_CLASSIFICATIONS["compliance systems"]
+    elif _match_any(short_desc, ("database", "data bank", "dataset")) or _match_any(
+        uri, ("database",)
+    ):
+        class_id, label = SOURCE_CLASSIFICATIONS["databases"]
+    elif _match_any(short_desc, ("nace", "isic", "cpc", "statistical", "classification")) or _match_any(
+        uri, ("classification",)
+    ):
+        class_id, label = SOURCE_CLASSIFICATIONS["statistical classifications"]
+    elif _match_any(short_desc, ("image", "photo", "figure", "diagram")) or uri.endswith(
+        (".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp")
+    ):
+        class_id, label = SOURCE_CLASSIFICATIONS["images"]
+    elif _match_any(
+        short_desc,
+        (
+            "publication",
+            "report",
+            "article",
+            "paper",
+            "journal",
+            "communication",
+            "study",
+            "thesis",
+            "book",
+        ),
+    ):
+        class_id, label = SOURCE_CLASSIFICATIONS["publications and communications"]
+
+    return _source_classification_entry(class_id, label)
+
+
 def _flow_property_reference() -> dict[str, Any]:
     return {
         "@type": "flow property data set",
@@ -423,6 +500,7 @@ def _build_source_stub(
 ) -> dict[str, Any]:
     short_desc = reference_node.get("common:shortDescription")
     description_entries = _normalise_language(short_desc or "Source reference")
+    classification = _build_source_classification(reference_node, uuid_value, format_source_uuid)
     dataset = {
         "sourceDataSet": {
             "@xmlns": "http://lca.jrc.it/ILCD/Source",
@@ -434,6 +512,7 @@ def _build_source_stub(
                 "dataSetInformation": {
                     "common:UUID": uuid_value,
                     "common:shortName": description_entries,
+                    "classificationInformation": classification,
                 }
             },
             "administrativeInformation": {
