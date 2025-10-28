@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Stage 7: optionally publish unmatched flows and validated processes."""
+"""Stage 4: optionally publish unmatched flows and validated processes."""
 
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--process-datasets",
         type=Path,
-        default=Path("artifacts/stage4_process_datasets.json"),
-        help="Process datasets emitted by stage4_merge_datasets.",
+        default=Path("artifacts/process_datasets.json"),
+        help="Process datasets exported by stage3_align_flows.",
     )
     parser.add_argument(
         "--validation",
         type=Path,
-        default=Path("artifacts/stage5_validation.json"),
-        help="Validation report emitted by stage5_validate.",
+        default=Path("artifacts/tidas_validation.json"),
+        help="Validation report written by stage3_align_flows.",
     )
     parser.add_argument(
         "--update-alignment",
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "--workflow-result",
         type=Path,
         default=Path("artifacts/workflow_result.json"),
-        help="Final workflow output emitted by stage6_finalize (used when updating placeholders).",
+        help="Workflow bundle emitted by stage3_align_flows (used when updating placeholders).",
     )
     parser.add_argument(
         "--publish-flows",
@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish-processes",
         action="store_true",
-        help="Publish process datasets after validating that stage5 reports no blocking errors.",
+        help="Publish process datasets after confirming the artifact validation report has no blocking errors.",
     )
     parser.add_argument(
         "--commit",
@@ -79,7 +79,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run-output",
         type=Path,
-        default=Path("artifacts/stage7_publish_preview.json"),
+        default=Path("artifacts/stage4_publish_preview.json"),
         help="Where to dump preview payloads when running in dry-run mode.",
     )
     return parser.parse_args()
@@ -209,7 +209,7 @@ def main() -> None:
                     args.dry_run_output,
                 )
                 LOGGER.info(
-                    "stage7.dry_run_saved",
+                    "stage4.dry_run_saved",
                     path=str(args.dry_run_output),
                     flow_count=len(plans),
                 )
@@ -222,7 +222,7 @@ def main() -> None:
                     args.dry_run_output,
                 )
                 LOGGER.info(
-                    "stage7.commit_results_saved",
+                    "stage4.commit_results_saved",
                     path=str(args.dry_run_output),
                     created=len(results),
                 )
@@ -234,9 +234,7 @@ def main() -> None:
         findings = validation.get("validation_report") or []
         blocking = [item for item in findings if item.get("severity") == "error"]
         if blocking:
-            raise SystemExit(
-                "Stage 5 validation still reports blocking errors; publishing aborted."
-            )
+            raise SystemExit("Artifact validation reports blocking errors; publishing aborted.")
         datasets_json = _load_json(args.process_datasets)
         datasets = datasets_json.get("process_datasets") or []
         process_publisher = ProcessPublisher(dry_run=dry_run)
@@ -266,7 +264,7 @@ def main() -> None:
             replacements = _update_alignment_entries(alignment_entries, updates)
             dump_json({"alignment": alignment_entries}, args.alignment)
             LOGGER.info(
-                "stage7.alignment_updated",
+                "stage4.alignment_updated",
                 path=str(args.alignment),
                 replacements=replacements,
             )
@@ -279,18 +277,18 @@ def main() -> None:
                 workflow_replacements = _update_process_payload(workflow_payload, updates)
                 dump_json(workflow_payload, args.workflow_result)
                 LOGGER.info(
-                    "stage7.workflow_updated",
+                    "stage4.workflow_updated",
                     path=str(args.workflow_result),
                     replacements=workflow_replacements,
                 )
             LOGGER.info(
-                "stage7.datasets_updated",
+                "stage4.datasets_updated",
                 path=str(args.process_datasets),
                 replacements=process_replacements,
             )
 
     if not args.publish_flows and not args.publish_processes:
-        LOGGER.info("stage7.noop", message="Nothing selected to publish.")
+        LOGGER.info("stage4.noop", message="Nothing selected to publish.")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ This guide focuses on general conventions for engineering collaboration, helping
 - **Objective**: Deliver end-to-end automation of the Tiangong LCA Spec Coding workflow, covering paper cleaning, process extraction, exchange alignment, data merging, TIDAS validation, and final delivery.
 - **Core directories**:
   - `src/tiangong_lca_spec/`: Workflow services, MCP clients, data models, and logging utilities.
-  - `scripts/`: Staged CLIs from `stage1_preprocess.py` through `stage7_publish.py`, plus the regression entry point `run_test_workflow.py`.
+  - `scripts/`: Staged CLIs from `stage1_preprocess.py` through `stage4_publish.py`, plus the regression entry point `run_test_workflow.py`.
   - `.github/prompts/`: Prompt specifications for Codex, with `extract-process-workflow.prompt.md` dedicated to the process extraction task.
 - **Collaboration interfaces**: The standard workflow depends on `.secrets/secrets.toml` where OpenAI, Tiangong LCA Remote, and TIDAS validation services are configured. Validate credentials before running Stage 3 or later in batch during your first integration.
 - **Further references**: Requirements, alignment strategies, and exception handling for each stage are documented in `.github/prompts/extract-process-workflow.prompt.md`. For supplemental classification or geographic information, use the helper CLIs provided by `scripts/list_*_children.py`.
