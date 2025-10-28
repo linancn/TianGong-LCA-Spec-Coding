@@ -150,10 +150,6 @@ output
 input
 pdfs
 
-download_models_hf.py
-
-weaviate/weaviate_data
-
 .log
 uv.lock
 .ruff_cache/
@@ -161,3 +157,4 @@ uv.lock
 artifacts/
 
 test.md
+/temp/
