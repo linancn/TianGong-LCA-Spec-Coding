@@ -90,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-tidas",
         action="store_true",
-        help="Bypass the TIDAS validation MCP call (useful if the remote tool errors).",
+        help="Bypass the local TIDAS validation CLI (useful if validation should be skipped).",
     )
     return parser.parse_args()
 

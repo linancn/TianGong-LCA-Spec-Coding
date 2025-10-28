@@ -131,7 +131,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-artifact-validation",
         action="store_true",
-        help="Skip running the local `tidas_tools.validate` command after exporting artifacts.",
+        help="Skip running the local `tidas-validate` command after exporting artifacts.",
     )
     parser.add_argument(
         "--format-source-uuid",
