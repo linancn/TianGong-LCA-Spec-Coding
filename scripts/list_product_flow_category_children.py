@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLI helper to explore the TIDAS flow product category hierarchy.
+CLI helper to explore the TIDAS product flow category hierarchy.
 """
 
 from __future__ import annotations

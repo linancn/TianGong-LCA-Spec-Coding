@@ -29,6 +29,7 @@ DATA_SET_TYPE_OPTIONS = [
     "Partly terminated system",
     "Avoided product system",
 ]
+DEFAULT_PROCESS_DATA_SET_TYPE = DATA_SET_TYPE_OPTIONS[0]
 
 LCI_METHOD_PRINCIPLE_OPTIONS = [
     "Attributional",
@@ -595,28 +596,27 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
     mv: dict[str, Any] = {}
 
     lci = _ensure_dict(mv_raw.get("LCIMethodAndAllocation"))
+    type_value = _normalise_dataset_type(lci.get("typeOfDataSet"))
+    if not type_value:
+        type_value = DEFAULT_PROCESS_DATA_SET_TYPE
+    lci["typeOfDataSet"] = type_value
+
+    principle_value = _match_allowed_option(
+        lci.get("LCIMethodPrinciple"), LCI_METHOD_PRINCIPLE_OPTIONS
+    )
+    if principle_value:
+        lci["LCIMethodPrinciple"] = principle_value
+    else:
+        lci.pop("LCIMethodPrinciple", None)
+
+    approach_value = _normalise_lci_method_approach(lci.get("LCIMethodApproaches"))
+    if approach_value:
+        lci["LCIMethodApproaches"] = approach_value
+    else:
+        lci.pop("LCIMethodApproaches", None)
+
+    lci.pop("common:other", None)
     if lci:
-        type_value = _normalise_dataset_type(lci.get("typeOfDataSet"))
-        if type_value:
-            lci["typeOfDataSet"] = type_value
-        else:
-            lci.pop("typeOfDataSet", None)
-
-        principle_value = _match_allowed_option(
-            lci.get("LCIMethodPrinciple"), LCI_METHOD_PRINCIPLE_OPTIONS
-        )
-        if principle_value:
-            lci["LCIMethodPrinciple"] = principle_value
-        else:
-            lci.pop("LCIMethodPrinciple", None)
-
-        approach_value = _normalise_lci_method_approach(lci.get("LCIMethodApproaches"))
-        if approach_value:
-            lci["LCIMethodApproaches"] = approach_value
-        else:
-            lci.pop("LCIMethodApproaches", None)
-
-        lci.pop("common:other", None)
         mv["LCIMethodAndAllocation"] = lci
 
     dsr = _ensure_dict(mv_raw.get("dataSourcesTreatmentAndRepresentativeness"))
