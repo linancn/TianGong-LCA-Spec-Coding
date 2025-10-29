@@ -13,6 +13,7 @@ from uuid import uuid4
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
 from tiangong_lca_spec.tidas_validation import TidasValidationService
+from tiangong_lca_spec.core.logging import get_logger
 
 DEFAULT_FORMAT_SOURCE_UUID = "00000000-0000-0000-0000-0000000000f0"
 TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
@@ -25,6 +26,46 @@ SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
     "publications and communications": ("5", "Publications and communications"),
     "other source types": ("6", "Other source types"),
 }
+
+PRODUCT_FALLBACK_CLASSIFICATION = [
+    {
+        "@level": "0",
+        "@classId": "3",
+        "#text": "Other transportable goods, except metal products, machinery and equipment",
+    },
+]
+
+WASTE_FALLBACK_CLASSIFICATION = [
+    {
+        "@level": "0",
+        "@classId": "3",
+        "#text": "Other transportable goods, except metal products, machinery and equipment",
+    },
+    {"@level": "1", "@classId": "39", "#text": "Wastes or scraps"},
+    {"@level": "2", "@classId": "399", "#text": "Other wastes and scraps"},
+]
+
+ELEMENTARY_CATEGORY_AIR = [
+    {"@level": "0", "@catId": "1", "#text": "Emissions"},
+    {"@level": "1", "@catId": "1.3", "#text": "Emissions to air"},
+    {"@level": "2", "@catId": "1.3.4", "#text": "Emissions to air, unspecified"},
+]
+ELEMENTARY_CATEGORY_WATER = [
+    {"@level": "0", "@catId": "1", "#text": "Emissions"},
+    {"@level": "1", "@catId": "1.1", "#text": "Emissions to water"},
+    {"@level": "2", "@catId": "1.1.3", "#text": "Emissions to water, unspecified"},
+]
+ELEMENTARY_CATEGORY_SOIL = [
+    {"@level": "0", "@catId": "1", "#text": "Emissions"},
+    {"@level": "1", "@catId": "1.2", "#text": "Emissions to soil"},
+    {"@level": "2", "@catId": "1.2.3", "#text": "Emissions to soil, unspecified"},
+]
+ELEMENTARY_CATEGORY_OTHER = [
+    {"@level": "0", "@catId": "4", "#text": "Other elementary flows"},
+]
+ELEMENTARY_CATEGORY_RESOURCES = [
+    {"@level": "0", "@catId": "2", "#text": "Resources"},
+]
 
 
 @dataclass(slots=True)
@@ -85,12 +126,15 @@ def generate_artifacts(
     unmatched_entries = _collect_unmatched_exchanges(alignment_entries)
     flow_count = 0
     for process_name, exchange in unmatched_entries:
-        uuid_value, dataset = _build_flow_dataset(
+        flow_dataset = _build_flow_dataset(
             exchange,
             process_name,
             timestamp,
             format_source_uuid,
         )
+        if not flow_dataset:
+            continue
+        uuid_value, dataset = flow_dataset
         flow_path = artifact_root / "flows" / f"{uuid_value}.json"
         _dump_json(dataset, flow_path)
         flow_count += 1
@@ -250,26 +294,83 @@ def _infer_flow_type(exchange: dict[str, Any], hints: dict[str, list[str]]) -> s
     return "Product flow"
 
 
-def _build_elementary_classification() -> dict[str, Any]:
-    categories = [
-        {"@level": "0", "#text": "Emissions"},
-        {"@level": "1", "#text": "Emissions to unspecified"},
+def _clone_entries(entries: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [dict(item) for item in entries]
+
+
+def _extract_candidate(exchange: dict[str, Any]) -> dict[str, Any]:
+    matching = exchange.get("matchingDetail")
+    if isinstance(matching, dict):
+        candidate = matching.get("selectedCandidate")
+        if isinstance(candidate, dict):
+            return candidate
+    return {}
+
+
+def _normalise_product_classes(classes: Any) -> list[dict[str, str]]:
+    normalised: list[dict[str, str]] = []
+    if not isinstance(classes, list):
+        return normalised
+    for entry in classes:
+        if not isinstance(entry, dict):
+            continue
+        class_id = entry.get("@classId") or entry.get("classId")
+        if not class_id:
+            continue
+        text_value = entry.get("#text") or entry.get("text") or ""
+        if isinstance(text_value, dict):
+            text_value = text_value.get("#text", "")
+        level_value = entry.get("@level")
+        if level_value is None:
+            level_value = len(normalised)
+        normalised.append(
+            {
+                "@level": str(level_value),
+                "@classId": str(class_id),
+                "#text": str(text_value),
+            }
+        )
+    return normalised
+
+
+def _build_product_classification(candidate: dict[str, Any]) -> dict[str, Any]:
+    classes = _normalise_product_classes(candidate.get("classification"))
+    if not classes:
+        classes = _clone_entries(PRODUCT_FALLBACK_CLASSIFICATION)
+    return {"common:classification": {"common:class": classes}}
+
+
+def _build_waste_classification(candidate: dict[str, Any]) -> dict[str, Any]:
+    classes = _normalise_product_classes(candidate.get("classification"))
+    if not classes:
+        classes = _clone_entries(WASTE_FALLBACK_CLASSIFICATION)
+    return {"common:classification": {"common:class": classes}}
+
+
+def _infer_elementary_categories(exchange: dict[str, Any], hints: dict[str, list[str]]) -> list[dict[str, Any]]:
+    parts = [
+        _extract_text(exchange.get("location")).lower(),
+        " ".join(hints.get("usage_context") or []).lower(),
+        _extract_text(exchange.get("generalComment")).lower(),
+        _extract_text(exchange.get("exchangeName")).lower(),
     ]
+    combined = " ".join(filter(None, parts))
+    if any(token in combined for token in ("resource", "extraction", "raw material")):
+        return _clone_entries(ELEMENTARY_CATEGORY_RESOURCES)
+    if "water" in combined or "wastewater" in combined:
+        return _clone_entries(ELEMENTARY_CATEGORY_WATER)
+    if "soil" in combined or "ground" in combined or "land" in combined:
+        return _clone_entries(ELEMENTARY_CATEGORY_SOIL)
+    if "air" in combined or "atmosphere" in combined:
+        return _clone_entries(ELEMENTARY_CATEGORY_AIR)
+    return _clone_entries(ELEMENTARY_CATEGORY_OTHER)
+
+
+def _build_elementary_classification(
+    exchange: dict[str, Any], hints: dict[str, list[str]]
+) -> dict[str, Any]:
+    categories = _infer_elementary_categories(exchange, hints)
     return {"common:elementaryFlowCategorization": {"common:category": categories}}
-
-
-def _build_product_classification() -> dict[str, Any]:
-    classes = [
-        {"@level": "0", "#text": "Products"},
-    ]
-    return {"common:classification": {"common:class": classes}}
-
-
-def _build_waste_classification() -> dict[str, Any]:
-    classes = [
-        {"@level": "0", "#text": "Waste"},
-    ]
-    return {"common:classification": {"common:class": classes}}
 
 
 def _source_classification_entry(class_id: str, label: str) -> dict[str, Any]:
@@ -379,7 +480,7 @@ def _build_flow_dataset(
     process_name: str,
     timestamp: str,
     format_source_uuid: str,
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, Any]] | None:
     ref = exchange.get("referenceToFlowDataSet") or {}
     uuid_value = ref.get("@refObjectId") or str(uuid4())
     name = _extract_text(exchange.get("exchangeName")) or _extract_text(
@@ -389,12 +490,19 @@ def _build_flow_dataset(
         name = "Unnamed flow"
     hints = _parse_flowsearch_hints(exchange.get("generalComment"))
     flow_type = _infer_flow_type(exchange, hints)
+    candidate = _extract_candidate(exchange)
     if flow_type == "Elementary flow":
-        classification = _build_elementary_classification()
-    elif flow_type == "Waste flow":
-        classification = _build_waste_classification()
+        LOGGER.info(
+            "artifact_builder.skip_elementary_flow",
+            process=process_name,
+            exchange=name,
+            reason="Placeholder flows are only emitted for product flows.",
+        )
+        return None
+    if flow_type == "Waste flow":
+        classification = _build_waste_classification(candidate)
     else:
-        classification = _build_product_classification()
+        classification = _build_product_classification(candidate)
 
     en_synonyms = hints.get("en_synonyms") or []
     zh_synonyms = hints.get("zh_synonyms") or []
@@ -592,3 +700,4 @@ def _dump_json(payload: Any, path: Path) -> None:
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+LOGGER = get_logger(__name__)
