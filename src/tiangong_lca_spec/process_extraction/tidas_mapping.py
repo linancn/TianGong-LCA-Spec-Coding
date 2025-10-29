@@ -20,6 +20,7 @@ DEFAULT_LOCATION = "GLO"
 DEFAULT_REFERENCE_TYPE = "Reference flow(s)"
 DEFAULT_REFERENCE_ID = "0"
 DEFAULT_LANGUAGE = "en"
+TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 
 DATA_SET_TYPE_OPTIONS = [
     "Unit process, single operation",
@@ -74,12 +75,19 @@ def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, An
         process_information
     )
     dataset["processInformation"] = normalised_process_information
+    dataset_uuid = (
+        normalised_process_information.get("dataSetInformation", {}).get("common:UUID")
+    )
     modelling = _normalise_modelling_and_validation(dataset.get("modellingAndValidation"))
     if modelling:
         dataset["modellingAndValidation"] = modelling
     else:
         dataset.pop("modellingAndValidation", None)
-    administrative = _normalise_administrative_information(dataset.get("administrativeInformation"))
+    administrative = _normalise_administrative_information(
+        dataset.get("administrativeInformation"),
+        dataset_uuid=dataset_uuid,
+        dataset_kind="process",
+    )
     if administrative:
         dataset["administrativeInformation"] = administrative
     else:
@@ -630,7 +638,12 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
     return mv
 
 
-def _normalise_administrative_information(section: Any) -> dict[str, Any]:
+def _normalise_administrative_information(
+    section: Any,
+    *,
+    dataset_uuid: str | None = None,
+    dataset_kind: str = "process",
+) -> dict[str, Any]:
     admin = _ensure_dict(section)
     admin.pop("dataGenerator", None)
 
@@ -649,19 +662,15 @@ def _normalise_administrative_information(section: Any) -> dict[str, Any]:
     admin["dataEntryBy"] = cleaned_data_entry
 
     publication = _ensure_dict(admin.get("publicationAndOwnership"))
-    if publication:
-        if "common:dataSetVersion" in publication:
-            candidate = _stringify(publication.get("common:dataSetVersion")).strip()
-            if candidate:
-                publication["common:dataSetVersion"] = candidate
-            else:
-                publication.pop("common:dataSetVersion", None)
-        if "common:permanentDataSetURI" in publication:
-            uri_candidate = _stringify(publication.get("common:permanentDataSetURI")).strip()
-            if uri_candidate and uri_candidate.startswith(("http://", "https://")):
-                publication["common:permanentDataSetURI"] = uri_candidate
-            else:
-                publication.pop("common:permanentDataSetURI", None)
+    version_candidate = _stringify(publication.get("common:dataSetVersion")).strip()
+    if not version_candidate:
+        version_candidate = "01.00.000"
+    if publication or dataset_uuid:
+        publication["common:dataSetVersion"] = version_candidate
+        if dataset_uuid:
+            publication["common:permanentDataSetURI"] = _build_permanent_dataset_uri(
+                dataset_kind, dataset_uuid, version_candidate
+            )
         if "common:registrationNumber" in publication:
             publication["common:registrationNumber"] = _stringify(
                 publication.get("common:registrationNumber")
@@ -798,6 +807,19 @@ def _is_valid_uuid(value: str) -> bool:
             value,
         )
     )
+
+
+def _build_permanent_dataset_uri(dataset_kind: str, uuid_value: str, version: str) -> str:
+    if not uuid_value:
+        return ""
+    version_clean = version.strip() or "01.00.000"
+    suffix_map = {
+        "process": "showProcess.xhtml",
+        "flow": "showProductFlow.xhtml",
+        "source": "showSource.xhtml",
+    }
+    suffix = suffix_map.get(dataset_kind, "showDataSet.xhtml")
+    return f"{TIDAS_PORTAL_BASE}/{suffix}?uuid={uuid_value}&version={version_clean}"
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:

@@ -15,6 +15,7 @@ from tiangong_lca_spec.process_extraction.merge import determine_functional_unit
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = "00000000-0000-0000-0000-0000000000f0"
+TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
     "images": ("0", "Images"),
     "data set formats": ("1", "Data set formats"),
@@ -349,6 +350,30 @@ def _flow_property_reference() -> dict[str, Any]:
     }
 
 
+def _ownership_reference() -> dict[str, Any]:
+    return {
+        "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
+        "@type": "contact data set",
+        "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
+        "@version": "01.00.000",
+        "common:shortDescription": [
+            _language_entry("Tiangong LCA Data Working Group", "en"),
+            _language_entry("天工LCA数据团队", "zh"),
+        ],
+    }
+
+
+def _permanent_dataset_uri(dataset_kind: str, uuid_value: str, version: str) -> str:
+    suffix_map = {
+        "process": "showProcess.xhtml",
+        "flow": "showProductFlow.xhtml",
+        "source": "showSource.xhtml",
+    }
+    suffix = suffix_map.get(dataset_kind, "showDataSet.xhtml")
+    version_clean = version.strip() or "01.00.000"
+    return f"{TIDAS_PORTAL_BASE}/{suffix}?uuid={uuid_value}&version={version_clean}"
+
+
 def _build_flow_dataset(
     exchange: dict[str, Any],
     process_name: str,
@@ -388,6 +413,7 @@ def _build_flow_dataset(
     if zh_synonyms:
         name_block["baseName"].append(_language_entry(zh_synonyms[0], "zh"))
 
+    dataset_version = "01.00.000"
     dataset = {
         "flowDataSet": {
             "@xmlns": "http://lca.jrc.it/ILCD/Flow",
@@ -429,10 +455,11 @@ def _build_flow_dataset(
                     ),
                 },
                 "publicationAndOwnership": {
-                    "common:dataSetVersion": "01.00.000",
-                    "common:referenceToOwnershipOfDataSet": (
-                        "Tiangong LCA Spec automation"
+                    "common:dataSetVersion": dataset_version,
+                    "common:permanentDataSetURI": _permanent_dataset_uri(
+                        "flow", uuid_value, dataset_version
                     ),
+                    "common:referenceToOwnershipOfDataSet": _ownership_reference(),
                 },
             },
             "flowProperties": {
@@ -501,6 +528,7 @@ def _build_source_stub(
     short_desc = reference_node.get("common:shortDescription")
     description_entries = _normalise_language(short_desc or "Source reference")
     classification = _build_source_classification(reference_node, uuid_value, format_source_uuid)
+    dataset_version = "01.00.000"
     dataset = {
         "sourceDataSet": {
             "@xmlns": "http://lca.jrc.it/ILCD/Source",
@@ -525,7 +553,14 @@ def _build_source_stub(
                         "@version": "01.00.000",
                         "common:shortDescription": _language_entry("ILCD format"),
                     },
-                }
+                },
+                "publicationAndOwnership": {
+                    "common:dataSetVersion": dataset_version,
+                    "common:permanentDataSetURI": _permanent_dataset_uri(
+                        "source", uuid_value, dataset_version
+                    ),
+                    "common:referenceToOwnershipOfDataSet": _ownership_reference(),
+                },
             },
         }
     }
