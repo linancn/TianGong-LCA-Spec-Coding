@@ -15,7 +15,7 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "jsonschema>=4.25.1",
     "openai>=2.6.0",
-    "tidas-tools>=0.0.15"
+    "tidas-tools>=0.0.16"
 ]
 
 [dependency-groups]
