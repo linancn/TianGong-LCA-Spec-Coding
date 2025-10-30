@@ -124,12 +124,12 @@ def _trim_front_matter(text: str) -> str:
         None,
     )
 
-    if intro_idx is None or intro_idx <= title_idx:
-        return text if intro_idx is None else "\n".join(lines[intro_idx:])
+    if intro_idx is None:
+        return "\n".join(lines[title_idx:])
+    if intro_idx <= title_idx:
+        return "\n".join(lines[intro_idx:])
 
-    trimmed: list[str] = [lines[title_idx]]
-    trimmed.extend(lines[intro_idx:])
-    return "\n".join(trimmed)
+    return "\n".join(lines[title_idx:])
 
 
 def _normalize_numeric_artifacts(text: str) -> str:
