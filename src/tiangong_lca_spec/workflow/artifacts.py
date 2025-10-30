@@ -30,9 +30,17 @@ SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
 PRODUCT_FALLBACK_CLASSIFICATION = [
     {
         "@level": "0",
-        "@classId": "3",
-        "#text": "Other transportable goods, except metal products, machinery and equipment",
+        "@classId": "1",
+        "#text": "Ores and minerals; electricity, gas and water",
     },
+    {
+        "@level": "1",
+        "@classId": "17",
+        "#text": "Electricity, town gas, steam and hot water",
+    },
+    {"@level": "2", "@classId": "171", "#text": "Electrical energy"},
+    {"@level": "3", "@classId": "1710", "#text": "Electrical energy"},
+    {"@level": "4", "@classId": "17100", "#text": "Electrical energy"},
 ]
 
 WASTE_FALLBACK_CLASSIFICATION = [
@@ -43,6 +51,8 @@ WASTE_FALLBACK_CLASSIFICATION = [
     },
     {"@level": "1", "@classId": "39", "#text": "Wastes or scraps"},
     {"@level": "2", "@classId": "399", "#text": "Other wastes and scraps"},
+    {"@level": "3", "@classId": "3999", "#text": "Other wastes n.e.c."},
+    {"@level": "4", "@classId": "39990", "#text": "Other wastes n.e.c."},
 ]
 
 ELEMENTARY_CATEGORY_AIR = [
@@ -226,6 +236,15 @@ def _serialise_dataset(dataset: ProcessDataset) -> dict[str, Any]:
 
 def _language_entry(text: str, lang: str = "en") -> dict[str, str]:
     return {"@xml:lang": lang, "#text": text}
+
+
+def _unique_join(entries: Iterable[str]) -> str:
+    seen: list[str] = []
+    for entry in entries:
+        candidate = entry.strip()
+        if candidate and candidate not in seen:
+            seen.append(candidate)
+    return "; ".join(seen)
 
 
 def _normalise_language(value: Any, default_lang: str = "en") -> list[dict[str, str]]:
@@ -472,7 +491,11 @@ def flow_compliance_declarations() -> dict[str, Any]:
             },
             "common:approvalOfOverallCompliance": "Fully compliant",
         }
-    }
+}
+
+
+def _data_entry_reference() -> dict[str, Any]:
+    return _ownership_reference()
 
 
 def _ownership_reference() -> dict[str, Any]:
@@ -538,12 +561,37 @@ def _build_flow_dataset(
     if not synonyms_block:
         synonyms_block.append(_language_entry(name, "en"))
 
+    treatment_candidates = (
+        hints.get("state_purity")
+        or hints.get("source_or_pathway")
+        or hints.get("abbreviation")
+        or [name]
+    )
+    treatment_text = _unique_join(treatment_candidates)
+    zh_treatment = zh_synonyms[0] if zh_synonyms else ""
+
+    mix_candidates = hints.get("usage_context") or hints.get("source_or_pathway") or []
+    location_hint = _extract_text(exchange.get("location"))
+    if location_hint:
+        mix_candidates = list(mix_candidates) + [location_hint]
+    if not mix_candidates:
+        mix_candidates = ["Unspecified mix"]
+    mix_text = _unique_join(mix_candidates)
+
     comment_entries = _normalise_language(
         exchange.get("generalComment") or f"Generated for {process_name}"
     )
-    name_block = {"baseName": [_language_entry(name, "en")]}
+    name_block = {
+        "baseName": [_language_entry(name, "en")],
+        "treatmentStandardsRoutes": [_language_entry(treatment_text or name, "en")],
+        "mixAndLocationTypes": [_language_entry(mix_text, "en")],
+    }
     if zh_synonyms:
         name_block["baseName"].append(_language_entry(zh_synonyms[0], "zh"))
+        name_block["treatmentStandardsRoutes"].append(
+            _language_entry(zh_treatment or zh_synonyms[0], "zh")
+        )
+        name_block["mixAndLocationTypes"].append(_language_entry(zh_synonyms[0], "zh"))
 
     dataset_version = "01.00.000"
     dataset = {
@@ -583,9 +631,7 @@ def _build_flow_dataset(
                         "@version": "01.00.000",
                         "common:shortDescription": _language_entry("ILCD format"),
                     },
-                    "common:referenceToPersonOrEntityEnteringTheData": (
-                        "Generated automatically from stage2/3 results"
-                    ),
+                    "common:referenceToPersonOrEntityEnteringTheData": _data_entry_reference(),
                 },
                 "publicationAndOwnership": {
                     "common:dataSetVersion": dataset_version,
@@ -694,16 +740,18 @@ def _build_source_stub(
             },
         }
     }
-    if include_format_reference:
-        dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"][
-            "common:referenceToDataSetFormat"
-        ] = {
-            "@type": "source data set",
-            "@refObjectId": format_source_uuid,
-            "@uri": f"../sources/{format_source_uuid}.xml",
-            "@version": "01.00.000",
-            "common:shortDescription": _language_entry("ILCD format"),
-        }
+    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"][
+        "common:referenceToDataSetFormat"
+    ] = {
+        "@type": "source data set",
+        "@refObjectId": format_source_uuid,
+        "@uri": f"../sources/{format_source_uuid}.xml",
+        "@version": "01.00.000",
+        "common:shortDescription": _language_entry("ILCD format"),
+    }
+    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"][
+        "common:referenceToPersonOrEntityEnteringTheData"
+    ] = _data_entry_reference()
     return dataset
 
 
