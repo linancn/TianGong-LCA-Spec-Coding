@@ -12,6 +12,7 @@ from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
+from tiangong_lca_spec.workflow.artifacts import flow_compliance_declarations
 
 LOGGER = get_logger(__name__)
 
@@ -332,20 +333,7 @@ class FlowPublisher:
                 "LCIMethod": {
                     "typeOfDataSet": flow_type,
                 },
-                "complianceDeclarations": {
-                    "compliance": {
-                        "common:referenceToComplianceSystem": {
-                            "@type": "source data set",
-                            "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
-                            "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
-                            "@version": "01.00.000",
-                            "common:shortDescription": _language_entry(
-                                "ILCD Data Network - Entry-level"
-                            ),
-                        },
-                        "common:approvalOfOverallCompliance": "Not defined",
-                    }
-                },
+                "complianceDeclarations": flow_compliance_declarations(),
             },
             "administrativeInformation": {
                 "dataEntryBy": {

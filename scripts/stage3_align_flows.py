@@ -69,6 +69,14 @@ def _maybe_create_llm(path: Path | None) -> OpenAIResponsesLLM | None:
     return OpenAIResponsesLLM(api_key=api_key, model=model)
 
 
+def _extract_primary_title(clean_text: str) -> str | None:
+    for line in clean_text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -188,6 +196,7 @@ def main() -> None:
         workflow_output=args.workflow_output,
         format_source_uuid=args.format_source_uuid,
         run_validation=not args.skip_artifact_validation,
+        primary_source_title=_extract_primary_title(clean_text),
     )
 
     print(

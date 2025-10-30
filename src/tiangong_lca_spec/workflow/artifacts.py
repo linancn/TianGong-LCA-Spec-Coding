@@ -88,6 +88,7 @@ def generate_artifacts(
     workflow_output: Path | None = None,
     format_source_uuid: str = DEFAULT_FORMAT_SOURCE_UUID,
     run_validation: bool = True,
+    primary_source_title: str | None = None,
 ) -> ArtifactBuildSummary:
     """Merge aligned results and materialise ILCD artifacts required by downstream tools."""
 
@@ -108,9 +109,15 @@ def generate_artifacts(
     timestamp = _utc_timestamp()
     _ensure_directories(artifact_root)
 
+    primary_source_uuid: str | None = None
+    if primary_source_title:
+        primary_source_uuid = str(uuid4())
+
     source_references: dict[str, dict[str, Any]] = {}
     for dataset in datasets:
         ilcd_dataset = dataset.as_dict()
+        if primary_source_uuid and primary_source_title:
+            _attach_primary_source(ilcd_dataset, primary_source_uuid, primary_source_title)
         uuid_value = (
             ilcd_dataset.get("processInformation", {})
             .get("dataSetInformation", {})
@@ -139,17 +146,17 @@ def generate_artifacts(
         _dump_json(dataset, flow_path)
         flow_count += 1
 
-    format_source_ref = {
-        "@type": "source data set",
-        "@refObjectId": format_source_uuid,
-        "common:shortDescription": _language_entry("ILCD format"),
-    }
-    source_references.setdefault(format_source_uuid, format_source_ref)
-
     written_sources = 0
     for uuid_value, reference in source_references.items():
         source_path = artifact_root / "sources" / f"{uuid_value}.json"
-        stub = _build_source_stub(uuid_value, reference, timestamp, format_source_uuid)
+        include_format = not (primary_source_uuid and uuid_value == primary_source_uuid)
+        stub = _build_source_stub(
+            uuid_value,
+            reference,
+            timestamp,
+            format_source_uuid,
+            include_format_reference=include_format,
+        )
         _dump_json(stub, source_path)
         written_sources += 1
 
@@ -451,6 +458,21 @@ def _flow_property_reference() -> dict[str, Any]:
     }
 
 
+def flow_compliance_declarations() -> dict[str, Any]:
+    return {
+        "compliance": {
+            "common:referenceToComplianceSystem": {
+                "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
+                "@type": "source data set",
+                "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
+                "@version": "20.20.002",
+                "common:shortDescription": _language_entry("ILCD Data Network - Entry-level"),
+            },
+            "common:approvalOfOverallCompliance": "Fully compliant",
+        }
+    }
+
+
 def _ownership_reference() -> dict[str, Any]:
     return {
         "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
@@ -546,7 +568,8 @@ def _build_flow_dataset(
             "modellingAndValidation": {
                 "LCIMethod": {
                     "typeOfDataSet": flow_type,
-                }
+                },
+                "complianceDeclarations": flow_compliance_declarations(),
             },
             "administrativeInformation": {
                 "dataEntryBy": {
@@ -632,6 +655,8 @@ def _build_source_stub(
     reference_node: dict[str, Any],
     timestamp: str,
     format_source_uuid: str,
+    *,
+    include_format_reference: bool = True,
 ) -> dict[str, Any]:
     short_desc = reference_node.get("common:shortDescription")
     description_entries = _normalise_language(short_desc or "Source reference")
@@ -654,13 +679,6 @@ def _build_source_stub(
             "administrativeInformation": {
                 "dataEntryBy": {
                     "common:timeStamp": timestamp,
-                    "common:referenceToDataSetFormat": {
-                        "@type": "source data set",
-                        "@refObjectId": format_source_uuid,
-                        "@uri": f"../sources/{format_source_uuid}.xml",
-                        "@version": "01.00.000",
-                        "common:shortDescription": _language_entry("ILCD format"),
-                    },
                 },
                 "publicationAndOwnership": {
                     "common:dataSetVersion": dataset_version,
@@ -672,6 +690,16 @@ def _build_source_stub(
             },
         }
     }
+    if include_format_reference:
+        dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"][
+            "common:referenceToDataSetFormat"
+        ] = {
+            "@type": "source data set",
+            "@refObjectId": format_source_uuid,
+            "@uri": f"../sources/{format_source_uuid}.xml",
+            "@version": "01.00.000",
+            "common:shortDescription": _language_entry("ILCD format"),
+        }
     return dataset
 
 
@@ -679,6 +707,45 @@ def _ensure_directories(root: Path) -> None:
     for name in ("processes", "flows", "sources"):
         (root / name).mkdir(parents=True, exist_ok=True)
 
+
+def _build_source_reference(uuid_value: str, title: str) -> dict[str, Any]:
+    return {
+        "@type": "source data set",
+        "@refObjectId": uuid_value,
+        "@uri": f"../sources/{uuid_value}.xml",
+        "@version": "01.00.000",
+        "common:shortDescription": [_language_entry(title)],
+    }
+
+
+def _attach_primary_source(
+    ilcd_dataset: dict[str, Any], source_uuid: str, source_title: str
+) -> None:
+    admin = ilcd_dataset.setdefault("administrativeInformation", {})
+    data_entry = admin.get("dataEntryBy")
+    if not isinstance(data_entry, dict):
+        data_entry = {}
+        admin["dataEntryBy"] = data_entry
+    data_entry.pop("common:referenceToDataSetFormat", None)
+
+    modelling = ilcd_dataset.setdefault("modellingAndValidation", {})
+    data_sources = modelling.setdefault("dataSourcesTreatmentAndRepresentativeness", {})
+    raw_ref = data_sources.get("referenceToDataSource")
+    notes: list[str] = []
+    if isinstance(raw_ref, list):
+        for item in raw_ref:
+            if isinstance(item, str) and item.strip():
+                notes.append(item.strip())
+    elif isinstance(raw_ref, str) and raw_ref.strip():
+        notes.append(raw_ref.strip())
+
+    reference_entry = _build_source_reference(source_uuid, source_title)
+    if notes:
+        reference_entry["common:fullReference"] = [_language_entry("; ".join(notes))]
+    data_sources["referenceToDataSource"] = [reference_entry]
+    format_reference = deepcopy(reference_entry)
+    format_reference.pop("common:fullReference", None)
+    data_entry["common:referenceToDataSetFormat"] = format_reference
 
 def _run_validation(artifact_root: Path) -> list[dict[str, Any]]:
     service = TidasValidationService()
