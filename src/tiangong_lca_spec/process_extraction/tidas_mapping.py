@@ -136,8 +136,19 @@ def _normalise_process_information(
     info["technology"] = _normalise_technology(info.get("technology"))
     if "technology" in info and not info["technology"]:
         info.pop("technology")
-    if "mathematicalRelations" in info and not info["mathematicalRelations"]:
-        info.pop("mathematicalRelations")
+    mathematical_relations = _ensure_dict(info.get("mathematicalRelations"))
+    if mathematical_relations:
+        if "modelDescription" in mathematical_relations:
+            entries = _ensure_multilang_list(mathematical_relations["modelDescription"])
+            if entries:
+                mathematical_relations["modelDescription"] = entries
+            else:
+                mathematical_relations.pop("modelDescription", None)
+        info["mathematicalRelations"] = mathematical_relations
+        if not mathematical_relations:
+            info.pop("mathematicalRelations", None)
+    else:
+        info.pop("mathematicalRelations", None)
     return info, name_components
 
 
@@ -158,6 +169,8 @@ def _normalise_dataset_information(
     info["identifierOfSubDataSet"] = identifier
 
     name_block = _ensure_dict(info.get("name"))
+    raw_general_comment = info.get("common:generalComment")
+    general_comment_text = _stringify(raw_general_comment).strip()
     base_name_text = _extract_multilang_text(name_block.get("baseName", specinfo.get("baseName")))
     for field in (
         "baseName",
@@ -170,7 +183,7 @@ def _normalise_dataset_information(
     name_components = _derive_name_components(
         base_name_text,
         specinfo,
-        _stringify(info.get("common:generalComment")),
+        general_comment_text,
     )
     refreshed_name_block: dict[str, Any] = {}
     refreshed_name_block["baseName"] = _ensure_multilang(
@@ -215,8 +228,27 @@ def _normalise_dataset_information(
             classification_info["common:classification"] = {"common:class": candidate}
 
     classes = classification_info.get("common:classification", {}).get("common:class")
-    if isinstance(classes, list) and len(classes) > 4:
-        classification_info["common:classification"]["common:class"] = classes[:4]
+    if isinstance(classes, list):
+        normalised_classes: list[dict[str, Any]] = []
+        for index, entry in enumerate(classes):
+            if index >= 4:
+                break
+            if not isinstance(entry, dict):
+                continue
+            class_id = entry.get("@classId") or entry.get("classId") or f"UNSPEC-{index}"
+            level = entry.get("@level") or entry.get("level") or index
+            text_value = entry.get("#text") or entry.get("text") or entry.get("@text") or class_id
+            normalised_classes.append(
+                {
+                    "@level": str(level),
+                    "@classId": str(class_id),
+                    "#text": _stringify(text_value),
+                }
+            )
+        for entry in normalised_classes:
+            entry.pop("text", None)
+            entry.pop("@text", None)
+        classification_info.setdefault("common:classification", {})["common:class"] = normalised_classes
     if specification_text:
         classification_info.setdefault("common:classification", {}).setdefault(
             "common:other", specification_text
@@ -228,9 +260,15 @@ def _normalise_dataset_information(
 
     info["classificationInformation"] = classification_info
 
-    general_comment = _stringify(info.get("common:generalComment")).strip()
-    if general_comment:
-        info["common:generalComment"] = general_comment
+    synonyms_value = info.get("common:synonyms") or specinfo.get("common:synonyms")
+    synonyms_entries = _ensure_multilang_list(synonyms_value)
+    if synonyms_entries:
+        info["common:synonyms"] = synonyms_entries
+    else:
+        info.pop("common:synonyms", None)
+
+    if general_comment_text:
+        info["common:generalComment"] = _ensure_multilang_list(general_comment_text)
     else:
         info.pop("common:generalComment", None)
 
@@ -376,6 +414,15 @@ def _normalise_time(section: Any) -> dict[str, Any]:
         time_info["common:dataSetValidUntil"] = year_value
     else:
         time_info.pop("common:dataSetValidUntil", None)
+
+    description = time_info.get("common:timeRepresentativenessDescription")
+    if description:
+        entries = _ensure_multilang_list(description)
+        if entries:
+            time_info["common:timeRepresentativenessDescription"] = entries
+        else:
+            time_info.pop("common:timeRepresentativenessDescription", None)
+
     return {k: v for k, v in time_info.items() if v not in (None, "", {})}
 
 
@@ -614,24 +661,94 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
         lci.pop("LCIMethodApproaches", None)
 
     lci.pop("common:other", None)
+    for key in (
+        "deviationsFromLCIMethodApproaches",
+        "deviationsFromLCIMethodPrinciple",
+        "modellingConstants",
+        "deviationsFromModellingConstants",
+    ):
+        if key in lci:
+            entries = _ensure_multilang_list(lci[key])
+            if entries:
+                lci[key] = entries
+            else:
+                lci.pop(key, None)
     if lci:
         mv["LCIMethodAndAllocation"] = lci
 
     dsr = _ensure_dict(mv_raw.get("dataSourcesTreatmentAndRepresentativeness"))
     if dsr:
-        mv["dataSourcesTreatmentAndRepresentativeness"] = dsr
+        for key in (
+            "dataCutOffAndCompletenessPrinciples",
+            "deviationsFromCutOffAndCompletenessPrinciples",
+            "dataSelectionAndCombinationPrinciples",
+            "deviationsFromSelectionAndCombinationPrinciples",
+            "dataTreatmentAndExtrapolationsPrinciples",
+            "deviationsFromTreatmentAndExtrapolationPrinciples",
+            "samplingProcedure",
+            "uncertaintyAdjustments",
+            "useAdviceForDataSet",
+        ):
+            if key in dsr:
+                entries = _ensure_multilang_list(dsr[key])
+                if entries:
+                    dsr[key] = entries
+                else:
+                    dsr.pop(key, None)
+        for key in ("annualSupplyOrProductionVolume", "dataCollectionPeriod"):
+            if key in dsr:
+                value = _ensure_multilang(dsr[key], fallback="")
+                if value.get("#text"):
+                    dsr[key] = value
+                else:
+                    dsr.pop(key, None)
+        dsr.pop("common:other", None)
+        if dsr:
+            mv["dataSourcesTreatmentAndRepresentativeness"] = dsr
 
     completeness = _ensure_dict(mv_raw.get("completeness"))
     if completeness:
         mv["completeness"] = completeness
 
     validation = _ensure_dict(mv_raw.get("validation"))
-    if validation:
-        mv["validation"] = validation
+    review = _ensure_dict(validation.get("review"))
+    review_type = _stringify(review.get("@type")).strip()
+    if review_type not in {
+        "Dependent internal review",
+        "Independent internal review",
+        "Independent external review",
+        "Accredited third party review",
+        "Independent review panel",
+        "Not reviewed",
+    }:
+        review["@type"] = "Not reviewed"
+    validation["review"] = review
+    mv["validation"] = validation
 
     compliance = _ensure_dict(mv_raw.get("complianceDeclarations"))
-    if compliance:
-        mv["complianceDeclarations"] = compliance
+    compliance_block = compliance.get("compliance")
+    if not isinstance(compliance_block, dict):
+        compliance_block = {}
+    compliance_block.pop("referenceToComplianceSystem", None)
+    compliance_block.pop("value", None)
+    for key in list(compliance_block.keys()):
+        if not key.startswith("common:"):
+            compliance_block.pop(key, None)
+    if not _has_reference(compliance_block.get("common:referenceToComplianceSystem")):
+        compliance_block["common:referenceToComplianceSystem"] = _build_compliance_reference()
+    if not compliance_block.get("common:approvalOfOverallCompliance"):
+        compliance_block["common:approvalOfOverallCompliance"] = "Not defined"
+    for field in (
+        "common:nomenclatureCompliance",
+        "common:methodologicalCompliance",
+        "common:reviewCompliance",
+        "common:documentationCompliance",
+        "common:qualityCompliance",
+    ):
+        if not compliance_block.get(field):
+            compliance_block[field] = "Not defined"
+    compliance["compliance"] = compliance_block
+    mv["complianceDeclarations"] = compliance
 
     return mv
 
@@ -649,11 +766,19 @@ def _normalise_administrative_information(
     commissioner["common:referenceToCommissioner"] = _build_commissioner_reference()
     if not commissioner.get("common:intendedApplications"):
         commissioner.pop("common:intendedApplications", None)
+    else:
+        intended = commissioner.get("common:intendedApplications")
+        entries = _ensure_multilang_list(intended)
+        if entries:
+            commissioner["common:intendedApplications"] = entries
+        else:
+            commissioner.pop("common:intendedApplications", None)
     admin["common:commissionerAndGoal"] = commissioner
 
     data_entry = _ensure_dict(admin.get("dataEntryBy"))
     data_entry.pop("common:other", None)
     data_entry["common:referenceToDataSetFormat"] = _build_dataset_format_reference()
+    data_entry["common:referenceToPersonOrEntityEnteringTheData"] = _build_commissioner_reference()
     cleaned_data_entry = {
         key: value for key, value in data_entry.items() if value not in (None, "", {}, [])
     }
@@ -676,6 +801,15 @@ def _normalise_administrative_information(
         licence_value = publication.get("common:licenseType")
         if licence_value is not None:
             publication["common:licenseType"] = _normalise_license(licence_value)
+        copyright_value = publication.get("common:copyright")
+        if copyright_value is not None:
+            lowered = _stringify(copyright_value).strip().lower()
+            if lowered in {"yes", "true"}:
+                publication["common:copyright"] = "true"
+            elif lowered in {"no", "false"}:
+                publication["common:copyright"] = "false"
+            else:
+                publication.pop("common:copyright", None)
         publication["common:referenceToOwnershipOfDataSet"] = _build_commissioner_reference()
         publication.pop("common:other", None)
         cleaned_publication = {
@@ -723,6 +857,16 @@ def _build_dataset_format_reference() -> dict[str, Any]:
         "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.xml",
         "@version": "03.00.003",
         "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD format"},
+    }
+
+
+def _build_compliance_reference() -> dict[str, Any]:
+    return {
+        "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
+        "@type": "source data set",
+        "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
+        "@version": "20.20.002",
+        "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD Data Network - Entry-level"},
     }
 
 
@@ -835,6 +979,18 @@ def _to_multilang(value: Any) -> dict[str, Any]:
             "#text": "; ".join(_stringify(item) for item in value),
         }
     return {"@xml:lang": DEFAULT_LANGUAGE, "#text": _stringify(value)}
+
+
+def _ensure_multilang_list(value: Any) -> list[dict[str, Any]]:
+    if value in (None, "", [], {}):
+        return []
+    if isinstance(value, list):
+        entries = []
+        for item in value:
+            if item not in (None, ""):
+                entries.append(_ensure_multilang(item))
+        return entries
+    return [_ensure_multilang(value)]
 
 
 def _stringify(value: Any) -> str:
