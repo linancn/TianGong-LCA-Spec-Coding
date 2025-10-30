@@ -5,8 +5,12 @@ This document focuses on data extraction and workflow orchestration: it outlines
 The process extraction workflow splits responsibilities as follows:
 - **Stage 1 (Preprocessing)**: Parse the source paper/material and output structured `clean_text` for downstream steps.
 - **Stage 2 (Process generation)**: Codex drives the LLM to extract process blocks, add `FlowSearch hints`, and document conversion assumptions—the foundational input for alignment.
-- **Stage 3 (Flow alignment & artifact export)**: Combine MCP search results and operator context to confirm the standard flow for each exchange, then merge the results, generate ILCD artifacts under `artifacts/`, run local validation, and assemble `workflow_result.json` for downstream tasks.
+- **Stage 3 (Flow alignment & artifact export)**: Combine MCP search results and operator context to confirm the standard flow for each exchange, then merge the results, generate ILCD artifacts under `artifacts/<run_id>/exports/`, run local validation, and assemble `workflow_result.json` for downstream tasks.
 
+Every run stores its artifacts under `artifacts/<run_id>/`, where `run_id` is a UTC timestamp (Stage 1 prints the value and records it in `artifacts/.latest_run_id`). The directory layout is:
+- `cache/`: Stage outputs (`stage1_clean_text.md`, `stage2_process_blocks.json`, alignment summaries, validation reports) and on-disk LLM caches.
+- `exports/`: Contains only `processes/`, `flows/`, and `sources/`; TIDAS validation reads from this directory.
+Subsequent stages fall back to the most recent `run_id` when `--run-id` is omitted, so you can run Stage 2 and Stage 3 immediately after Stage 1 without retyping the identifier.
 ## 0. Execution Ground Rules (Avoid Wasted Iterations)
 - **Read the source material first**: Before you start, quickly review the original paper or `clean_text` to confirm chapter layout, data tables, and the functional unit.
 - **Run the standard commands directly**: By default, follow the Stage 1-3 CLI templates listed below (input/output paths follow repository conventions) without repeatedly calling `--help`. Only open the help text when you truly need custom parameters.
@@ -17,7 +21,7 @@ The process extraction workflow splits responsibilities as follows:
 - **Smoke test MCP once**: Write a quick five-line Python snippet (import `FlowSearchService` and construct a `FlowQuery`) to test a single exchange, confirm credentials and network connectivity, and only then launch Stage 3. This avoids learning about configuration errors after long timeouts.
 - **Control the number of exchanges**: Stage 3 issues MCP requests sequentially (`flow_search_max_parallel=1`); each `exchange` triggers an independent call. Stage 2 must reproduce the literature table row by row—every original line becomes its own `exchange` (no merging, averaging, or omission). Capture scenario notes and footnotes in `generalComment` so Stage 3 can align each row to its original context.
 - **Enrich the search hints**: For every `exchange.generalComment`, add common synonyms (semantic equivalents such as “electric power supply”), aliases or abbreviations (“COG”, “DAC”), chemical formulas/CAS numbers, and key parameters with Chinese-English pairs. Doing so lets FlowSearchService exploit multilingual synonym expansion and richer context to improve recall. For high-frequency base flows (`Electricity, medium voltage`, `Water, process`, `Steam, low pressure`, `Oxygen`, `Hydrogen`, `Natural gas, processed`, etc.), list at least two or three Chinese/English aliases or typical descriptions (e.g., “grid electricity 10–30 kV”, “中压电”, “technological water”, “饱和蒸汽 0.4 MPa”, “O₂, CAS 7782-44-7”) and describe state/purity/source. `generalComment` must begin with `FlowSearch hints:` and follow the structure `en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | state_purity=... | source_or_pathway=... | usage_context=...`. Use `NA` for missing fields to keep placeholders, then append table references or conversion assumptions at the end. Without these clues, MCP often returns short Chinese names or low-similarity candidates, forcing Stage 3 to fall back to placeholders.
-- **Self-check Stage 2 outputs**: Before kicking off Stage 3, sample `artifacts/stage2_process_blocks.json` to confirm that every `exchange.generalComment` includes the `FlowSearch hints` structure, critical synonyms, and bilingual parameters. If you still see brief “Table X” descriptions, redo Stage 2 or manually enrich the context; otherwise Stage 3 will miss frequently because it lacks semantic signals and you will end up with numerous `unmatched:placeholder` entries.
+- **Self-check Stage 2 outputs**: Before kicking off Stage 3, sample `artifacts/<run_id>/cache/stage2_process_blocks.json` to confirm that every `exchange.generalComment` includes the `FlowSearch hints` structure, critical synonyms, and bilingual parameters. If you still see brief “Table X” descriptions, redo Stage 2 or manually enrich the context; otherwise Stage 3 will miss frequently because it lacks semantic signals and you will end up with numerous `unmatched:placeholder` entries.
 - **Normalize flow names**: Prefer Tiangong/ILCD canonical flow names rather than keeping the paper’s parentheses or process-specific qualifiers (for example, avoid `Electricity for electrolysis (PV)`). Standard names dramatically raise Stage 3 hit rates and reduce duplicate searches and timeouts.
 - **Tune long-running commands in advance**: Stage 2/3 may exceed 15 minutes. In constrained environments, increase outer CLI timeouts or bump the `.secrets` `timeout` field to prevent forced termination and reruns.
 - **Cap retry attempts**: Do not retry the same LLM/MCP call more than twice. Explain the reason for every prompt or context adjustment; if the issue persists, switch to manual analysis and escalate to the user.
@@ -39,29 +43,28 @@ The process extraction workflow splits responsibilities as follows:
 - `scripts/`: Staged CLIs (`stage1`–`stage4`) and the regression entry point `run_test_workflow.py`.
 
 ## 2. Staged Scripts
-Scripts read and write intermediate files under `artifacts/` by default; override the paths with CLI arguments when needed.
+Scripts read and write intermediate files under `artifacts/<run_id>/cache/` by default; override the paths with CLI arguments when needed.
 
 | Stage | Script | Artifacts | Description |
 | ---- | ---- | ---- | ---- |
-| 1 | `stage1_preprocess.py` | `stage1_clean_text.json` | Parse Markdown/JSON papers and output `clean_text`. |
-| 2 | `stage2_extract_processes.py` | `stage2_process_blocks.json` | Use OpenAI Responses to generate process blocks. |
-| 3 | `stage3_align_flows.py` | `stage3_alignment.json`, `process_datasets.json`, `tidas_validation.json`, `workflow_result.json`, plus ILCD JSON archives under `artifacts/processes|flows|sources/` | Invoke `FlowAlignmentService`, enforce hint quality, merge aligned results, materialise ILCD artifacts, and run `tidas_tools.validate`. |
-| 4 (optional) | `stage4_publish.py` | `stage4_publish_preview.json` | Read Stage 3 outputs and build the `Database_CRUD_Tool` payload; runs as a dry run by default, add `--commit` to publish flows and process datasets. |
+| 1 | `stage1_preprocess.py` | `artifacts/<run_id>/cache/stage1_clean_text.md` | Parse Markdown/JSON papers and output `clean_text`. |
+| 2 | `stage2_extract_processes.py` | `artifacts/<run_id>/cache/stage2_process_blocks.json` | Use OpenAI Responses to generate process blocks. |
+| 3 | `stage3_align_flows.py` | `artifacts/<run_id>/cache/stage3_alignment.json`, `.../cache/process_datasets.json`, `.../cache/tidas_validation.json`, `.../cache/workflow_result.json`, plus ILCD JSON archives under `artifacts/<run_id>/exports/processes|flows|sources/` | Invoke `FlowAlignmentService`, enforce hint quality, merge aligned results, materialise ILCD artifacts, and run `tidas_tools.validate`. |
+| 4 (optional) | `stage4_publish.py` | `artifacts/<run_id>/cache/stage4_publish_preview.json` | Read Stage 3 outputs and build the `Database_CRUD_Tool` payload; runs as a dry run by default, add `--commit` to publish flows and process datasets. |
 
 Recommended execution sequence (from the repository root):
 ```bash
-uv run python scripts/stage1_preprocess.py --paper path/to/paper.json
-uv run python scripts/stage2_extract_processes.py --clean-text artifacts/stage1_clean_text.json
-uv run python scripts/stage3_align_flows.py \
-  --process-blocks artifacts/stage2_process_blocks.json \
-  --clean-text artifacts/stage1_clean_text.json
-uv run python scripts/stage4_publish.py \
+RUN_ID=$(date -u +"%Y%m%dT%H%M%SZ")  # optional helper; Stage 1 prints the generated run_id
+uv run python scripts/stage1_preprocess.py --paper path/to/paper.json --run-id "$RUN_ID"
+uv run python scripts/stage2_extract_processes.py --run-id "$RUN_ID"
+uv run python scripts/stage3_align_flows.py --run-id "$RUN_ID"
+uv run python scripts/stage4_publish.py --run-id "$RUN_ID" \
   --publish-flows --publish-processes \
   --update-alignment --update-datasets \
   --commit  # omit --commit to preview only
 ```
 
-- If `stage3_align_flows.py` detects OpenAI credentials in `.secrets/secrets.toml`, it automatically enables LLM scoring to evaluate the ten MCP candidates; otherwise it falls back to local similarity matching. Before alignment, the script verifies every exchange has both `exchangeName` and `FlowSearch hints` (field requirements are listed in §0). When hints are missing the script stops by default; use `--allow-missing-hints` only to bypass explicit warning handling. If `exchangeName` is absent, it first tries to auto-fill it from the multilingual synonyms in `FlowSearch hints`. The resulting `stage3_alignment.json` always includes `process_id`, `matched_flows`, `unmatched_flows`, and `origin_exchanges`, and the CLI prints match statistics for each process.
+- If `stage3_align_flows.py` detects OpenAI credentials in `.secrets/secrets.toml`, it automatically enables LLM scoring to evaluate the ten MCP candidates; otherwise it falls back to local similarity matching. Before alignment, the script verifies every exchange has both `exchangeName` and `FlowSearch hints` (field requirements are listed in §0). When hints are missing the script stops by default; use `--allow-missing-hints` only to bypass explicit warning handling. If `exchangeName` is absent, it first tries to auto-fill it from the multilingual synonyms in `FlowSearch hints`. The resulting `artifacts/<run_id>/cache/stage3_alignment.json` always includes `process_id`, `matched_flows`, `unmatched_flows`, and `origin_exchanges`, and the CLI prints match statistics for each process.
 
 ## 3. Core Data Structures
 ```python
@@ -146,7 +149,7 @@ class WorkflowResult:
 - When Stage 3 logic deserializes `process_blocks`, always pull exchanges from `processDataSet.exchanges` instead of the deprecated `exchange_list`.
 
 ## 7. TIDAS Validation
-- The Stage 3 export step runs `uv run python -m tidas_tools.validate -i artifacts` to confirm ILCD compliance and records the findings in `tidas_validation.json`.
+- The Stage 3 export step runs `uv run python -m tidas_tools.validate -i artifacts/<run_id>/exports` to confirm ILCD compliance and records the findings in `artifacts/<run_id>/cache/tidas_validation.json`.
 - If the local validator is temporarily unavailable, rerun Stage 3 with `--skip-artifact-validation` and document the reason; treat Stage 7 as preview-only until validation passes.
 
 ## 8. Workflow Orchestration

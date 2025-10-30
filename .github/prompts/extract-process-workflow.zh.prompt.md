@@ -5,7 +5,12 @@
 流程抽取工作流的角色划分如下：
 - **Stage 1（预处理）**：解析原始论文/资料，输出结构化 `clean_text` 供后续调用。
 - **Stage 2（流程生成）**：Codex 驱动 LLM 提取流程块，补充 `FlowSearch hints` 与换算假设，是后续对齐的基础资料。
-- **Stage 3（流对齐与制品导出）**：结合 MCP 检索结果与人工上下文，确认每个交换量的标准流，并进一步合并结果、生成 `artifacts/` 下的 ILCD 制品、执行本地校验，最终汇总 `workflow_result.json`。
+- **Stage 3（流对齐与制品导出）**：结合 MCP 检索结果与人工上下文，确认每个交换量的标准流，并进一步合并结果、生成 `artifacts/<run_id>/exports/` 下的 ILCD 制品、执行本地校验，最终汇总 `workflow_result.json`。
+
+每次运行都会在 `artifacts/<run_id>/` 下创建独立目录，`run_id` 为 UTC 时间戳（Stage 1 会打印并写入 `artifacts/.latest_run_id`）。目录结构包含：
+- `cache/`：保存阶段产物（`stage1_clean_text.md`、`stage2_process_blocks.json` 等）以及 LLM 的磁盘缓存。
+- `exports/`：仅包含 `processes/`、`flows/`、`sources/` 三个目录，供 TIDAS 校验读取。
+后续阶段如未显式传入 `--run-id`，默认回落到最近一次运行的标识，因此执行 Stage 1 后可直接启动 Stage 2/Stage 3。
 
 ## 0. 执行约定（避免无效迭代）
 - **先读原始资料**：动手前快速梳理论文原文或 `clean_text`，确认章节结构、数据表与功能单位。
@@ -17,7 +22,7 @@
 - **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
 - **控制交换数量**：Stage 3 的流检索串行执行（`flow_search_max_parallel=1`），每个 `exchange` 都会独立调用 MCP。Stage 2 现要求逐行复刻文献表格——每条原始清单行都要生成独立的 `exchange`（不得合并、平均或省略）。如表格含情景或脚注信息，请完整写入 `generalComment`，以便 Stage 3 能按原始来源逐条对齐。
 - **补充检索线索**：为每个 `exchange` 的 `generalComment` 写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数，这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。高频基础流（`Electricity, medium voltage`、`Water, process`、`Steam, low pressure`、`Oxygen`、`Hydrogen`、`Natural gas, processed` 等）要求至少列出 2~3 个中英文别称或典型描述（如“grid electricity 10–30 kV”“中压电”“technological water”“饱和蒸汽 0.4 MPa”“O₂, CAS 7782-44-7”），并说明状态/纯度/来源。`generalComment` 必须以 `FlowSearch hints:` 开头，并按 `en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | state_purity=... | source_or_pathway=... | usage_context=...` 的结构填写，缺项使用 `NA` 保持字段占位，末尾再补充表格引用或换算假设。缺少这些线索时 MCP 往往只返回中文短名或低相似度候选，Stage 3 会落回占位符。
-- **Stage 2 产物自检**：在进入 Stage 3 前抽样查看 `artifacts/stage2_process_blocks.json`，确保每个 `exchange.generalComment` 都包含上述 `FlowSearch hints` 结构、关键同义词与中英对照参数；若发现仍是“Table X”式的简短描述，必须回到 Stage 2 重新生成或手动补写上下文，否则 Stage 3 会因为缺少语义信号导致大量 `unmatched:placeholder`。
+- **Stage 2 产物自检**：在进入 Stage 3 前抽样查看 `artifacts/<run_id>/cache/stage2_process_blocks.json`，确保每个 `exchange.generalComment` 都包含上述 `FlowSearch hints` 结构、关键同义词与中英对照参数；若发现仍是“Table X”式的简短描述，必须回到 Stage 2 重新生成或手动补写上下文，否则 Stage 3 会因为缺少语义信号导致大量 `unmatched:placeholder`。
 - **规范流名称**：优先采用 Tiangong/ILCD 常用流名，不保留论文里的括号或工艺限定（如 `Electricity for electrolysis (PV)`）。规范名称能显著提高 Stage 3 命中率，减少重复检索与超时。
 - **长耗时命令提前调参**：Stage 2/3 可能超过 15 分钟；在受限环境下先提升命令超时（如外层 CLI 15min 限制）或增加 `.secrets` 中的 `timeout` 字段，避免半途被杀导致反复重跑。
 - **限定重试次数**：对同一 LLM/MCP 调用的重试不超过 2 次，且每次调整 prompt 或上下文都要说明理由；若问题持续，转为人工分析并同步用户。
@@ -39,29 +44,28 @@
 - `scripts/`：阶段化 CLI（`stage1`~`stage4`）和回归入口 `run_test_workflow.py`。
 
 ## 2. 分阶段脚本
-脚本默认读写 `artifacts/` 下的中间文件，可通过参数重定向。
+脚本默认读写 `artifacts/<run_id>/cache/` 下的中间文件，可通过参数重定向。
 
 | 阶段 | 脚本 | 产物 | 说明 |
 | ---- | ---- | ---- | ---- |
-| 1 | `stage1_preprocess.py` | `stage1_clean_text.json` | 解析论文 Markdown/JSON，输出 `clean_text`。 |
-| 2 | `stage2_extract_processes.py` | `stage2_process_blocks.json` | 使用 OpenAI Responses 生成流程块。 |
-| 3 | `stage3_align_flows.py` | `stage3_alignment.json`、`process_datasets.json`、`tidas_validation.json`、`workflow_result.json`，以及 `artifacts/processes|flows|sources/` 下的 ILCD JSON | 调用 `FlowAlignmentService` 对齐交换量并验证提示质量，随后合并结果、生成 ILCD 制品并运行 `tidas_tools.validate`。 |
-| 4 (可选) | `stage4_publish.py` | `stage4_publish_preview.json` | 读取 Stage 3 产物，构造 `Database_CRUD_Tool` 负载；默认干跑，可加 `--commit` 发布流和流程数据。 |
+| 1 | `stage1_preprocess.py` | `artifacts/<run_id>/cache/stage1_clean_text.md` | 解析论文 Markdown/JSON，输出 `clean_text`。 |
+| 2 | `stage2_extract_processes.py` | `artifacts/<run_id>/cache/stage2_process_blocks.json` | 使用 OpenAI Responses 生成流程块。 |
+| 3 | `stage3_align_flows.py` | `artifacts/<run_id>/cache/stage3_alignment.json`、`…/cache/process_datasets.json`、`…/cache/tidas_validation.json`、`…/cache/workflow_result.json`，以及 `artifacts/<run_id>/exports/processes|flows|sources/` 下的 ILCD JSON | 调用 `FlowAlignmentService` 对齐交换量并验证提示质量，随后合并结果、生成 ILCD 制品并运行 `tidas_tools.validate`。 |
+| 4 (可选) | `stage4_publish.py` | `artifacts/<run_id>/cache/stage4_publish_preview.json` | 读取 Stage 3 产物，构造 `Database_CRUD_Tool` 负载；默认干跑，可加 `--commit` 发布流和流程数据。 |
 
 推荐执行序列（仓库根目录）：
 ```bash
-uv run python scripts/stage1_preprocess.py --paper path/to/paper.json
-uv run python scripts/stage2_extract_processes.py --clean-text artifacts/stage1_clean_text.json
-uv run python scripts/stage3_align_flows.py \
-  --process-blocks artifacts/stage2_process_blocks.json \
-  --clean-text artifacts/stage1_clean_text.json
-uv run python scripts/stage4_publish.py \
+RUN_ID=$(date -u +"%Y%m%dT%H%M%SZ")  # 可选，Stage 1 会输出生成的 run_id
+uv run python scripts/stage1_preprocess.py --paper path/to/paper.json --run-id "$RUN_ID"
+uv run python scripts/stage2_extract_processes.py --run-id "$RUN_ID"
+uv run python scripts/stage3_align_flows.py --run-id "$RUN_ID"
+uv run python scripts/stage4_publish.py --run-id "$RUN_ID" \
   --publish-flows --publish-processes \
   --update-alignment --update-datasets \
   --commit  # 若仅预览可省略 --commit
 ```
 
-- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`（字段要求见 §0），缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
+- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`（字段要求见 §0），缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `artifacts/<run_id>/cache/stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
 
 ## 3. 核心数据结构
 ```python
@@ -146,7 +150,7 @@ class WorkflowResult:
 - Stage 3 相关逻辑在反序列化 `process_blocks` 时，务必从 `processDataSet.exchanges` 获取交换量，勿再依赖 `exchange_list`。
 
 ## 7. TIDAS Validation
-- Stage 3 的制品导出步骤会执行 `uv run python -m tidas_tools.validate -i artifacts` 校验 ILCD 结构，并将结果写入 `tidas_validation.json`。
+- Stage 3 的制品导出步骤会执行 `uv run python -m tidas_tools.validate -i artifacts/<run_id>/exports` 校验 ILCD 结构，并将结果写入 `artifacts/<run_id>/cache/tidas_validation.json`。
 - 若本地校验工具暂不可用，可在 Stage 3 追加 `--skip-artifact-validation` 并记录原因；在恢复校验前，`stage4_publish` 仅以干跑模式使用。
 
 ## 8. 工作流编排

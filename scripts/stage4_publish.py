@@ -9,9 +9,21 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from scripts._workflow_common import dump_json  # type: ignore
+    from scripts._workflow_common import (  # type: ignore
+        dump_json,
+        ensure_run_cache_dir,
+        resolve_run_id,
+        run_cache_path,
+        save_latest_run_id,
+    )
 except ModuleNotFoundError:  # pragma: no cover - executed when run as CLI
-    from _workflow_common import dump_json  # type: ignore
+    from _workflow_common import (  # type: ignore
+        dump_json,
+        ensure_run_cache_dir,
+        resolve_run_id,
+        run_cache_path,
+        save_latest_run_id,
+    )
 
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.publishing import FlowPublisher, ProcessPublisher
@@ -22,22 +34,35 @@ LOGGER = get_logger(__name__)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--run-id",
+        help=(
+            "Identifier used to locate run artifacts under artifacts/<run_id>/. "
+            "Defaults to the most recent run recorded by earlier stages."
+        ),
+    )
+    parser.add_argument(
         "--alignment",
         type=Path,
-        default=Path("artifacts/stage3_alignment.json"),
-        help="Alignment file emitted by stage3_align_flows.",
+        help=(
+            "Optional override for the Stage 3 alignment path. "
+            "Defaults to artifacts/<run_id>/cache/stage3_alignment.json."
+        ),
     )
     parser.add_argument(
         "--process-datasets",
         type=Path,
-        default=Path("artifacts/process_datasets.json"),
-        help="Process datasets exported by stage3_align_flows.",
+        help=(
+            "Optional override for the merged process datasets path. "
+            "Defaults to artifacts/<run_id>/cache/process_datasets.json."
+        ),
     )
     parser.add_argument(
         "--validation",
         type=Path,
-        default=Path("artifacts/tidas_validation.json"),
-        help="Validation report written by stage3_align_flows.",
+        help=(
+            "Optional override for the validation report emitted by Stage 3. "
+            "Defaults to artifacts/<run_id>/cache/tidas_validation.json."
+        ),
     )
     parser.add_argument(
         "--update-alignment",
@@ -55,8 +80,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workflow-result",
         type=Path,
-        default=Path("artifacts/workflow_result.json"),
-        help="Workflow bundle emitted by stage3_align_flows (used when updating placeholders).",
+        help=(
+            "Optional override for the workflow result bundle emitted by Stage 3. "
+            "Defaults to artifacts/<run_id>/cache/workflow_result.json."
+        ),
     )
     parser.add_argument(
         "--publish-flows",
@@ -79,8 +106,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run-output",
         type=Path,
-        default=Path("artifacts/stage4_publish_preview.json"),
-        help="Where to dump preview payloads when running in dry-run mode.",
+        help=(
+            "Optional override for the dry-run preview payload path. "
+            "Defaults to artifacts/<run_id>/cache/stage4_publish_preview.json."
+        ),
     )
     return parser.parse_args()
 
@@ -178,8 +207,23 @@ def _update_process_payload(
 def main() -> None:
     args = parse_args()
     dry_run = not args.commit
+    run_id = resolve_run_id(args.run_id)
+    ensure_run_cache_dir(run_id)
+    save_latest_run_id(run_id)
 
-    alignment = _load_json(args.alignment)
+    alignment_path = args.alignment or run_cache_path(run_id, "stage3_alignment.json")
+    process_datasets_path = args.process_datasets or run_cache_path(
+        run_id, "process_datasets.json"
+    )
+    validation_path = args.validation or run_cache_path(run_id, "tidas_validation.json")
+    workflow_result_path = args.workflow_result or run_cache_path(
+        run_id, "workflow_result.json"
+    )
+    dry_run_output_path = args.dry_run_output or run_cache_path(
+        run_id, "stage4_publish_preview.json"
+    )
+
+    alignment = _load_json(alignment_path)
     alignment_entries = alignment.get("alignment") or []
     updates: dict[tuple[str | None, str], dict[str, Any]] = {}
 
@@ -206,11 +250,11 @@ def main() -> None:
                             for plan in plans
                         ],
                     },
-                    args.dry_run_output,
+                    dry_run_output_path,
                 )
                 LOGGER.info(
                     "stage4.dry_run_saved",
-                    path=str(args.dry_run_output),
+                    path=str(dry_run_output_path),
                     flow_count=len(plans),
                 )
             else:
@@ -219,23 +263,23 @@ def main() -> None:
                         "mode": "committed",
                         "results": results,
                     },
-                    args.dry_run_output,
+                    dry_run_output_path,
                 )
                 LOGGER.info(
                     "stage4.commit_results_saved",
-                    path=str(args.dry_run_output),
+                    path=str(dry_run_output_path),
                     created=len(results),
                 )
         finally:
             flow_publisher.close()
 
     if args.publish_processes:
-        validation = _load_json(args.validation)
+        validation = _load_json(validation_path)
         findings = validation.get("validation_report") or []
         blocking = [item for item in findings if item.get("severity") == "error"]
         if blocking:
             raise SystemExit("Artifact validation reports blocking errors; publishing aborted.")
-        datasets_json = _load_json(args.process_datasets)
+        datasets_json = _load_json(process_datasets_path)
         datasets = datasets_json.get("process_datasets") or []
         process_publisher = ProcessPublisher(dry_run=dry_run)
         try:
@@ -246,7 +290,7 @@ def main() -> None:
                         "mode": "dry-run",
                         "processes": datasets,
                     },
-                    args.dry_run_output,
+                    dry_run_output_path,
                 )
             else:
                 dump_json(
@@ -254,7 +298,7 @@ def main() -> None:
                         "mode": "committed",
                         "results": results,
                     },
-                    args.dry_run_output,
+                    dry_run_output_path,
                 )
         finally:
             process_publisher.close()
@@ -262,28 +306,28 @@ def main() -> None:
     if updates:
         if args.update_alignment:
             replacements = _update_alignment_entries(alignment_entries, updates)
-            dump_json({"alignment": alignment_entries}, args.alignment)
+            dump_json({"alignment": alignment_entries}, alignment_path)
             LOGGER.info(
                 "stage4.alignment_updated",
-                path=str(args.alignment),
+                path=str(alignment_path),
                 replacements=replacements,
             )
         if args.update_datasets:
-            process_payload = _load_json(args.process_datasets)
+            process_payload = _load_json(process_datasets_path)
             process_replacements = _update_process_payload(process_payload, updates)
-            dump_json(process_payload, args.process_datasets)
-            if args.workflow_result.exists():
-                workflow_payload = _load_json(args.workflow_result)
+            dump_json(process_payload, process_datasets_path)
+            if workflow_result_path.exists():
+                workflow_payload = _load_json(workflow_result_path)
                 workflow_replacements = _update_process_payload(workflow_payload, updates)
-                dump_json(workflow_payload, args.workflow_result)
+                dump_json(workflow_payload, workflow_result_path)
                 LOGGER.info(
                     "stage4.workflow_updated",
-                    path=str(args.workflow_result),
+                    path=str(workflow_result_path),
                     replacements=workflow_replacements,
                 )
             LOGGER.info(
                 "stage4.datasets_updated",
-                path=str(args.process_datasets),
+                path=str(process_datasets_path),
                 replacements=process_replacements,
             )
 

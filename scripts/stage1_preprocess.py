@@ -6,7 +6,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _workflow_common import load_paper
+from _workflow_common import (
+    ensure_run_cache_dir,
+    generate_run_id,
+    load_paper,
+    save_latest_run_id,
+)
 
 from tiangong_lca_spec.process_extraction import preprocess_paper
 
@@ -20,22 +25,37 @@ def parse_args() -> argparse.Namespace:
         help="Path to the paper markdown JSON payload.",
     )
     parser.add_argument(
+        "--run-id",
+        help=(
+            "Identifier used to group artifacts under artifacts/<run_id>/. "
+            "Defaults to a UTC timestamp when omitted."
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/stage1_clean_text.md"),
-        help="Where to store the cleaned markdown file.",
+        help=(
+            "Optional override for the cleaned markdown path. "
+            "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."
+        ),
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    run_id = args.run_id or generate_run_id()
+    cache_dir = ensure_run_cache_dir(run_id)
+    save_latest_run_id(run_id)
+
     paper_md_json = load_paper(args.paper)
     clean_text = preprocess_paper(paper_md_json)
     cleaned_markdown = clean_text.strip()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(f"{cleaned_markdown}\n", encoding="utf-8")
-    print(f"Clean markdown written to {args.output}")
+    output_path = args.output or cache_dir / "stage1_clean_text.md"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(f"{cleaned_markdown}\n", encoding="utf-8")
+    print(f"Run ID: {run_id}")
+    print(f"Clean markdown written to {output_path}")
 
 
 if __name__ == "__main__":

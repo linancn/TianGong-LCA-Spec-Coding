@@ -7,7 +7,15 @@ import argparse
 import json
 from pathlib import Path
 
-from _workflow_common import OpenAIResponsesLLM, dump_json, load_secrets
+from _workflow_common import (
+    OpenAIResponsesLLM,
+    dump_json,
+    ensure_run_cache_dir,
+    load_secrets,
+    resolve_run_id,
+    run_cache_path,
+    save_latest_run_id,
+)
 
 from tiangong_lca_spec.process_extraction import ProcessExtractionService
 
@@ -34,10 +42,19 @@ def _read_clean_text(path: Path) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--run-id",
+        help=(
+            "Identifier used to locate run artifacts under artifacts/<run_id>/. "
+            "Defaults to the most recent run recorded by stage1_preprocess."
+        ),
+    )
+    parser.add_argument(
         "--clean-text",
         type=Path,
-        default=Path("artifacts/stage1_clean_text.md"),
-        help="Clean markdown emitted by stage1_preprocess.",
+        help=(
+            "Optional override for the Stage 1 output path. "
+            "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."
+        ),
     )
     parser.add_argument(
         "--secrets",
@@ -48,8 +65,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/stage2_process_blocks.json"),
-        help="Where to write the extracted process blocks JSON.",
+        help=(
+            "Optional override for the Stage 2 process blocks JSON path. "
+            "Defaults to artifacts/<run_id>/cache/stage2_process_blocks.json."
+        ),
     )
     parser.add_argument(
         "--resume",
@@ -59,8 +78,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache-dir",
         type=Path,
-        default=Path(".cache/openai/stage2"),
-        help="Directory used to cache OpenAI responses for resumable runs.",
+        help=(
+            "Directory used to cache OpenAI responses. "
+            "Defaults to artifacts/<run_id>/cache/openai/stage2."
+        ),
     )
     parser.add_argument(
         "--disable-cache",
@@ -72,28 +93,45 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.resume and args.output.exists():
+    run_id = resolve_run_id(args.run_id)
+    cache_dir = ensure_run_cache_dir(run_id)
+    save_latest_run_id(run_id)
+
+    clean_text_path = args.clean_text or run_cache_path(run_id, "stage1_clean_text.md")
+    output_path = args.output or run_cache_path(run_id, "stage2_process_blocks.json")
+    openai_cache_dir = args.cache_dir or run_cache_path(run_id, Path("openai/stage2"))
+
+    if args.resume and output_path.exists():
         try:
-            existing = json.loads(args.output.read_text(encoding="utf-8"))
+            existing = json.loads(output_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             existing = None
         if isinstance(existing, dict) and existing.get("process_blocks"):
-            print(f"Stage 2 output already present at {args.output}; skipping due to --resume.")
+            print(f"Stage 2 output already present at {output_path}; skipping due to --resume.")
             return
         print("Existing output is missing or invalid; continuing extraction.")
 
-    clean_text = _read_clean_text(args.clean_text)
+    if not clean_text_path.exists():
+        raise SystemExit(f"Clean text file not found: {clean_text_path}")
+
+    clean_text = _read_clean_text(clean_text_path)
     api_key, model = load_secrets(args.secrets)
+    if not args.disable_cache:
+        openai_cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        openai_cache = openai_cache_dir
+    else:
+        openai_cache = None
+
     llm = OpenAIResponsesLLM(
         api_key=api_key,
         model=model,
-        cache_dir=args.cache_dir if not args.disable_cache else None,
+        cache_dir=openai_cache,
         use_cache=not args.disable_cache,
     )
     service = ProcessExtractionService(llm)
     process_blocks = service.extract(clean_text)
-    dump_json({"process_blocks": process_blocks}, args.output)
-    print(f"Extracted {len(process_blocks)} process blocks -> {args.output}")
+    dump_json({"process_blocks": process_blocks}, output_path)
+    print(f"[{run_id}] Extracted {len(process_blocks)} process blocks -> {output_path}")
 
 
 if __name__ == "__main__":
