@@ -8,6 +8,19 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from scripts import stage4_publish
 from tiangong_lca_spec.publishing.crud import FlowPublisher
 
+EXPECTED_COMPLIANCE_DECLARATIONS = {
+    "compliance": {
+        "common:referenceToComplianceSystem": {
+            "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
+            "@type": "source data set",
+            "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
+            "@version": "20.20.002",
+            "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD Data Network - Entry-level"},
+        },
+        "common:approvalOfOverallCompliance": "Fully compliant",
+    }
+}
+
 
 class DummyCrudClient:
     def insert_flow(self, dataset):
@@ -50,6 +63,7 @@ def test_flow_publisher_builds_plan_without_network():
     dataset = plan.dataset
     assert dataset["flowInformation"]["dataSetInformation"]["common:UUID"] == plan.uuid
     assert dataset["modellingAndValidation"]["LCIMethod"]["typeOfDataSet"] == "Product flow"
+    assert dataset["modellingAndValidation"]["complianceDeclarations"] == EXPECTED_COMPLIANCE_DECLARATIONS
     publisher.close()
 
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from typing import Any, TypedDict
 
 from tiangong_lca_spec.core.config import Settings, get_settings
@@ -20,6 +22,8 @@ from .hints import enrich_exchange_hints
 from .tidas_mapping import build_tidas_process_dataset
 
 LOGGER = get_logger(__name__)
+_YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
+_REFERENCE_YEAR_WINDOW = 5000
 
 PROCESS_ID_KEYS = (
     "processId",
@@ -40,6 +44,7 @@ class ExtractionState(TypedDict, total=False):
     sections: dict[str, Any]
     process_blocks: list[dict[str, Any]]
     parent_processes: list[dict[str, Any]]
+    fallback_reference_year: int
 
 
 class ProcessExtractionService:
@@ -58,6 +63,9 @@ class ProcessExtractionService:
 
     def extract(self, clean_text: str) -> list[dict[str, Any]]:
         state: ExtractionState = {"clean_text": clean_text}
+        fallback_year = _infer_reference_year_from_text(clean_text)
+        if fallback_year is not None:
+            state["fallback_reference_year"] = fallback_year
         state = self._extract_sections(state)
         state = self._classify_process(state)
         state = self._normalize_location(state)
@@ -194,12 +202,15 @@ class ProcessExtractionService:
         if not blocks:
             raise ProcessExtractionError("Process dataset missing at finalize step")
 
+        fallback_year = state.get("fallback_reference_year")
         final_blocks: list[dict[str, Any]] = []
         for block in blocks:
             process_dataset = block.get("processDataSet")
             if not isinstance(process_dataset, dict):
                 raise ProcessExtractionError("Process dataset missing in block")
 
+            if fallback_year is not None:
+                _apply_reference_year_fallback(process_dataset, fallback_year)
             normalized_dataset = build_tidas_process_dataset(process_dataset)
 
             process_name = _extract_process_name(normalized_dataset)
@@ -222,6 +233,85 @@ class ProcessExtractionService:
 
         state["process_blocks"] = final_blocks
         return state
+
+
+def _infer_reference_year_from_text(text: str) -> int | None:
+    current_year = datetime.now().year
+    if not text:
+        return current_year
+
+    window = text[:_REFERENCE_YEAR_WINDOW]
+    candidates: list[tuple[int, int]] = []
+    for match in _YEAR_PATTERN.finditer(window):
+        try:
+            year_value = int(match.group(0))
+        except ValueError:
+            continue
+        if 1900 <= year_value <= current_year + 1:
+            candidates.append((match.start(), year_value))
+    if not candidates:
+        return current_year
+
+    for position, year_value in candidates:
+        if position <= 300:
+            return year_value
+
+    candidates.sort(key=lambda item: (-item[1], item[0]))
+    return candidates[0][1]
+
+
+def _apply_reference_year_fallback(dataset: dict[str, Any], fallback_year: int) -> None:
+    if fallback_year is None:
+        return
+
+    process_info = dataset.get("processInformation")
+    if not isinstance(process_info, dict):
+        process_info = {}
+        dataset["processInformation"] = process_info
+
+    time_info: dict[str, Any]
+    existing_time = process_info.get("time")
+    if isinstance(existing_time, dict):
+        time_info = existing_time
+    else:
+        time_info = {}
+        process_info["time"] = time_info
+
+    existing_year = _coerce_year(time_info.get("referenceYear"))
+    if existing_year is not None:
+        time_info["referenceYear"] = existing_year
+        return
+
+    existing_year = _coerce_year(time_info.get("common:referenceYear"))
+    if existing_year is not None:
+        time_info["common:referenceYear"] = existing_year
+        return
+
+    valid_fallback = _coerce_year(fallback_year)
+    if valid_fallback is not None:
+        time_info["referenceYear"] = valid_fallback
+
+
+def _coerce_year(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        year_value = int(value)
+    elif isinstance(value, str):
+        match = _YEAR_PATTERN.search(value)
+        if not match:
+            return None
+        try:
+            year_value = int(match.group(0))
+        except ValueError:
+            return None
+    else:
+        return None
+
+    current_year = datetime.now().year
+    if 1900 <= year_value <= current_year + 1:
+        return year_value
+    return None
 
 
 def _normalise_parent_processes(summary: dict[str, Any] | None) -> list[dict[str, Any]]:
