@@ -9,7 +9,16 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-from _workflow_common import OpenAIResponsesLLM, dump_json, load_secrets
+from _workflow_common import (
+    OpenAIResponsesLLM,
+    dump_json,
+    ensure_run_cache_dir,
+    ensure_run_exports_dir,
+    load_secrets,
+    resolve_run_id,
+    run_cache_path,
+    save_latest_run_id,
+)
 
 from tiangong_lca_spec.flow_alignment import FlowAlignmentService
 from tiangong_lca_spec.workflow.artifacts import (
@@ -80,22 +89,35 @@ def _extract_primary_title(clean_text: str) -> str | None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--run-id",
+        help=(
+            "Identifier used to locate run artifacts under artifacts/<run_id>/. "
+            "Defaults to the most recent run recorded by earlier stages."
+        ),
+    )
+    parser.add_argument(
         "--process-blocks",
         type=Path,
-        default=Path("artifacts/stage2_process_blocks.json"),
-        help="Process blocks JSON emitted by stage2_extract_processes.",
+        help=(
+            "Optional override for the Stage 2 output path. "
+            "Defaults to artifacts/<run_id>/cache/stage2_process_blocks.json."
+        ),
     )
     parser.add_argument(
         "--clean-text",
         type=Path,
-        default=Path("artifacts/stage1_clean_text.md"),
-        help="Clean markdown emitted by stage1_preprocess.",
+        help=(
+            "Optional override for the Stage 1 cleaned markdown path. "
+            "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."
+        ),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/stage3_alignment.json"),
-        help="Where to store the alignment results.",
+        help=(
+            "Optional override for the Stage 3 alignment output path. "
+            "Defaults to artifacts/<run_id>/cache/stage3_alignment.json."
+        ),
     )
     parser.add_argument(
         "--secrets",
@@ -114,27 +136,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--artifact-root",
         type=Path,
-        default=Path("artifacts"),
-        help="Directory where ILCD process/flow/source JSON files will be written.",
+        help=(
+            "Directory where ILCD process/flow/source JSON files will be written. "
+            "Defaults to artifacts/<run_id>/exports."
+        ),
     )
     parser.add_argument(
         "--process-datasets",
         dest="process_datasets",
         type=Path,
-        default=Path("artifacts/process_datasets.json"),
-        help="Where to store merged process dataset structures.",
+        help=(
+            "Optional override for the merged process dataset path. "
+            "Defaults to artifacts/<run_id>/cache/process_datasets.json."
+        ),
     )
     parser.add_argument(
         "--validation-output",
         type=Path,
-        default=Path("artifacts/tidas_validation.json"),
-        help="Where to store the local TIDAS validation report.",
+        help=(
+            "Optional override for the local TIDAS validation report path. "
+            "Defaults to artifacts/<run_id>/cache/tidas_validation.json."
+        ),
     )
     parser.add_argument(
         "--workflow-output",
         type=Path,
-        default=Path("artifacts/workflow_result.json"),
-        help="Final workflow bundle combining datasets, alignment, and validation.",
+        help=(
+            "Optional override for the workflow result bundle path. "
+            "Defaults to artifacts/<run_id>/cache/workflow_result.json."
+        ),
     )
     parser.add_argument(
         "--skip-artifact-validation",
@@ -151,8 +181,30 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    process_blocks = _read_process_blocks(args.process_blocks)
-    clean_text = _read_clean_text(args.clean_text)
+    run_id = resolve_run_id(args.run_id)
+    cache_dir = ensure_run_cache_dir(run_id)
+    save_latest_run_id(run_id)
+
+    process_blocks_path = args.process_blocks or run_cache_path(run_id, "stage2_process_blocks.json")
+    clean_text_path = args.clean_text or run_cache_path(run_id, "stage1_clean_text.md")
+    alignment_output = args.output or run_cache_path(run_id, "stage3_alignment.json")
+    process_datasets_path = args.process_datasets or run_cache_path(run_id, "process_datasets.json")
+    validation_output = args.validation_output or run_cache_path(run_id, "tidas_validation.json")
+    workflow_output = args.workflow_output or run_cache_path(run_id, "workflow_result.json")
+
+    if args.artifact_root:
+        artifact_root = args.artifact_root
+        artifact_root.mkdir(parents=True, exist_ok=True)
+    else:
+        artifact_root = ensure_run_exports_dir(run_id, clean=True)
+
+    if not process_blocks_path.exists():
+        raise SystemExit(f"Process blocks file not found: {process_blocks_path}")
+    if not clean_text_path.exists():
+        raise SystemExit(f"Clean text file not found: {clean_text_path}")
+
+    process_blocks = _read_process_blocks(process_blocks_path)
+    clean_text = _read_clean_text(clean_text_path)
 
     llm = _maybe_create_llm(args.secrets)
     service = FlowAlignmentService(llm=llm)
@@ -182,36 +234,36 @@ def main() -> None:
     finally:
         service.close()
 
-    dump_json({"alignment": alignment_entries}, args.output)
-    print(f"Aligned flows for {len(alignment_entries)} processes -> {args.output}")
+    dump_json({"alignment": alignment_entries}, alignment_output)
+    print(f"[{run_id}] Aligned flows for {len(alignment_entries)} processes -> {alignment_output}")
     for label, total in process_summaries:
         print(f" - {label}: processed {total} exchanges")
 
     summary = generate_artifacts(
         process_blocks=process_blocks,
         alignment_entries=alignment_entries,
-        artifact_root=args.artifact_root,
-        merged_output=args.process_datasets,
-        validation_output=args.validation_output,
-        workflow_output=args.workflow_output,
+        artifact_root=artifact_root,
+        merged_output=process_datasets_path,
+        validation_output=validation_output,
+        workflow_output=workflow_output,
         format_source_uuid=args.format_source_uuid,
         run_validation=not args.skip_artifact_validation,
         primary_source_title=_extract_primary_title(clean_text),
     )
 
     print(
-        f"Artifacts exported to {args.artifact_root} "
+        f"Artifacts exported to {artifact_root} "
         f"(processes={summary.process_count}, flows={summary.flow_count}, "
         f"sources={summary.source_count})"
     )
     if summary.validation_report:
         print(
             f"Validation findings count={len(summary.validation_report)} "
-            f"-> {args.validation_output}"
+            f"-> {validation_output}"
         )
     else:
-        print(f"Validation succeeded -> {args.validation_output}")
-    print(f"Workflow bundle written to {args.workflow_output}")
+        print(f"Validation succeeded -> {validation_output}")
+    print(f"Workflow bundle written to {workflow_output}")
 
 
 def _resolve_process_id(block: dict[str, Any], dataset: dict[str, Any]) -> str | None:
