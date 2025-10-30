@@ -301,6 +301,15 @@ class FlowPublisher:
         )
         comment_entries = [_language_entry(comment or f"Auto-generated for {exchange_name}")]
         unit = _resolve_unit(exchange)
+        compliance_block = flow_compliance_declarations()
+        modelling_section: dict[str, Any] = {
+            "LCIMethod": {
+                "typeOfDataSet": flow_type,
+            },
+        }
+        if compliance_block:
+            modelling_section["complianceDeclarations"] = compliance_block
+
         dataset = {
             "@xmlns": "http://lca.jrc.it/ILCD/Flow",
             "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
@@ -329,12 +338,7 @@ class FlowPublisher:
                     "referenceToReferenceFlowProperty": "0",
                 },
             },
-            "modellingAndValidation": {
-                "LCIMethod": {
-                    "typeOfDataSet": flow_type,
-                },
-                "complianceDeclarations": flow_compliance_declarations(),
-            },
+            "modellingAndValidation": modelling_section,
             "administrativeInformation": {
                 "dataEntryBy": {
                     "common:timeStamp": _utc_timestamp(),

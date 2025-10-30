@@ -735,7 +735,9 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
         if not key.startswith("common:"):
             compliance_block.pop(key, None)
     if not _has_reference(compliance_block.get("common:referenceToComplianceSystem")):
-        compliance_block["common:referenceToComplianceSystem"] = _build_compliance_reference()
+        reference = _build_compliance_reference()
+        if reference:
+            compliance_block["common:referenceToComplianceSystem"] = reference
     if not compliance_block.get("common:approvalOfOverallCompliance"):
         compliance_block["common:approvalOfOverallCompliance"] = "Not defined"
     for field in (
@@ -860,11 +862,16 @@ def _build_dataset_format_reference() -> dict[str, Any]:
     }
 
 
-def _build_compliance_reference() -> dict[str, Any]:
+def _build_compliance_reference() -> dict[str, Any] | None:
+    """Return the public ILCD Data Network compliance reference."""
+
     return {
         "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
         "@type": "source data set",
-        "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
+        "@uri": (
+            "https://lcdn.tiangong.earth/showSource.xhtml?"
+            "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"
+        ),
         "@version": "20.20.002",
         "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD Data Network - Entry-level"},
     }

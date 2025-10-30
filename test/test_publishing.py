@@ -8,12 +8,16 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from scripts import stage4_publish
 from tiangong_lca_spec.publishing.crud import FlowPublisher
 
+
 EXPECTED_COMPLIANCE_DECLARATIONS = {
     "compliance": {
         "common:referenceToComplianceSystem": {
             "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
             "@type": "source data set",
-            "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
+            "@uri": (
+                "https://lcdn.tiangong.earth/showSource.xhtml?"
+                "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"
+            ),
             "@version": "20.20.002",
             "common:shortDescription": {
                 "@xml:lang": "en",
@@ -23,7 +27,6 @@ EXPECTED_COMPLIANCE_DECLARATIONS = {
         "common:approvalOfOverallCompliance": "Fully compliant",
     }
 }
-
 
 class DummyCrudClient:
     def insert_flow(self, dataset):

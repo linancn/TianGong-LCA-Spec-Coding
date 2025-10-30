@@ -57,7 +57,7 @@ Successful flow inserts must include (minimum viable set):
   - `common:generalComment` (array of language-tagged entries).
 - `quantitativeReference.referenceToReferenceFlowProperty` (typically `"0"`).
 - `modellingAndValidation.LCIMethod.typeOfDataSet` with one of `"Product flow"`, `"Waste flow"`, `"Elementary flow"`.
-- `modellingAndValidation.complianceDeclarations.compliance.common:referenceToComplianceSystem` referencing an existing source dataset (`d92a1a12-2545-49e2-a585-55c259997756`, version `01.00.000` works) and an `common:approvalOfOverallCompliance` status.
+- `modellingAndValidation.complianceDeclarations.compliance` must include at least `common:approvalOfOverallCompliance` (e.g. `"Fully compliant"`). Referencing the public ILCD Data Network compliance source (`https://lcdn.tiangong.earth/showSource.xhtml?uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002`) keeps payloads schema-compliant without shipping local stubs.
 - `administrativeInformation` with:
   - `dataEntryBy.common:timeStamp` (UTC timestamp `YYYY-MM-DDTHH:MM:SSZ`).
   - `dataEntryBy.common:referenceToDataSetFormat` pointing to ILCD format (`a97a0155-0234-4b87-b4ce-a45da52f2a40`, version `01.00.000`).
