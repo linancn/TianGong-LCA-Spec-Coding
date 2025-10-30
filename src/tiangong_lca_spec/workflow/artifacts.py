@@ -354,7 +354,9 @@ def _build_waste_classification(candidate: dict[str, Any]) -> dict[str, Any]:
     return {"common:classification": {"common:class": classes}}
 
 
-def _infer_elementary_categories(exchange: dict[str, Any], hints: dict[str, list[str]]) -> list[dict[str, Any]]:
+def _infer_elementary_categories(
+    exchange: dict[str, Any], hints: dict[str, list[str]]
+) -> list[dict[str, Any]]:
     parts = [
         _extract_text(exchange.get("location")).lower(),
         " ".join(hints.get("usage_context") or []).lower(),
@@ -413,17 +415,17 @@ def _build_source_classification(
         class_id, label = SOURCE_CLASSIFICATIONS["data set formats"]
     elif ref_uuid == DEFAULT_FORMAT_SOURCE_UUID:
         class_id, label = SOURCE_CLASSIFICATIONS["data set formats"]
-    elif _match_any(short_desc, ("ilcd data network", "compliance", "conformity", "certification")) or _match_any(
-        uri, ("compliance", "conformity")
-    ):
+    elif _match_any(
+        short_desc, ("ilcd data network", "compliance", "conformity", "certification")
+    ) or _match_any(uri, ("compliance", "conformity")):
         class_id, label = SOURCE_CLASSIFICATIONS["compliance systems"]
     elif _match_any(short_desc, ("database", "data bank", "dataset")) or _match_any(
         uri, ("database",)
     ):
         class_id, label = SOURCE_CLASSIFICATIONS["databases"]
-    elif _match_any(short_desc, ("nace", "isic", "cpc", "statistical", "classification")) or _match_any(
-        uri, ("classification",)
-    ):
+    elif _match_any(
+        short_desc, ("nace", "isic", "cpc", "statistical", "classification")
+    ) or _match_any(uri, ("classification",)):
         class_id, label = SOURCE_CLASSIFICATIONS["statistical classifications"]
     elif _match_any(short_desc, ("image", "photo", "figure", "diagram")) or uri.endswith(
         (".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp")
@@ -605,7 +607,9 @@ def _build_flow_dataset(
     return uuid_value, dataset
 
 
-def _collect_unmatched_exchanges(alignment: Iterable[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+def _collect_unmatched_exchanges(
+    alignment: Iterable[dict[str, Any]],
+) -> list[tuple[str, dict[str, Any]]]:
     collected: dict[str, tuple[str, dict[str, Any]]] = {}
     for entry in alignment:
         process_name = entry.get("process_name") or "Unnamed process"
@@ -747,6 +751,7 @@ def _attach_primary_source(
     format_reference.pop("common:fullReference", None)
     data_entry["common:referenceToDataSetFormat"] = format_reference
 
+
 def _run_validation(artifact_root: Path) -> list[dict[str, Any]]:
     service = TidasValidationService()
     try:
@@ -767,4 +772,6 @@ def _dump_json(payload: Any, path: Path) -> None:
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 LOGGER = get_logger(__name__)

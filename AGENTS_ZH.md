@@ -32,8 +32,6 @@
 4. 建议在跑 Stage 3 前，先用 1~2 个样例交换调用 `FlowSearchService` 进行连通性自测（可参考工作流提示文档中的 Python 片段）。
 - 若运维已预先配置 `.secrets/secrets.toml`，Codex 默认直接使用，无需在执行前反复确认。仅当脚本报出缺少凭据或连接失败时，再检查本地配置。
 
-本地 TIDAS 校验改为 `uv run tidas-validate -i artifacts` CLI，由 Stage 3 自动执行，无需额外的 MCP 凭据。
-
 ## 4. 质量保障与自检
 - 在修改 Python 源代码后，按序执行：
   ```bash
@@ -44,7 +42,6 @@
   ```
 - 若涉及流程抽取或对齐逻辑，优先跑一次最小化 Stage 1→Stage 6 端到端流程，命令示例与阶段要求见 `.github/prompts/extract-process-workflow.prompt.md`。
 - 结构化日志默认使用 `structlog`，可在运行 CLI 时关注 `flow_alignment.*`、`process_extraction.*` 等事件以快速定位异常。
-- 提交前请确认 `artifacts/` 中的中间文件不会被误提交，必要时在本地清理或加入 `.gitignore`。
 
 ## 5. 支持与沟通
 - 代码疑问先查阅 `src/tiangong_lca_spec/` 对应模块的 docstring 与类型定义，保持术语一致。

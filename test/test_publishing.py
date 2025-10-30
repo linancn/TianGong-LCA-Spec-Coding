@@ -15,7 +15,10 @@ EXPECTED_COMPLIANCE_DECLARATIONS = {
             "@type": "source data set",
             "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
             "@version": "20.20.002",
-            "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD Data Network - Entry-level"},
+            "common:shortDescription": {
+                "@xml:lang": "en",
+                "#text": "ILCD Data Network - Entry-level",
+            },
         },
         "common:approvalOfOverallCompliance": "Fully compliant",
     }
@@ -63,7 +66,10 @@ def test_flow_publisher_builds_plan_without_network():
     dataset = plan.dataset
     assert dataset["flowInformation"]["dataSetInformation"]["common:UUID"] == plan.uuid
     assert dataset["modellingAndValidation"]["LCIMethod"]["typeOfDataSet"] == "Product flow"
-    assert dataset["modellingAndValidation"]["complianceDeclarations"] == EXPECTED_COMPLIANCE_DECLARATIONS
+    assert (
+        dataset["modellingAndValidation"]["complianceDeclarations"]
+        == EXPECTED_COMPLIANCE_DECLARATIONS
+    )
     publisher.close()
 
 

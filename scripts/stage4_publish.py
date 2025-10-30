@@ -212,13 +212,9 @@ def main() -> None:
     save_latest_run_id(run_id)
 
     alignment_path = args.alignment or run_cache_path(run_id, "stage3_alignment.json")
-    process_datasets_path = args.process_datasets or run_cache_path(
-        run_id, "process_datasets.json"
-    )
+    process_datasets_path = args.process_datasets or run_cache_path(run_id, "process_datasets.json")
     validation_path = args.validation or run_cache_path(run_id, "tidas_validation.json")
-    workflow_result_path = args.workflow_result or run_cache_path(
-        run_id, "workflow_result.json"
-    )
+    workflow_result_path = args.workflow_result or run_cache_path(run_id, "workflow_result.json")
     dry_run_output_path = args.dry_run_output or run_cache_path(
         run_id, "stage4_publish_preview.json"
     )

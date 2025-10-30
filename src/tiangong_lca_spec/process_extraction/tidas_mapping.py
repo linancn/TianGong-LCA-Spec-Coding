@@ -76,9 +76,7 @@ def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, An
         process_information
     )
     dataset["processInformation"] = normalised_process_information
-    dataset_uuid = (
-        normalised_process_information.get("dataSetInformation", {}).get("common:UUID")
-    )
+    dataset_uuid = normalised_process_information.get("dataSetInformation", {}).get("common:UUID")
     modelling = _normalise_modelling_and_validation(dataset.get("modellingAndValidation"))
     if modelling:
         dataset["modellingAndValidation"] = modelling
