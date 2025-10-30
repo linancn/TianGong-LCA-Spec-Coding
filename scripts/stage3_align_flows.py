@@ -185,7 +185,9 @@ def main() -> None:
     cache_dir = ensure_run_cache_dir(run_id)
     save_latest_run_id(run_id)
 
-    process_blocks_path = args.process_blocks or run_cache_path(run_id, "stage2_process_blocks.json")
+    process_blocks_path = args.process_blocks or run_cache_path(
+        run_id, "stage2_process_blocks.json"
+    )
     clean_text_path = args.clean_text or run_cache_path(run_id, "stage1_clean_text.md")
     alignment_output = args.output or run_cache_path(run_id, "stage3_alignment.json")
     process_datasets_path = args.process_datasets or run_cache_path(run_id, "process_datasets.json")
@@ -258,8 +260,7 @@ def main() -> None:
     )
     if summary.validation_report:
         print(
-            f"Validation findings count={len(summary.validation_report)} "
-            f"-> {validation_output}"
+            f"Validation findings count={len(summary.validation_report)} " f"-> {validation_output}"
         )
     else:
         print(f"Validation succeeded -> {validation_output}")
