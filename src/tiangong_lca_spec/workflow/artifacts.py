@@ -480,18 +480,27 @@ def _flow_property_reference() -> dict[str, Any]:
 
 
 def flow_compliance_declarations() -> dict[str, Any]:
+    """Return the default compliance declaration block for generated datasets.
+
+    The compliance system reference points to the public ILCD Data Network URI so we do
+    not need to ship an additional local source artifact.
+    """
+
     return {
         "compliance": {
             "common:referenceToComplianceSystem": {
                 "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
                 "@type": "source data set",
-                "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
+                "@uri": (
+                    "https://lcdn.tiangong.earth/showSource.xhtml?"
+                    "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"
+                ),
                 "@version": "20.20.002",
                 "common:shortDescription": _language_entry("ILCD Data Network - Entry-level"),
             },
             "common:approvalOfOverallCompliance": "Fully compliant",
         }
-}
+    }
 
 
 def _data_entry_reference() -> dict[str, Any]:
@@ -594,6 +603,15 @@ def _build_flow_dataset(
         name_block["mixAndLocationTypes"].append(_language_entry(zh_synonyms[0], "zh"))
 
     dataset_version = "01.00.000"
+    compliance_block = flow_compliance_declarations()
+    modelling_section: dict[str, Any] = {
+        "LCIMethod": {
+            "typeOfDataSet": flow_type,
+        },
+    }
+    if compliance_block:
+        modelling_section["complianceDeclarations"] = compliance_block
+
     dataset = {
         "flowDataSet": {
             "@xmlns": "http://lca.jrc.it/ILCD/Flow",
@@ -615,12 +633,7 @@ def _build_flow_dataset(
                     "referenceToReferenceFlowProperty": "0",
                 },
             },
-            "modellingAndValidation": {
-                "LCIMethod": {
-                    "typeOfDataSet": flow_type,
-                },
-                "complianceDeclarations": flow_compliance_declarations(),
-            },
+            "modellingAndValidation": modelling_section,
             "administrativeInformation": {
                 "dataEntryBy": {
                     "common:timeStamp": timestamp,
@@ -689,7 +702,9 @@ def _collect_source_references(process_payload: dict[str, Any]) -> dict[str, dic
             node_type = node.get("@type")
             ref_id = node.get("@refObjectId")
             if node_type == "source data set" and ref_id:
-                references.setdefault(ref_id, node)
+                uri = str(node.get("@uri") or "")
+                if uri.startswith("../"):
+                    references.setdefault(ref_id, node)
             for value in node.values():
                 _walk(value)
         elif isinstance(node, list):
