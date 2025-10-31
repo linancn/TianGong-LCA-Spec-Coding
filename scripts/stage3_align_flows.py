@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -144,6 +145,37 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _has_blocking_errors(findings: Iterable[dict[str, Any]]) -> bool:
+    for item in findings:
+        if isinstance(item, dict) and item.get("severity") == "error":
+            return True
+    return False
+
+
+def _auto_publish(run_id: str) -> None:
+    stage4_script = Path(__file__).with_name("stage4_publish.py")
+    if not stage4_script.exists():
+        raise SystemExit(f"Stage 4 script not found at {stage4_script}; cannot publish automatically.")
+    cmd = [
+        sys.executable,
+        str(stage4_script),
+        "--run-id",
+        run_id,
+        "--publish-flows",
+        "--publish-processes",
+        "--update-alignment",
+        "--update-datasets",
+        "--commit",
+    ]
+    print("Validation passed with no blocking errors -> invoking Stage 4 publisher for direct insert.")
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise SystemExit(
+            "Automatic publication failed when invoking Stage 4. "
+            "Inspect the logs above and rerun `stage4_publish.py` manually once issues are resolved."
+        )
+
+
 def main() -> None:
     args = parse_args()
     run_id = resolve_run_id(args.run_id)
@@ -222,6 +254,14 @@ def main() -> None:
     else:
         print(f"Validation succeeded -> {validation_output}")
     print(f"Workflow bundle written to {workflow_output}")
+
+    if args.skip_artifact_validation:
+        print("Artifact validation skipped; automatic publication disabled. Run Stage 4 manually when ready.")
+    else:
+        if _has_blocking_errors(summary.validation_report):
+            print("Validation reported blocking errors; automatic publication skipped. Fix findings before publishing.")
+        else:
+            _auto_publish(run_id)
 
 
 def _resolve_process_id(block: dict[str, Any], dataset: dict[str, Any]) -> str | None:

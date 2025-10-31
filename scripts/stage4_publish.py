@@ -157,20 +157,45 @@ def _update_process_payload(
             else:
                 process_hint_local = process_hint
 
-            if "exchangeName" in node:
-                exchange_name = node.get("exchangeName")
-                if exchange_name:
-                    ref = node.get("referenceToFlowDataSet")
-                    needs_update = False
-                    if ref is None:
-                        needs_update = True
-                    elif isinstance(ref, dict) and ref.get("unmatched:placeholder"):
-                        needs_update = True
-                    if needs_update:
-                        replacement = _match_update(updates, process_hint_local or "Unknown process", exchange_name)
-                        if replacement:
-                            node["referenceToFlowDataSet"] = replacement
-                            replacements += 1
+            exchange_name = node.get("exchangeName")
+            if not exchange_name:
+                candidate_fields = [
+                    node.get("name"),
+                    node.get("flowName"),
+                ]
+                for field in candidate_fields:
+                    candidate_text = _coerce_text(field)
+                    if candidate_text:
+                        exchange_name = candidate_text
+                        break
+            if not exchange_name:
+                ref_block = node.get("referenceToFlowDataSet")
+                if isinstance(ref_block, dict):
+                    short_desc = _coerce_text(ref_block.get("common:shortDescription"))
+                    if short_desc:
+                        exchange_name = short_desc.split(";")[0].strip()
+            if not exchange_name:
+                selected = node.get("matchingDetail", {})
+                if isinstance(selected, dict):
+                    candidate = selected.get("selectedCandidate") or {}
+                    exchange_name = _coerce_text(candidate.get("base_name"))
+
+            if exchange_name:
+                ref = node.get("referenceToFlowDataSet")
+                needs_update = False
+                if ref is None:
+                    needs_update = True
+                elif isinstance(ref, dict) and ref.get("unmatched:placeholder"):
+                    needs_update = True
+                if needs_update:
+                    replacement = _match_update(updates, process_hint_local or "Unknown process", exchange_name)
+                    if replacement:
+                        replacement = dict(replacement)
+                        replacement.pop("unmatched:placeholder", None)
+                        node["referenceToFlowDataSet"] = replacement
+                        if isinstance(ref, dict):
+                            ref.pop("unmatched:placeholder", None)
+                        replacements += 1
             for value in node.values():
                 _walk(value, process_hint_local)
         elif isinstance(node, list):

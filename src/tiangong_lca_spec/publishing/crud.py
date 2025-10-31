@@ -258,6 +258,32 @@ class DatabaseCrudClient:
             }
         )
 
+    def update_process(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
+        root_key = "processDataSet" if "processDataSet" in dataset else None
+        process_root = _resolve_dataset_root(dataset, root_key=root_key, dataset_kind="process")
+        uuid_value = _require_uuid(
+            _get_nested(process_root, ("processInformation", "dataSetInformation", "common:UUID")),
+            "process",
+        )
+        version_candidate = _coerce_text(
+            _get_nested(
+                process_root,
+                ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"),
+            )
+        )
+        if not version_candidate:
+            version_candidate = "01.01.000"
+        json_payload = dataset if root_key else {"processDataSet": process_root}
+        return self._invoke(
+            {
+                "operation": "update",
+                "table": "processes",
+                "id": uuid_value,
+                "version": version_candidate,
+                "jsonOrdered": json_payload,
+            }
+        )
+
     def delete(self, table: str, record_id: str, version: str) -> dict[str, Any]:
         return self._invoke(
             {
@@ -477,8 +503,13 @@ class ProcessPublisher:
                 continue
             try:
                 result = self._crud.insert_process(payload)
-            except SpecCodingError as exc:
-                raise SpecCodingError(f"Failed to insert process '{process_name or uuid_value}' ({uuid_value})") from exc
+            except SpecCodingError:
+                try:
+                    result = self._crud.update_process(payload)
+                except SpecCodingError as exc:  # pragma: no cover - network errors bubbled up
+                    raise SpecCodingError(
+                        f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})"
+                    ) from exc
             results.append(result)
         return results
 
