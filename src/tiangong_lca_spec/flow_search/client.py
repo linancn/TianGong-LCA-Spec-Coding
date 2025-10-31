@@ -31,7 +31,7 @@ class FlowSearchClient:
     ) -> None:
         self._settings = settings or get_settings()
         self._server_name = self._settings.flow_search_service_name
-        self._tool_name = getattr(self._settings, "flow_search_tool_name", "Search_flows_Tool")
+        self._tool_name = getattr(self._settings, "flow_search_tool_name", "Search_Flows_Tool")
         self._mcp = mcp_client or MCPToolClient(self._settings)
         self._timeout_seconds = self._resolve_timeout()
         self._max_attempts = max(1, self._settings.max_retries)
