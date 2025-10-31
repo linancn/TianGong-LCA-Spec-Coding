@@ -229,6 +229,7 @@ def _normalise_dataset_information(
             class_id = entry.get("@classId") or entry.get("classId") or f"UNSPEC-{index}"
             level = entry.get("@level") or entry.get("level") or index
             text_value = entry.get("#text") or entry.get("text") or entry.get("@text") or class_id
+            text_value = _strip_class_code_prefix(_stringify(text_value))
             normalised_classes.append(
                 {
                     "@level": str(level),
@@ -288,6 +289,17 @@ def _normalise_dataset_information(
     }
     info = {key: value for key, value in info.items() if key in allowed_dataset_info_keys and value not in (None, "", {}, [])}
     return info, name_components
+
+
+def _strip_class_code_prefix(label: str) -> str:
+    text = _stringify(label).strip()
+    if not text:
+        return ""
+    match = re.match(r"^[A-Za-z0-9]+(?:[\.\-][A-Za-z0-9]+)*\s*[-–]\s*", text)
+    if match:
+        text = text[match.end() :].strip()
+    text = re.sub(r"\s*\([^)]*\)\s*$", "", text).strip()
+    return text or _stringify(label)
 
 
 FEEDSTOCK_KEYWORDS = [
@@ -440,6 +452,95 @@ def _normalise_technology(section: Any) -> dict[str, Any]:
     return technology
 
 
+def _sanitize_general_comment(comment: Any) -> dict[str, Any] | str | None:
+    text = _extract_multilang_text(comment).strip()
+    if not text:
+        return None
+    lang = DEFAULT_LANGUAGE
+    if isinstance(comment, dict):
+        lang = comment.get("@xml:lang") or lang
+    if not text.startswith("FlowSearch hints:"):
+        return {"@xml:lang": lang, "#text": text}
+    hints, notes = _parse_hint_segments(text[len("FlowSearch hints:") :])
+    comment_text = _compose_comment_from_hints(hints, notes)
+    if not comment_text:
+        return None
+    return {"@xml:lang": lang, "#text": comment_text}
+
+
+def _parse_hint_segments(text: str) -> tuple[dict[str, list[str]], list[str]]:
+    body = text.strip()
+    segments = [segment.strip() for segment in body.split("|") if segment.strip()]
+    hints: dict[str, list[str]] = {}
+    notes: list[str] = []
+    for segment in segments:
+        if "=" in segment:
+            key, value = segment.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if not value or value.lower() == "na":
+                continue
+            values = [item.strip() for item in value.split(";") if item.strip()]
+            hints[key] = values or [value]
+        else:
+            notes.append(_clean_note_text(segment))
+    return hints, notes
+
+
+def _compose_comment_from_hints(hints: dict[str, list[str]], notes: list[str]) -> str:
+    parts: list[str] = []
+
+    def _join(values: list[str], *, limit: int | None = None, separator: str = "; ") -> str:
+        items = [value for value in values if value]
+        if limit is not None:
+            items = items[:limit]
+        return separator.join(items)
+
+    if hints.get("usage_context"):
+        parts.append(f"Usage context: {_join(hints['usage_context'])}")
+    if hints.get("source_or_pathway"):
+        parts.append(f"Source/pathway: {_join(hints['source_or_pathway'])}")
+    if hints.get("state_purity"):
+        parts.append(f"State/purity: {_join(hints['state_purity'])}")
+    if hints.get("abbreviation"):
+        parts.append(f"Abbreviation: {_join(hints['abbreviation'])}")
+    if hints.get("formula_or_CAS"):
+        parts.append(f"Formula/CAS: {_join(hints['formula_or_CAS'])}")
+    if hints.get("en_synonyms"):
+        parts.append(f"Synonyms (EN): {_join(hints['en_synonyms'], limit=3)}")
+    if hints.get("zh_synonyms"):
+        parts.append(f"Synonyms (ZH): {_join(hints['zh_synonyms'], limit=3, separator=', ')}")
+    for note in notes:
+        cleaned = _clean_note_text(note)
+        if cleaned:
+            parts.append(cleaned)
+
+    sentences = [_ensure_sentence(part) for part in parts if part]
+    return " ".join(sentence for sentence in sentences if sentence).strip()
+
+
+def _clean_note_text(value: str) -> str:
+    if not value:
+        return ""
+    cleaned = value.strip()
+    for prefix in ("Notes:", "Note:", "备注:", "说明:", "-"):
+        if cleaned.lower().startswith(prefix.lower()):
+            cleaned = cleaned[len(prefix) :].strip()
+            break
+    return cleaned.strip()
+
+
+def _ensure_sentence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    if stripped[-1] in ".!?。；;:":
+        return stripped
+    return f"{stripped}."
+
+
 def _normalise_exchanges(
     section: Any,
     name_components: dict[str, Any],
@@ -482,7 +583,11 @@ def _normalise_exchanges(
         short_description = _compose_short_description(exchange_name, item, name_components)
         comment_value = item.get("generalComment")
         if comment_value:
-            item["generalComment"] = _ensure_multilang(comment_value, fallback="")
+            cleaned_comment = _sanitize_general_comment(comment_value)
+            if cleaned_comment:
+                item["generalComment"] = _ensure_multilang(cleaned_comment, fallback="")
+            else:
+                item.pop("generalComment", None)
         else:
             item.pop("generalComment", None)
         # Preserve genuine flow references (from alignment) but drop empty placeholders,
@@ -668,6 +773,11 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
                 else:
                     dsr.pop(key, None)
         dsr.pop("common:other", None)
+        coverage_value = _normalise_percentage_coverage(dsr.get("percentageSupplyOrProductionCovered"))
+        if coverage_value is not None:
+            dsr["percentageSupplyOrProductionCovered"] = coverage_value
+        else:
+            dsr["percentageSupplyOrProductionCovered"] = "100"
         if dsr:
             mv["dataSourcesTreatmentAndRepresentativeness"] = dsr
 
@@ -1001,6 +1111,21 @@ def _has_reference(value: Any) -> bool:
     if isinstance(value, list):
         return any(isinstance(item, dict) and "@refObjectId" in item for item in value)
     return False
+
+
+def _normalise_percentage_coverage(value: Any) -> str | None:
+    text = _stringify(value).strip()
+    if not text or text.upper() == "NA":
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    if number < 0:
+        number = 0.0
+    if number > 100:
+        number = 100.0
+    return f"{number:.3f}".rstrip("0").rstrip(".")
 
 
 def _extract_location_code(value: Any) -> tuple[str, str | None]:
