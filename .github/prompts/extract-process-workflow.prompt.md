@@ -130,6 +130,7 @@ class WorkflowResult:
 - Each process block submits exchange lookups on independent threads, aggregating `matched_flows` and `origin_exchanges`; unmatched items are only tallied in logs as reminders.
 - The Stage 3 script validates Stage 2 outputs against the §0 `FlowSearch hints` spec and infers missing names from the synonym fields when possible, preventing hint-free exchanges from reaching MCP.
 - Successful matches write back `referenceToFlowDataSet`; failures keep the original exchange and record the reason.
+- When a flow lookup succeeds, Stage 3 must populate `referenceToFlowDataSet.common:shortDescription` with the concatenated string `baseName; treatmentStandardsRoutes; mixAndLocationTypes; flowProperties` (substitute `-` for missing segments) so the process exchange retains the matched flow’s name, treatment, location, and quantity in a single field.
 - The script emits structured logs such as `flow_alignment.start` and `flow_alignment.exchange_failed` for diagnostics.
 
 ## 6. Process Extraction

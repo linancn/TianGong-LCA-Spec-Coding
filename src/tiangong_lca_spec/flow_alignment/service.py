@@ -158,9 +158,13 @@ class FlowAlignmentService:
         detail = enriched.get("matchingDetail")
         if not isinstance(detail, dict):
             detail = {}
+        formatted_name = self._compose_candidate_short_description(candidate)
         detail["selectedCandidate"] = {
             "uuid": candidate.uuid,
             "base_name": candidate.base_name,
+            "treatment_standards_routes": candidate.treatment_standards_routes,
+            "mix_and_location_types": candidate.mix_and_location_types,
+            "flow_properties": candidate.flow_properties,
             "version": candidate.version,
             "geography": candidate.geography,
             "classification": candidate.classification,
@@ -169,6 +173,7 @@ class FlowAlignmentService:
             "score": decision.score,
             "selector": decision.strategy,
             "evaluation_reason": decision.reasoning,
+            "combined_name": formatted_name,
         }
         enriched["matchingDetail"] = detail
         return enriched
@@ -188,7 +193,9 @@ class FlowAlignmentService:
             "@refObjectId": uuid,
             "@version": version,
             "@uri": f"https://tiangong.earth/flows/{uuid}",
-            "common:shortDescription": FlowAlignmentService._multilang(candidate.base_name or "Matched flow"),
+            "common:shortDescription": FlowAlignmentService._multilang(
+                FlowAlignmentService._compose_candidate_short_description(candidate)
+            ),
         }
 
     @staticmethod
@@ -215,6 +222,34 @@ class FlowAlignmentService:
     def _multilang(text: str) -> dict[str, Any]:
         label = text or "Unnamed flow"
         return {"@xml:lang": "en", "#text": label}
+
+    @staticmethod
+    def _compose_candidate_short_description(candidate: FlowCandidate) -> str:
+        components = [
+            FlowAlignmentService._candidate_name_segment(candidate.base_name),
+            FlowAlignmentService._candidate_name_segment(candidate.treatment_standards_routes),
+            FlowAlignmentService._candidate_name_segment(candidate.mix_and_location_types),
+            FlowAlignmentService._candidate_name_segment(candidate.flow_properties),
+        ]
+        raw = "; ".join(components + [""])  # trailing delimiter to match reference implementation
+        without_missing = raw.replace("-; ", "")
+        if without_missing.endswith("; "):
+            without_missing = without_missing[:-2]
+        cleaned = without_missing.strip()
+        return cleaned or "-"
+
+    @staticmethod
+    def _candidate_name_segment(value: Any) -> str:
+        if value is None:
+            return "-"
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or "-"
+        text = FlowAlignmentService._stringify(value)
+        if not text:
+            return "-"
+        stripped = text.strip()
+        return stripped or "-"
 
     def _build_query(self, exchange: dict[str, Any], process_name: str | None, paper_md: str | None) -> FlowQuery:
         return FlowQuery(
