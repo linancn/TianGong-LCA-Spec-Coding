@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
 from typing import Iterable
 
@@ -26,6 +27,35 @@ class FlowSearchService:
         LOGGER.info("flow_search.lookup", exchange=query.exchange_name, process=query.process_name)
         raw_candidates = self._client.search(query)
         matches, filtered_out = self._normalize_candidates(query, raw_candidates)
+        if not matches:
+            if query.paper_md:
+                fallback_query = replace(query, paper_md=None)
+                LOGGER.info(
+                    "flow_search.retry_without_context",
+                    exchange=query.exchange_name,
+                    process=query.process_name,
+                )
+                fallback_raw = self._client.search(fallback_query)
+                fallback_matches, fallback_filtered = self._normalize_candidates(query, fallback_raw)
+                if fallback_matches:
+                    matches.extend(fallback_matches)
+                if fallback_filtered:
+                    filtered_out.extend(fallback_filtered)
+            if not matches and (query.description or query.process_name):
+                stripped_query = FlowQuery(
+                    exchange_name=query.exchange_name,
+                )
+                LOGGER.info(
+                    "flow_search.retry_minimal",
+                    exchange=query.exchange_name,
+                    process=query.process_name,
+                )
+                minimal_raw = self._client.search(stripped_query)
+                minimal_matches, minimal_filtered = self._normalize_candidates(query, minimal_raw)
+                if minimal_matches:
+                    matches.extend(minimal_matches)
+                if minimal_filtered:
+                    filtered_out.extend(minimal_filtered)
         if matches:
             return matches, filtered_out
         unmatched = UnmatchedFlow(

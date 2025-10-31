@@ -115,6 +115,14 @@ class LLMCandidateSelector:
             parsed = self._parse_response(raw_response)
             best_index = parsed.get("best_index")
             if best_index is None:
+                fallback_decision = self._fallback.select(query, exchange, candidates)
+                if fallback_decision.candidate is not None:
+                    return SelectorDecision(
+                        candidate=fallback_decision.candidate,
+                        score=fallback_decision.score,
+                        reasoning=fallback_decision.reasoning or parsed.get("reason"),
+                        strategy=f"llm_fallback->{fallback_decision.strategy}",
+                    )
                 return SelectorDecision(
                     candidate=None,
                     score=self._coerce_float(parsed.get("confidence")),

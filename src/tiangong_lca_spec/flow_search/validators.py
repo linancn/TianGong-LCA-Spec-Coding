@@ -24,7 +24,14 @@ def name_similarity_score(query: FlowQuery, candidate: dict[str, Any]) -> float:
 
 
 def passes_similarity(query: FlowQuery, candidate: dict[str, Any], threshold: float = 0.65) -> bool:
-    return name_similarity_score(query, candidate) >= threshold
+    score = name_similarity_score(query, candidate)
+    if score >= threshold:
+        return True
+    description = _normalize(getattr(query, "description", None))
+    base_name = _normalize(candidate.get("base_name") or candidate.get("name"))
+    if description and base_name and base_name in description:
+        return True
+    return False
 
 
 def passes_location(candidate: dict[str, Any], expected: str | None = None) -> bool:
