@@ -131,6 +131,7 @@ class WorkflowResult:
 - 每个流程块的交换量在独立线程提交检索任务，聚合 `matched_flows` 与 `origin_exchanges`；未命中只在日志中计数提醒。
 - Stage 3 脚本会按 §0 的 `FlowSearch hints` 规范校验 Stage 2 产物，必要时从同义词字段推断缺失名称，避免缺乏语义标签的交换直接进入 MCP 检索。
 - 匹配成功时写回 `referenceToFlowDataSet`，失败则保留原始交换量并记录原因。
+- 对于命中的流，Stage 3 必须将 `referenceToFlowDataSet.common:shortDescription` 写成 `baseName; treatmentStandardsRoutes; mixAndLocationTypes; flowProperties` 的拼接字符串（缺失字段填 `-`），确保流程交换量中可以直接读出名称、处理/路线、位置/场合以及数量信息。
 - 过程中输出 `flow_alignment.start`、`flow_alignment.exchange_failed` 等结构化日志，便于诊断。
 
 ## 6. Process Extraction

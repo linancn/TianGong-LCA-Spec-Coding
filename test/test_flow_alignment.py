@@ -40,10 +40,19 @@ def _build_dataset(exchange_name: str = "Flow A") -> dict[str, object]:
     }
 
 
-def _candidate_for(query_name: str) -> FlowCandidate:
+def _candidate_for(
+    query_name: str,
+    *,
+    treatment: str | None = None,
+    mix: str | None = None,
+    flow_properties: str | None = None,
+) -> FlowCandidate:
     return FlowCandidate(
         uuid="123e4567-e89b-12d3-a456-426614174000",
         base_name=query_name,
+        treatment_standards_routes=treatment,
+        mix_and_location_types=mix,
+        flow_properties=flow_properties,
     )
 
 
@@ -59,7 +68,7 @@ def test_align_exchanges_does_not_emit_unmatched_on_success() -> None:
         assert result["matched_flows"], "Expected matches to be recorded"
         assert result["unmatched_flows"] == [], "No unmatched flows should be emitted"
         origin = result["origin_exchanges"]["Flow A"]
-        assert origin[0]["referenceToFlowDataSet"]["common:shortDescription"]["#text"].split(";")[0].strip() == "Flow A"
+        assert origin[0]["referenceToFlowDataSet"]["common:shortDescription"]["#text"] == "Flow A"
     finally:
         service.close()
 
@@ -104,5 +113,33 @@ def test_align_exchanges_records_unmatched_when_retry_fails() -> None:
         short_desc = origin["referenceToFlowDataSet"]["common:shortDescription"]["#text"]
         assert short_desc.split(";")[0].strip() == "Flow B"
         assert origin["referenceToFlowDataSet"]["unmatched:placeholder"] is True
+    finally:
+        service.close()
+
+
+def test_align_exchanges_embeds_combined_candidate_name() -> None:
+    def successful_search(_query) -> tuple[list[FlowCandidate], list[UnmatchedFlow]]:
+        return (
+            [
+                _candidate_for(
+                    "Electricity",
+                    treatment="AC, medium voltage",
+                    mix="CN regional grid",
+                    flow_properties="53.67 kWh per FU",
+                )
+            ],
+            [],
+        )
+
+    service = FlowAlignmentService(flow_search_fn=successful_search)
+    try:
+        process_dataset = _build_dataset("Electricity")
+        result = service.align_exchanges(process_dataset)
+
+        origin = result["origin_exchanges"]["Electricity"][0]
+        short_desc = origin["referenceToFlowDataSet"]["common:shortDescription"]["#text"]
+        assert short_desc == "Electricity; AC, medium voltage; CN regional grid; 53.67 kWh per FU"
+        candidate_detail = origin["matchingDetail"]["selectedCandidate"]
+        assert candidate_detail["combined_name"] == short_desc
     finally:
         service.close()
