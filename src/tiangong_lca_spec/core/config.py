@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     mcp_api_key: str | None = None
     mcp_transport: Literal["streamable_http"] = "streamable_http"
     flow_search_service_name: str = "tiangong_lca_remote"
-    flow_search_tool_name: str = "Search_flows_Tool"
+    flow_search_tool_name: str = "Search_Flows_Tool"
     flow_search_max_parallel: int = 1
 
     request_timeout: float = 30.0
