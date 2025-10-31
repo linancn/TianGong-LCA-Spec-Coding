@@ -193,9 +193,7 @@ class FlowAlignmentService:
             "@refObjectId": uuid,
             "@version": version,
             "@uri": f"https://tiangong.earth/flows/{uuid}",
-            "common:shortDescription": FlowAlignmentService._multilang(
-                FlowAlignmentService._compose_candidate_short_description(candidate)
-            ),
+            "common:shortDescription": FlowAlignmentService._multilang(FlowAlignmentService._compose_candidate_short_description(candidate)),
         }
 
     @staticmethod
