@@ -186,7 +186,7 @@ class FlowAlignmentService:
 
     @staticmethod
     def _candidate_reference(candidate: FlowCandidate) -> dict[str, Any]:
-        version = candidate.version or "01.00.000"
+        version = candidate.version or "01.01.000"
         uuid = candidate.uuid or str(uuid4())
         return {
             "@type": "flow data set",

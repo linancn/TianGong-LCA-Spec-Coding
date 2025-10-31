@@ -752,7 +752,7 @@ def _normalise_administrative_information(
     publication = _ensure_dict(admin.get("publicationAndOwnership"))
     version_candidate = _stringify(publication.get("common:dataSetVersion")).strip()
     if not version_candidate:
-        version_candidate = "01.00.000"
+        version_candidate = "01.01.000"
     if publication or dataset_uuid:
         publication["common:dataSetVersion"] = version_candidate
         if dataset_uuid:
@@ -791,7 +791,7 @@ def _build_reference(ref_type: str, description: str) -> dict[str, Any]:
         "@type": ref_type,
         "@refObjectId": identifier,
         "@uri": f"https://tiangong.earth/{ref_type}/{identifier}",
-        "@version": "01.00.000",
+        "@version": "01.01.000",
         "common:shortDescription": _ensure_multilang(description),
     }
 
@@ -801,7 +801,7 @@ def _build_commissioner_reference() -> dict[str, Any]:
         "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
         "@type": "contact data set",
         "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-        "@version": "01.00.000",
+        "@version": "01.01.000",
         "common:shortDescription": [
             {"@xml:lang": "en", "#text": "Tiangong LCA Data Working Group"},
             {"@xml:lang": "zh", "#text": "天工LCA数据团队"},
@@ -913,7 +913,7 @@ def _is_valid_uuid(value: str) -> bool:
 def _build_permanent_dataset_uri(dataset_kind: str, uuid_value: str, version: str) -> str:
     if not uuid_value:
         return ""
-    version_clean = version.strip() or "01.00.000"
+    version_clean = version.strip() or "01.01.000"
     suffix_map = {
         "process": "showProcess.xhtml",
         "flow": "showProductFlow.xhtml",

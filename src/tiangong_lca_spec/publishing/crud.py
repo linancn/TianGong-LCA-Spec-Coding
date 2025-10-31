@@ -173,7 +173,7 @@ def _build_flow_properties(unit: str) -> dict[str, Any]:
         "@type": "flow property data set",
         "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
         "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
-        "@version": "01.00.000",
+        "@version": "01.01.000",
         "common:shortDescription": {
             "@xml:lang": "en",
             "#text": "Mass",
@@ -401,7 +401,7 @@ class FlowPublisher:
                         "@type": "source data set",
                         "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
                         "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.xml",
-                        "@version": "01.00.000",
+                        "@version": "01.01.000",
                         "common:shortDescription": _language_entry("ILCD format"),
                     },
                     "common:referenceToPersonOrEntityEnteringTheData": {
@@ -413,12 +413,12 @@ class FlowPublisher:
                     },
                 },
                 "publicationAndOwnership": {
-                    "common:dataSetVersion": "01.00.000",
+                    "common:dataSetVersion": "01.01.000",
                     "common:referenceToOwnershipOfDataSet": {
                         "@type": "contact data set",
                         "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
                         "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-                        "@version": "01.00.000",
+                        "@version": "01.01.000",
                         "common:shortDescription": [_language_entry("Tiangong LCA Data Working Group")],
                     },
                 },
@@ -429,7 +429,7 @@ class FlowPublisher:
             "@type": "flow data set",
             "@uri": f"https://tiangong.earth/flows/{uuid_value}",
             "@refObjectId": uuid_value,
-            "@version": "01.00.000",
+            "@version": "01.01.000",
             "common:shortDescription": _language_entry(exchange_name),
         }
         return FlowPublishPlan(
