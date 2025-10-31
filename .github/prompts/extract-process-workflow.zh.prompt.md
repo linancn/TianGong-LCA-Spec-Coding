@@ -166,3 +166,20 @@ class WorkflowResult:
 - `tidas_processes_category.json` (`src/tidas/schemas/tidas_processes_category.json`) 是流程分类的权威来源，覆盖 ISIC 树的各级代码与描述。若 Codex 需要确认分类路径，先使用 `uv run python scripts/list_process_category_children.py <code>` 逐层展开（`<code>` 为空时输出顶层，例如 `uv run python scripts/list_process_category_children.py 01`）。必要时可通过 `tiangong_lca_spec.tidas.get_schema_repository().resolve_with_references("tidas_processes_category.json")` 读取局部节点，再将相关分支文本粘贴到对 Codex 的提问里，帮助其在有限上下文里挑选正确的 `@classId` / `#text`。
 - 地理编码沿用 `tidas_locations_category.json` (`src/tidas/schemas/tidas_locations_category.json`)；用法与上面一致，命令为 `uv run python scripts/list_location_children.py <code>`（例如 `uv run python scripts/list_location_children.py CN` 查看中国内部层级）。在向 Codex 说明地理选项时，同样只摘录与当前流程相关的分支，避免传送整棵树。
 - 若流程涉及流分类，可调用 `uv run python scripts/list_product_flow_category_children.py <code>` 查看产品流分类（数据源 `tidas_flows_product_category.json`），或调用 `uv run python scripts/list_elementary_flow_category_children.py <code>` 查看初级流分类（数据源 `tidas_flows_elementary_category.json`）。
+
+## 11. Stage 4 发布与数据库 CRUD
+- `stage4_publish.py` 调用 `tiangong_lca_remote` 的 `Database_CRUD_Tool` 将 `flows`、`processes`、`sources` 入库；`insert` 请求的 `id` 必须直接沿用导出制品中的 UUID：分别取 `flowInformation.dataSetInformation.common:UUID`、`processInformation.dataSetInformation.common:UUID`、`sourceInformation.dataSetInformation.common:UUID`。禁止生成其他标识或复用旧 run 的 ID。
+- `Database_CRUD_Tool` 入参包含：
+  - `operation`：`"select"`、`"insert"`、`"update"`、`"delete"`。
+  - `table`：`"flows"`、`"processes"`、`"sources"`、`"contacts"`、`"lifecyclemodels"`。
+  - `jsonOrdered`：`insert` / `update` 必填，传入完整的 ILCD 文档（如 `{"processDataSet": {...}}`），保持命名空间、时间戳、引用字段。
+  - `id`：`insert` / `update` / `delete` 必填，取自数据集 `dataSetInformation` 的 UUID。
+  - `version`：`update` / `delete` 必填，对应 Supabase `version` 列。
+  - 可选 `filters`、`limit` 仅在 `select` 时使用。
+- 成功响应会回显 `id`、`version` 以及 `data` 数组；校验失败会抛出 `SpecCodingError`，直接根据错误中的 JSON 路径修正数据集再重试。
+- 入库自查清单：
+  - 保留 ILCD 根级属性（`@xmlns`、`@xmlns:common`、`@xmlns:xsi`、schemaLocation）并写入 `administrativeInformation.dataEntryBy.common:timeStamp`、`common:referenceToDataSetFormat`、`common:referenceToPersonOrEntityEnteringTheData`。
+  - 保持合规引用（ILCD 格式 UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`、权属 UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`、联系人 UUID `1f8176e3-86ba-49d1-bab7-4eca2741cdc1`）并声明 `modellingAndValidation.LCIMethod.typeOfDataSet`。
+  - 流数据需补齐 `flowProperties.flowProperty`（质量属性 UUID `93a60a56-a3c8-11da-a746-0800200b9a66`）、`quantitativeReference.referenceToReferenceFlowProperty` 以及合适的 `classificationInformation` 或 `elementaryFlowCategorization`。
+  - 流程数据保留 Stage 3 的功能单位、交换量与 `modellingAndValidation`；来源数据保留文献元信息与发布时间。
+- 批量发布时优先按 `flows`→`processes`→`sources` 顺序提交，及时记录返回的 `id` / `version` 以备审计。

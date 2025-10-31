@@ -165,4 +165,20 @@ class WorkflowResult:
 - `tidas_processes_category.json` (`src/tidas/schemas/tidas_processes_category.json`) is the authoritative source for process classifications, covering every level of the ISIC tree. When Codex needs the classification path, use `uv run python scripts/list_process_category_children.py <code>` to expand level by level (`<code>` empty returns the top level, e.g., `uv run python scripts/list_process_category_children.py 01`). You can also load specific branches with `tiangong_lca_spec.tidas.get_schema_repository().resolve_with_references("tidas_processes_category.json")` and paste the relevant snippets into Codex prompts so it can choose the correct `@classId`/`#text` within limited context.
 - Geographic codes follow `tidas_locations_category.json` (`src/tidas/schemas/tidas_locations_category.json`). Use `uv run python scripts/list_location_children.py <code>` (e.g., `uv run python scripts/list_location_children.py CN` to see China's hierarchy). When briefing Codex, share only the subtree relevant to the current process to avoid sending the entire taxonomy.
 - When a process involves flow classifications, call `uv run python scripts/list_product_flow_category_children.py <code>` for product flows (data source `tidas_flows_product_category.json`) or `uv run python scripts/list_elementary_flow_category_children.py <code>` for elementary flows (data source `tidas_flows_elementary_category.json`).
-*** End Patch
+
+## 11. Stage 4 Publish & Database CRUD
+- `stage4_publish.py` calls the `Database_CRUD_Tool` from `tiangong_lca_remote` to persist `flows`, `processes`, and `sources`. The `insert` payload must set the tool-level `id` to the dataset UUID already present in the export: use `flowInformation.dataSetInformation.common:UUID`, `processInformation.dataSetInformation.common:UUID`, or `sourceInformation.dataSetInformation.common:UUID` directly. Do not generate alternate identifiers and do not reuse previous run IDs.
+- `Database_CRUD_Tool` payload fields:
+  - `operation`: `"select"`, `"insert"`, `"update"`, or `"delete"`.
+  - `table`: `"flows"`, `"processes"`, `"sources"`, `"contacts"`, or `"lifecyclemodels"`.
+  - `jsonOrdered`: required for insert/update; pass the canonical ILCD document (e.g., `{"processDataSet": {...}}`) with namespace declarations, timestamps, and reference stubs intact.
+  - `id`: required for insert/update/delete; match the UUID from the dataset’s `dataSetInformation`.
+  - `version`: required for update/delete and stored alongside `json_ordered`.
+  - Optional `filters` and `limit` cover equality queries during select operations.
+- Successful responses echo the record `id`, `version`, and a `data` array. Validation failures raise `SpecCodingError`; log the payload path from the error and fix the dataset before retrying.
+- Minimum insert checklist:
+  - Preserve ILCD root attributes (`@xmlns`, `@xmlns:common`, `@xmlns:xsi`, schema location) and include `administrativeInformation.dataEntryBy.common:timeStamp`, `common:referenceToDataSetFormat`, and `common:referenceToPersonOrEntityEnteringTheData`.
+  - Keep compliance references (e.g., ILCD format UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`, ownership UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`, contact UUID `1f8176e3-86ba-49d1-bab7-4eca2741cdc1`) and declare `modellingAndValidation.LCIMethod.typeOfDataSet`.
+  - Flows additionally require `flowProperties.flowProperty` (mass property UUID `93a60a56-a3c8-11da-a746-0800200b9a66`), `quantitativeReference.referenceToReferenceFlowProperty`, and `classificationInformation`/`elementaryFlowCategorization` as applicable.
+  - Processes must retain the Stage 3 functional unit, exchange list, and `modellingAndValidation` blocks. Sources must keep bibliographic metadata and publication timestamps.
+- For batch publication, queue inserts per dataset type (`flows` → `processes` → `sources`) so references resolve immediately, and record each returned `id`/`version` pair for audit.
