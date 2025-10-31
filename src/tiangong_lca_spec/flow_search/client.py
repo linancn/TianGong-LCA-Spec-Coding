@@ -35,9 +35,7 @@ class FlowSearchClient:
         self._mcp = mcp_client or MCPToolClient(self._settings)
         self._timeout_seconds = self._resolve_timeout()
         self._max_attempts = max(1, self._settings.max_retries)
-        self._context_char_limit = int(
-            getattr(self._settings, "flow_search_context_chars", DEFAULT_CONTEXT_LIMIT)
-        )
+        self._context_char_limit = int(getattr(self._settings, "flow_search_context_chars", DEFAULT_CONTEXT_LIMIT))
 
     def _build_arguments(
         self,
@@ -168,9 +166,7 @@ class FlowSearchClient:
                         normalized.append(flattened)
             return normalized
         if isinstance(raw, dict):
-            candidates = (
-                raw.get("candidates") or raw.get("flows") or raw.get("results") or raw.get("data")
-            )
+            candidates = raw.get("candidates") or raw.get("flows") or raw.get("results") or raw.get("data")
             if isinstance(candidates, list):
                 normalized: list[dict[str, Any]] = []
                 for item in candidates:
@@ -203,14 +199,10 @@ class FlowSearchClient:
             "treatment_standards_routes": _first_text(name_block.get("treatmentStandardsRoutes")),
             "mix_and_location_types": _first_text(name_block.get("mixAndLocationTypes")),
             "flow_properties": flow.get("flowProperties"),
-            "version": flow.get("administrativeInformation", {})
-            .get("publicationAndOwnership", {})
-            .get("common:dataSetVersion"),
+            "version": flow.get("administrativeInformation", {}).get("publicationAndOwnership", {}).get("common:dataSetVersion"),
             "general_comment": _first_text(data_info.get("common:generalComment")),
             "geography": geography,
-            "classification": data_info.get("classificationInformation", {})
-            .get("common:classification", {})
-            .get("common:class"),
+            "classification": data_info.get("classificationInformation", {}).get("common:classification", {}).get("common:class"),
         }
 
 
@@ -246,11 +238,7 @@ def _extract_geography(raw_geo: Any) -> dict[str, Any] | None:
         return None
     location = raw_geo.get("locationOfOperationSupplyOrProduction") or raw_geo.get("location")
     if isinstance(location, dict):
-        code = (
-            location.get("@location") or location.get("code") or _first_text(location.get("name"))
-        )
-        description = _first_text(location.get("descriptionOfRestrictions")) or _first_text(
-            location.get("common:other")
-        )
+        code = location.get("@location") or location.get("code") or _first_text(location.get("name"))
+        description = _first_text(location.get("descriptionOfRestrictions")) or _first_text(location.get("common:other"))
         return {"code": code, "description": description}
     return None

@@ -76,9 +76,7 @@ class OpenAIResponsesLLM:
             raise last_error
         raise RuntimeError("OpenAI invocation failed without response")
 
-    def _cache_lookup(
-        self, payload: list[dict[str, Any]], text_options: dict[str, Any]
-    ) -> Path | None:
+    def _cache_lookup(self, payload: list[dict[str, Any]], text_options: dict[str, Any]) -> Path | None:
         if not self._cache_dir:
             return None
         cache_material = {
@@ -86,16 +84,12 @@ class OpenAIResponsesLLM:
             "payload": payload,
             "text_options": text_options,
         }
-        digest = hashlib.sha256(
-            json.dumps(cache_material, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()
+        digest = hashlib.sha256(json.dumps(cache_material, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
         return self._cache_dir / f"{digest}.json"
 
     def _cache_store(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            "w", dir=path.parent, encoding="utf-8", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile("w", dir=path.parent, encoding="utf-8", delete=False) as tmp:
             json.dump(payload, tmp, ensure_ascii=False, indent=2)
             tmp.flush()
             os.fsync(tmp.fileno())
@@ -134,11 +128,7 @@ def load_paper(path: Path) -> str:
     except json.JSONDecodeError:
         return raw
     if isinstance(parsed, dict) and "result" in parsed:
-        fragments = [
-            item.get("text", "")
-            for item in parsed["result"]
-            if isinstance(item, dict) and item.get("text")
-        ]
+        fragments = [item.get("text", "") for item in parsed["result"] if isinstance(item, dict) and item.get("text")]
         return json.dumps(fragments, ensure_ascii=False)
     return raw
 
@@ -193,10 +183,7 @@ def resolve_run_id(run_id: str | None) -> str:
     latest = load_latest_run_id()
     if latest:
         return latest
-    raise SystemExit(
-        "Run ID not provided and no previous run metadata found. "
-        "Run stage1_preprocess first or supply --run-id explicitly."
-    )
+    raise SystemExit("Run ID not provided and no previous run metadata found. " "Run stage1_preprocess first or supply --run-id explicitly.")
 
 
 def load_latest_run_id(path: Path = LATEST_RUN_ID_PATH) -> str | None:

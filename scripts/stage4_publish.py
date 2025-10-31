@@ -35,34 +35,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--run-id",
-        help=(
-            "Identifier used to locate run artifacts under artifacts/<run_id>/. "
-            "Defaults to the most recent run recorded by earlier stages."
-        ),
+        help=("Identifier used to locate run artifacts under artifacts/<run_id>/. " "Defaults to the most recent run recorded by earlier stages."),
     )
     parser.add_argument(
         "--alignment",
         type=Path,
-        help=(
-            "Optional override for the Stage 3 alignment path. "
-            "Defaults to artifacts/<run_id>/cache/stage3_alignment.json."
-        ),
+        help=("Optional override for the Stage 3 alignment path. " "Defaults to artifacts/<run_id>/cache/stage3_alignment.json."),
     )
     parser.add_argument(
         "--process-datasets",
         type=Path,
-        help=(
-            "Optional override for the merged process datasets path. "
-            "Defaults to artifacts/<run_id>/cache/process_datasets.json."
-        ),
+        help=("Optional override for the merged process datasets path. " "Defaults to artifacts/<run_id>/cache/process_datasets.json."),
     )
     parser.add_argument(
         "--validation",
         type=Path,
-        help=(
-            "Optional override for the validation report emitted by Stage 3. "
-            "Defaults to artifacts/<run_id>/cache/tidas_validation.json."
-        ),
+        help=("Optional override for the validation report emitted by Stage 3. " "Defaults to artifacts/<run_id>/cache/tidas_validation.json."),
     )
     parser.add_argument(
         "--update-alignment",
@@ -72,18 +60,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--update-datasets",
         action="store_true",
-        help=(
-            "When publishing flows, replace placeholders inside process datasets and workflow "
-            "result."
-        ),
+        help=("When publishing flows, replace placeholders inside process datasets and workflow " "result."),
     )
     parser.add_argument(
         "--workflow-result",
         type=Path,
-        help=(
-            "Optional override for the workflow result bundle emitted by Stage 3. "
-            "Defaults to artifacts/<run_id>/cache/workflow_result.json."
-        ),
+        help=("Optional override for the workflow result bundle emitted by Stage 3. " "Defaults to artifacts/<run_id>/cache/workflow_result.json."),
     )
     parser.add_argument(
         "--publish-flows",
@@ -93,23 +75,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish-processes",
         action="store_true",
-        help="Publish process datasets after confirming the artifact validation report has no blocking errors.",
+        help=("Publish process datasets after confirming the artifact validation report has no " "blocking errors."),
     )
     parser.add_argument(
         "--commit",
         action="store_true",
-        help=(
-            "Actually invoke Database_CRUD_Tool. Without this flag the command runs in dry-run "
-            "mode."
-        ),
+        help=("Actually invoke Database_CRUD_Tool. Without this flag the command runs in dry-run " "mode."),
     )
     parser.add_argument(
         "--dry-run-output",
         type=Path,
-        help=(
-            "Optional override for the dry-run preview payload path. "
-            "Defaults to artifacts/<run_id>/cache/stage4_publish_preview.json."
-        ),
+        help=("Optional override for the dry-run preview payload path. " "Defaults to artifacts/<run_id>/cache/stage4_publish_preview.json."),
     )
     return parser.parse_args()
 
@@ -132,9 +108,7 @@ def _coerce_text(value: Any) -> str:
     return str(value).strip()
 
 
-def _match_update(
-    updates: dict[tuple[str | None, str], dict[str, Any]], process: str, exchange: str
-):
+def _match_update(updates: dict[tuple[str | None, str], dict[str, Any]], process: str, exchange: str):
     entry = updates.get((process, exchange))
     if entry:
         return entry
@@ -183,14 +157,17 @@ def _update_process_payload(
             else:
                 process_hint_local = process_hint
 
-            if "referenceToFlowDataSet" in node and "exchangeName" in node:
-                ref = node.get("referenceToFlowDataSet")
-                if isinstance(ref, dict) and ref.get("unmatched:placeholder"):
-                    exchange_name = node.get("exchangeName")
-                    if exchange_name:
-                        replacement = _match_update(
-                            updates, process_hint_local or "Unknown process", exchange_name
-                        )
+            if "exchangeName" in node:
+                exchange_name = node.get("exchangeName")
+                if exchange_name:
+                    ref = node.get("referenceToFlowDataSet")
+                    needs_update = False
+                    if ref is None:
+                        needs_update = True
+                    elif isinstance(ref, dict) and ref.get("unmatched:placeholder"):
+                        needs_update = True
+                    if needs_update:
+                        replacement = _match_update(updates, process_hint_local or "Unknown process", exchange_name)
                         if replacement:
                             node["referenceToFlowDataSet"] = replacement
                             replacements += 1
@@ -215,13 +192,29 @@ def main() -> None:
     process_datasets_path = args.process_datasets or run_cache_path(run_id, "process_datasets.json")
     validation_path = args.validation or run_cache_path(run_id, "tidas_validation.json")
     workflow_result_path = args.workflow_result or run_cache_path(run_id, "workflow_result.json")
-    dry_run_output_path = args.dry_run_output or run_cache_path(
-        run_id, "stage4_publish_preview.json"
-    )
+    dry_run_output_path = args.dry_run_output or run_cache_path(run_id, "stage4_publish_preview.json")
 
     alignment = _load_json(alignment_path)
     alignment_entries = alignment.get("alignment") or []
     updates: dict[tuple[str | None, str], dict[str, Any]] = {}
+    for entry in alignment_entries:
+        process_name = entry.get("process_name") or "Unknown process"
+        origin = entry.get("origin_exchanges") or {}
+        for exchanges in origin.values():
+            for exchange in exchanges or []:
+                if not isinstance(exchange, dict):
+                    continue
+                exchange_name = exchange.get("exchangeName")
+                if not exchange_name:
+                    continue
+                ref = exchange.get("referenceToFlowDataSet")
+                if isinstance(ref, dict) and not ref.get("unmatched:placeholder"):
+                    updates[(process_name, exchange_name)] = ref
+                    updates.setdefault((None, exchange_name), ref)
+    process_payload: dict[str, Any] | None = None
+    workflow_payload: dict[str, Any] | None = None
+    process_replacements = 0
+    workflow_replacements = 0
 
     if args.publish_flows:
         flow_publisher = FlowPublisher(dry_run=dry_run)
@@ -275,11 +268,37 @@ def main() -> None:
         blocking = [item for item in findings if item.get("severity") == "error"]
         if blocking:
             raise SystemExit("Artifact validation reports blocking errors; publishing aborted.")
-        datasets_json = _load_json(process_datasets_path)
-        datasets = datasets_json.get("process_datasets") or []
+        process_payload = process_payload or _load_json(process_datasets_path)
+        if updates:
+            process_replacements = _update_process_payload(process_payload, updates)
+        datasets = process_payload.get("process_datasets") or []
+        exports_root = Path("artifacts") / run_id / "exports" / "processes"
+        publish_datasets: list[dict[str, Any]] = []
+        for dataset_entry in datasets:
+            ilcd = dataset_entry.get("process_data_set")
+            if not isinstance(ilcd, dict):
+                continue
+            uuid_value = _coerce_text(ilcd.get("processInformation", {}).get("dataSetInformation", {}).get("common:UUID"))
+            if uuid_value:
+                export_path = exports_root / f"{uuid_value}.json"
+                if export_path.exists():
+                    export_payload = _load_json(export_path)
+                    export_dataset = export_payload.get("processDataSet")
+                    if isinstance(export_dataset, dict):
+                        ilcd = export_dataset
+            exchanges_block = ilcd.get("exchanges", {}).get("exchange")
+            if not exchanges_block:
+                LOGGER.warning(
+                    "process_publish.skipped_empty_exchanges",
+                    uuid=uuid_value,
+                    name=_coerce_text(ilcd.get("processInformation", {}).get("dataSetInformation", {}).get("name", {}).get("baseName")),
+                )
+                continue
+            _update_process_payload(ilcd, updates)
+            publish_datasets.append(ilcd)
         process_publisher = ProcessPublisher(dry_run=dry_run)
         try:
-            results = process_publisher.publish(datasets)
+            results = process_publisher.publish(publish_datasets)
             if dry_run:
                 dump_json(
                     {
@@ -309,11 +328,12 @@ def main() -> None:
                 replacements=replacements,
             )
         if args.update_datasets:
-            process_payload = _load_json(process_datasets_path)
-            process_replacements = _update_process_payload(process_payload, updates)
+            if process_payload is None:
+                process_payload = _load_json(process_datasets_path)
+                process_replacements = _update_process_payload(process_payload, updates)
             dump_json(process_payload, process_datasets_path)
             if workflow_result_path.exists():
-                workflow_payload = _load_json(workflow_result_path)
+                workflow_payload = workflow_payload or _load_json(workflow_result_path)
                 workflow_replacements = _update_process_payload(workflow_payload, updates)
                 dump_json(workflow_payload, workflow_result_path)
                 LOGGER.info(

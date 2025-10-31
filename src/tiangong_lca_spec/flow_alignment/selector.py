@@ -51,19 +51,12 @@ class SimilarityCandidateSelector:
         candidates: Sequence[FlowCandidate],
     ) -> SelectorDecision:
         if not candidates:
-            return SelectorDecision(
-                candidate=None, score=None, reasoning=None, strategy="similarity"
-            )
-        scored = [
-            (self._score(query.exchange_name, candidate.base_name), candidate)
-            for candidate in candidates[:10]
-        ]
+            return SelectorDecision(candidate=None, score=None, reasoning=None, strategy="similarity")
+        scored = [(self._score(query.exchange_name, candidate.base_name), candidate) for candidate in candidates[:10]]
         scored.sort(key=lambda item: item[0], reverse=True)
         best_score, best_candidate = scored[0]
         if best_score <= 0.0:
-            return SelectorDecision(
-                candidate=None, score=None, reasoning=None, strategy="similarity"
-            )
+            return SelectorDecision(candidate=None, score=None, reasoning=None, strategy="similarity")
         return SelectorDecision(
             candidate=best_candidate,
             score=best_score,

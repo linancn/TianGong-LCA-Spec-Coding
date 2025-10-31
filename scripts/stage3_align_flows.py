@@ -39,14 +39,11 @@ def _read_process_blocks(path: Path) -> list[dict[str, Any]]:
             raise SystemExit(f"Process block #{index} must be an object: {path}")
         if "processDataSet" not in block:
             raise SystemExit(
-                "Each process block must contain 'processDataSet'. Stage 2 now writes "
-                "normalised exchanges directly inside the dataset; legacy 'exchange_list' "
-                "is no longer emitted."
+                "Each process block must contain 'processDataSet'. Stage 2 now writes " "normalised exchanges directly inside the dataset; legacy 'exchange_list' " "is no longer emitted."
             )
         if "exchange_list" in block and block["exchange_list"]:
             print(
-                "stage3_align_flows: ignoring legacy 'exchange_list' data; use "
-                "'processDataSet.exchanges' instead.",
+                "stage3_align_flows: ignoring legacy 'exchange_list' data; use " "'processDataSet.exchanges' instead.",
                 file=sys.stderr,
             )
     return blocks
@@ -63,12 +60,7 @@ def _read_clean_text(path: Path) -> str:
         if not isinstance(value, str):
             raise SystemExit(f"'clean_text' must be a string in {path}")
         return value
-    raise SystemExit(
-        (
-            f"Unexpected clean text format in {path}; expected plain markdown or JSON "
-            "with 'clean_text'."
-        )
-    )
+    raise SystemExit((f"Unexpected clean text format in {path}; expected plain markdown or JSON " "with 'clean_text'."))
 
 
 def _maybe_create_llm(path: Path | None) -> OpenAIResponsesLLM | None:
@@ -90,34 +82,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--run-id",
-        help=(
-            "Identifier used to locate run artifacts under artifacts/<run_id>/. "
-            "Defaults to the most recent run recorded by earlier stages."
-        ),
+        help=("Identifier used to locate run artifacts under artifacts/<run_id>/. " "Defaults to the most recent run recorded by earlier stages."),
     )
     parser.add_argument(
         "--process-blocks",
         type=Path,
-        help=(
-            "Optional override for the Stage 2 output path. "
-            "Defaults to artifacts/<run_id>/cache/stage2_process_blocks.json."
-        ),
+        help=("Optional override for the Stage 2 output path. " "Defaults to artifacts/<run_id>/cache/stage2_process_blocks.json."),
     )
     parser.add_argument(
         "--clean-text",
         type=Path,
-        help=(
-            "Optional override for the Stage 1 cleaned markdown path. "
-            "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."
-        ),
+        help=("Optional override for the Stage 1 cleaned markdown path. " "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help=(
-            "Optional override for the Stage 3 alignment output path. "
-            "Defaults to artifacts/<run_id>/cache/stage3_alignment.json."
-        ),
+        help=("Optional override for the Stage 3 alignment output path. " "Defaults to artifacts/<run_id>/cache/stage3_alignment.json."),
     )
     parser.add_argument(
         "--secrets",
@@ -128,43 +108,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-missing-hints",
         action="store_true",
-        help=(
-            "Proceed even when exchanges are missing 'FlowSearch hints' metadata. "
-            "By default the command aborts so that Stage 2 outputs can be fixed first."
-        ),
+        help=("Proceed even when exchanges are missing 'FlowSearch hints' metadata. " "By default the command aborts so that Stage 2 outputs can be fixed first."),
     )
     parser.add_argument(
         "--artifact-root",
         type=Path,
-        help=(
-            "Directory where ILCD process/flow/source JSON files will be written. "
-            "Defaults to artifacts/<run_id>/exports."
-        ),
+        help=("Directory where ILCD process/flow/source JSON files will be written. " "Defaults to artifacts/<run_id>/exports."),
     )
     parser.add_argument(
         "--process-datasets",
         dest="process_datasets",
         type=Path,
-        help=(
-            "Optional override for the merged process dataset path. "
-            "Defaults to artifacts/<run_id>/cache/process_datasets.json."
-        ),
+        help=("Optional override for the merged process dataset path. " "Defaults to artifacts/<run_id>/cache/process_datasets.json."),
     )
     parser.add_argument(
         "--validation-output",
         type=Path,
-        help=(
-            "Optional override for the local TIDAS validation report path. "
-            "Defaults to artifacts/<run_id>/cache/tidas_validation.json."
-        ),
+        help=("Optional override for the local TIDAS validation report path. " "Defaults to artifacts/<run_id>/cache/tidas_validation.json."),
     )
     parser.add_argument(
         "--workflow-output",
         type=Path,
-        help=(
-            "Optional override for the workflow result bundle path. "
-            "Defaults to artifacts/<run_id>/cache/workflow_result.json."
-        ),
+        help=("Optional override for the workflow result bundle path. " "Defaults to artifacts/<run_id>/cache/workflow_result.json."),
     )
     parser.add_argument(
         "--skip-artifact-validation",
@@ -182,12 +147,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     run_id = resolve_run_id(args.run_id)
-    cache_dir = ensure_run_cache_dir(run_id)
+    ensure_run_cache_dir(run_id)
     save_latest_run_id(run_id)
 
-    process_blocks_path = args.process_blocks or run_cache_path(
-        run_id, "stage2_process_blocks.json"
-    )
+    process_blocks_path = args.process_blocks or run_cache_path(run_id, "stage2_process_blocks.json")
     clean_text_path = args.clean_text or run_cache_path(run_id, "stage1_clean_text.md")
     alignment_output = args.output or run_cache_path(run_id, "stage3_alignment.json")
     process_datasets_path = args.process_datasets or run_cache_path(run_id, "process_datasets.json")
@@ -253,15 +216,9 @@ def main() -> None:
         primary_source_title=_extract_primary_title(clean_text),
     )
 
-    print(
-        f"Artifacts exported to {artifact_root} "
-        f"(processes={summary.process_count}, flows={summary.flow_count}, "
-        f"sources={summary.source_count})"
-    )
+    print(f"Artifacts exported to {artifact_root} " f"(processes={summary.process_count}, flows={summary.flow_count}, " f"sources={summary.source_count})")
     if summary.validation_report:
-        print(
-            f"Validation findings count={len(summary.validation_report)} " f"-> {validation_output}"
-        )
+        print(f"Validation findings count={len(summary.validation_report)} " f"-> {validation_output}")
     else:
         print(f"Validation succeeded -> {validation_output}")
     print(f"Workflow bundle written to {workflow_output}")
@@ -308,10 +265,7 @@ def _validate_flow_hints(
             missing_hints.append(descriptor)
     if not missing_hints:
         return
-    message = (
-        f"{process_label} is missing FlowSearch hints for "
-        f"{len(missing_hints)} exchange(s): {', '.join(missing_hints)}"
-    )
+    message = f"{process_label} is missing FlowSearch hints for " f"{len(missing_hints)} exchange(s): {', '.join(missing_hints)}"
     if allow_missing:
         print(f"Warning: {message}", file=sys.stderr)
         return
@@ -359,9 +313,7 @@ def _describe_exchange(exchange: dict[str, Any], index: int) -> str:
     label = _extract_exchange_label(exchange)
     if label and label != "unknown_exchange":
         return label
-    amount = _coerce_str(
-        exchange.get("meanAmount") or exchange.get("resultingAmount") or exchange.get("amount")
-    )
+    amount = _coerce_str(exchange.get("meanAmount") or exchange.get("resultingAmount") or exchange.get("amount"))
     unit = _coerce_str(exchange.get("unit") or exchange.get("resultingAmountUnit"))
     if amount and unit:
         return f"{amount} {unit} (#{index})"
@@ -377,10 +329,7 @@ def _ensure_exchange_name(exchange: dict[str, Any], index: int, process_label: s
     if inferred:
         exchange["exchangeName"] = inferred
         return inferred
-    raise SystemExit(
-        f"{process_label} exchange #{index} is missing `exchangeName` and could not be "
-        "inferred from FlowSearch hints. Please revise Stage 2 outputs."
-    )
+    raise SystemExit(f"{process_label} exchange #{index} is missing `exchangeName` and could not be " "inferred from FlowSearch hints. Please revise Stage 2 outputs.")
 
 
 def _infer_name_from_comment(comment: str) -> str:

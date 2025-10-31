@@ -5,7 +5,6 @@ from datetime import datetime
 
 from tiangong_lca_spec.process_extraction.service import ProcessExtractionService
 
-
 SAMPLE_DATASET = {
     "processInformation": {
         "dataSetInformation": {

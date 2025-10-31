@@ -8,16 +8,12 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from scripts import stage4_publish
 from tiangong_lca_spec.publishing.crud import FlowPublisher
 
-
 EXPECTED_COMPLIANCE_DECLARATIONS = {
     "compliance": {
         "common:referenceToComplianceSystem": {
             "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
             "@type": "source data set",
-            "@uri": (
-                "https://lcdn.tiangong.earth/showSource.xhtml?"
-                "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"
-            ),
+            "@uri": ("https://lcdn.tiangong.earth/showSource.xhtml?" "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"),
             "@version": "20.20.002",
             "common:shortDescription": {
                 "@xml:lang": "en",
@@ -27,6 +23,7 @@ EXPECTED_COMPLIANCE_DECLARATIONS = {
         "common:approvalOfOverallCompliance": "Fully compliant",
     }
 }
+
 
 class DummyCrudClient:
     def insert_flow(self, dataset):
@@ -46,12 +43,7 @@ def _build_alignment_payload():
                         "exchangeName": "Electric power",
                         "exchangeDirection": "Input",
                         "unit": "kWh",
-                        "generalComment": {
-                            "#text": (
-                                "FlowSearch hints: en_synonyms=Electric power; Grid electricity | "
-                                "zh_synonyms=电力 | usage_context=Electricity purchased from grid"
-                            )
-                        },
+                        "generalComment": {"#text": ("FlowSearch hints: en_synonyms=Electric power; Grid electricity | " "zh_synonyms=电力 | usage_context=Electricity purchased from grid")},
                         "referenceToFlowDataSet": {"unmatched:placeholder": True},
                     }
                 ]
@@ -69,10 +61,7 @@ def test_flow_publisher_builds_plan_without_network():
     dataset = plan.dataset
     assert dataset["flowInformation"]["dataSetInformation"]["common:UUID"] == plan.uuid
     assert dataset["modellingAndValidation"]["LCIMethod"]["typeOfDataSet"] == "Product flow"
-    assert (
-        dataset["modellingAndValidation"]["complianceDeclarations"]
-        == EXPECTED_COMPLIANCE_DECLARATIONS
-    )
+    assert dataset["modellingAndValidation"]["complianceDeclarations"] == EXPECTED_COMPLIANCE_DECLARATIONS
     publisher.close()
 
 

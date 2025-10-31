@@ -151,12 +151,7 @@ def _normalise_catalog(raw: Any) -> dict[str, dict[str, list[str] | str]]:
         unpacked = []
         for entry in raw:
             if isinstance(entry, dict):
-                flow_name = _stringify(
-                    entry.get("flow_name")
-                    or entry.get("flowName")
-                    or entry.get("flow")
-                    or entry.get("name")
-                )
+                flow_name = _stringify(entry.get("flow_name") or entry.get("flowName") or entry.get("flow") or entry.get("name"))
                 unpacked.append((flow_name or None, entry))
         items = unpacked
     else:
@@ -165,9 +160,7 @@ def _normalise_catalog(raw: Any) -> dict[str, dict[str, list[str] | str]]:
     for key, entry in items:
         if not isinstance(entry, dict):
             continue
-        flow_name = _stringify(key) or _stringify(
-            entry.get("flow_name") or entry.get("flowName") or entry.get("flow")
-        )
+        flow_name = _stringify(key) or _stringify(entry.get("flow_name") or entry.get("flowName") or entry.get("flow"))
         if not flow_name:
             continue
         canonical: dict[str, list[str] | str] = {}
@@ -247,9 +240,7 @@ def enrich_exchange_hints(
 
     default_usage = _default_usage_context(exchange, process_name)
     usage_candidate = parsed_fields.get("usage_context") or default_usage
-    hints["usage_context"] = _merge_field_values(
-        hints.get("usage_context"), usage_candidate, prefer_new_if_na=True
-    )
+    hints["usage_context"] = _merge_field_values(hints.get("usage_context"), usage_candidate, prefer_new_if_na=True)
 
     formatted = _format_hints(hints)
     remainder = notes or _strip_hint_prefix(existing_text)
@@ -393,9 +384,7 @@ def _reorder_comma_phrase(text: str) -> list[str]:
     return reordered
 
 
-def _parenthetical_segments(
-    text: str, *, chinese_only: bool = False, min_length: int = 1
-) -> list[str]:
+def _parenthetical_segments(text: str, *, chinese_only: bool = False, min_length: int = 1) -> list[str]:
     segments = []
     for raw in re.findall(r"\(([^)]+)\)", text):
         cleaned = raw.strip()
@@ -511,9 +500,7 @@ def _normalise_items(value: str | list[str] | None) -> list[str]:
     stripped = text.strip()
     if not stripped:
         return []
-    if (stripped.startswith("{") and stripped.endswith("}")) or (
-        stripped.startswith("[") and stripped.endswith("]")
-    ):
+    if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
         return []
     cleaned = stripped.replace("|", " ")
     parts = re.split(r"[;,]", cleaned)

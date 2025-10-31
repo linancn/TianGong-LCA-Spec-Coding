@@ -51,12 +51,8 @@ def run_workflow(paper_path: Path, output_path: Path, skip_tidas: bool) -> None:
         alignment_serializable.append(
             {
                 "process_name": entry.get("process_name"),
-                "matched_flows": [
-                    _to_serializable(flow) for flow in entry.get("matched_flows", [])
-                ],
-                "unmatched_flows": [
-                    _to_serializable(flow) for flow in entry.get("unmatched_flows", [])
-                ],
+                "matched_flows": [_to_serializable(flow) for flow in entry.get("matched_flows", [])],
+                "unmatched_flows": [_to_serializable(flow) for flow in entry.get("unmatched_flows", [])],
                 "origin_exchanges": _to_serializable(entry.get("origin_exchanges", {})),
             }
         )
@@ -67,10 +63,7 @@ def run_workflow(paper_path: Path, output_path: Path, skip_tidas: bool) -> None:
         "validation_report": [_to_serializable(item) for item in result.validation_report],
     }
     dump_json(payload, output_path)
-    print(
-        f"Workflow completed. Datasets={len(result.process_datasets)} "
-        f"alignment_entries={len(result.alignment)} findings={len(result.validation_report)}"
-    )
+    print(f"Workflow completed. Datasets={len(result.process_datasets)} " f"alignment_entries={len(result.alignment)} findings={len(result.validation_report)}")
 
 
 def parse_args() -> argparse.Namespace:

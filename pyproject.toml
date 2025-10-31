@@ -41,12 +41,12 @@ packages = ["src/tiangong_lca_spec"]
 include = ["src/tiangong_lca_spec", "README.md", "pyproject.toml"]
 
 [tool.black]
-line-length = 100
+line-length = 192
 target-version = ["py312"]
 include = "\\.pyi?$"
 
 [tool.ruff]
-line-length = 100
+line-length = 192
 target-version = "py312"
 
 [tool.ruff.lint]

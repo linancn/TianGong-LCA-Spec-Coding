@@ -46,9 +46,7 @@ class FlowAlignmentService:
         else:
             self._selector = SimilarityCandidateSelector()
 
-    def align_exchanges(
-        self, process_dataset: dict[str, Any], paper_md: str | None = None
-    ) -> dict[str, Any]:
+    def align_exchanges(self, process_dataset: dict[str, Any], paper_md: str | None = None) -> dict[str, Any]:
         try:
             exchanges = list(self._iter_exchanges(process_dataset))
         except KeyError as exc:
@@ -110,9 +108,7 @@ class FlowAlignmentService:
                         error=str(serial_exc),
                     )
             except Exception as exc:  # pylint: disable=broad-except
-                LOGGER.error(
-                    "flow_alignment.exchange_failed", exchange=exchange_name, error=str(exc)
-                )
+                LOGGER.error("flow_alignment.exchange_failed", exchange=exchange_name, error=str(exc))
             placeholder = self._apply_placeholder_reference(exchange)
             origin_exchanges.setdefault(exchange_name, []).append(placeholder)
             unmatched.append(self._build_unmatched_flow(exchange, process_name, exchange_name))
@@ -144,21 +140,13 @@ class FlowAlignmentService:
             if candidate.uuid:
                 matched_acc.append(candidate)
             else:
-                unmatched_acc.append(
-                    self._build_unmatched_flow(
-                        exchange, process_name, self._safe_exchange_name(exchange)
-                    )
-                )
+                unmatched_acc.append(self._build_unmatched_flow(exchange, process_name, self._safe_exchange_name(exchange)))
             return updated_exchange
 
-        unmatched_acc.append(
-            self._build_unmatched_flow(exchange, process_name, self._safe_exchange_name(exchange))
-        )
+        unmatched_acc.append(self._build_unmatched_flow(exchange, process_name, self._safe_exchange_name(exchange)))
         return self._apply_placeholder_reference(exchange)
 
-    def _apply_candidate_reference(
-        self, exchange: dict[str, Any], decision: SelectorDecision
-    ) -> dict[str, Any]:
+    def _apply_candidate_reference(self, exchange: dict[str, Any], decision: SelectorDecision) -> dict[str, Any]:
         enriched = dict(exchange)
         candidate = decision.candidate
         if candidate is None:
@@ -166,9 +154,7 @@ class FlowAlignmentService:
         if candidate.uuid:
             enriched["referenceToFlowDataSet"] = self._candidate_reference(candidate)
         else:
-            enriched["referenceToFlowDataSet"] = self._placeholder_reference(
-                self._safe_exchange_name(enriched)
-            )
+            enriched["referenceToFlowDataSet"] = self._placeholder_reference(self._safe_exchange_name(enriched))
         detail = enriched.get("matchingDetail")
         if not isinstance(detail, dict):
             detail = {}
@@ -190,9 +176,7 @@ class FlowAlignmentService:
     def _apply_placeholder_reference(self, exchange: dict[str, Any]) -> dict[str, Any]:
         enriched = dict(exchange)
         if not self._has_reference(enriched.get("referenceToFlowDataSet")):
-            enriched["referenceToFlowDataSet"] = self._placeholder_reference(
-                self._safe_exchange_name(enriched)
-            )
+            enriched["referenceToFlowDataSet"] = self._placeholder_reference(self._safe_exchange_name(enriched))
         return enriched
 
     @staticmethod
@@ -204,9 +188,7 @@ class FlowAlignmentService:
             "@refObjectId": uuid,
             "@version": version,
             "@uri": f"https://tiangong.earth/flows/{uuid}",
-            "common:shortDescription": FlowAlignmentService._multilang(
-                candidate.base_name or "Matched flow"
-            ),
+            "common:shortDescription": FlowAlignmentService._multilang(candidate.base_name or "Matched flow"),
         }
 
     @staticmethod
@@ -234,9 +216,7 @@ class FlowAlignmentService:
         label = text or "Unnamed flow"
         return {"@xml:lang": "en", "#text": label}
 
-    def _build_query(
-        self, exchange: dict[str, Any], process_name: str | None, paper_md: str | None
-    ) -> FlowQuery:
+    def _build_query(self, exchange: dict[str, Any], process_name: str | None, paper_md: str | None) -> FlowQuery:
         return FlowQuery(
             exchange_name=self._safe_exchange_name(exchange),
             description=self._stringify(exchange.get("generalComment") or exchange.get("comment")),
@@ -252,9 +232,7 @@ class FlowAlignmentService:
     ) -> UnmatchedFlow:
         return UnmatchedFlow(
             base_name=exchange_name or self._safe_exchange_name(exchange),
-            general_comment=self._stringify(
-                exchange.get("generalComment") or exchange.get("comment")
-            ),
+            general_comment=self._stringify(exchange.get("generalComment") or exchange.get("comment")),
             process_name=process_name,
         )
 
@@ -280,14 +258,8 @@ class FlowAlignmentService:
 
     @staticmethod
     def _extract_process_name(process_dataset: dict[str, Any]) -> str | None:
-        process_info = (
-            process_dataset.get("processInformation")
-            or process_dataset.get("process_information")
-            or {}
-        )
-        data_info = (
-            process_info.get("dataSetInformation") or process_info.get("data_set_information") or {}
-        )
+        process_info = process_dataset.get("processInformation") or process_dataset.get("process_information") or {}
+        data_info = process_info.get("dataSetInformation") or process_info.get("data_set_information") or {}
         name_block = data_info.get("name")
         resolved = _resolve_base_name(name_block)
         if resolved:
@@ -300,9 +272,7 @@ class FlowAlignmentService:
             exchange.get("exchangeName")
             or exchange.get("name")
             or exchange.get("flowName")
-            or FlowAlignmentService._extract_short_description_base(
-                exchange.get("referenceToFlowDataSet")
-            )
+            or FlowAlignmentService._extract_short_description_base(exchange.get("referenceToFlowDataSet"))
             or "unknown_exchange"
         )
         resolved = FlowAlignmentService._stringify(raw_name)

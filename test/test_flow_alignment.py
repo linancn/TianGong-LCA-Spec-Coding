@@ -59,12 +59,7 @@ def test_align_exchanges_does_not_emit_unmatched_on_success() -> None:
         assert result["matched_flows"], "Expected matches to be recorded"
         assert result["unmatched_flows"] == [], "No unmatched flows should be emitted"
         origin = result["origin_exchanges"]["Flow A"]
-        assert (
-            origin[0]["referenceToFlowDataSet"]["common:shortDescription"]["#text"]
-            .split(";")[0]
-            .strip()
-            == "Flow A"
-        )
+        assert origin[0]["referenceToFlowDataSet"]["common:shortDescription"]["#text"].split(";")[0].strip() == "Flow A"
     finally:
         service.close()
 

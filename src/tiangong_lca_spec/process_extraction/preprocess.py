@@ -10,12 +10,8 @@ from typing import Iterable
 from tiangong_lca_spec.core.exceptions import ProcessExtractionError
 
 INTRO_PATTERN = re.compile(r"^(#+\s*)?(?:\d+\s*[.\-:])?\s*(introduction)\b.*", flags=re.IGNORECASE)
-SECTION_PATTERN = re.compile(
-    r"^(#+\s*)(references|appendix|acknowledg(e)?ments?)\b.*", flags=re.IGNORECASE | re.MULTILINE
-)
-RESUME_SECTION_PATTERN = re.compile(
-    r"^(#+\s*)(materials?\s+and\s+methods|methods?)\b.*", flags=re.IGNORECASE | re.MULTILINE
-)
+SECTION_PATTERN = re.compile(r"^(#+\s*)(references|appendix|acknowledg(e)?ments?)\b.*", flags=re.IGNORECASE | re.MULTILINE)
+RESUME_SECTION_PATTERN = re.compile(r"^(#+\s*)(materials?\s+and\s+methods|methods?)\b.*", flags=re.IGNORECASE | re.MULTILINE)
 NUMERIC_TOKEN_PATTERN = re.compile(r"\b([0-9OoIlI]+(?:[.,:/-][0-9OoIlI]+)*)([sS%])?\b")
 IMAGE_DESCRIPTION_PREFIX = "image description:"
 NON_CONTENT_SECTION_PREFIXES = (

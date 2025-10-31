@@ -47,9 +47,7 @@ class MCPToolClient:
         connections: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         self._settings = settings or get_settings()
-        self._connection_configs = (
-            dict(connections) if connections is not None else self._settings.mcp_service_configs()
-        )
+        self._connection_configs = dict(connections) if connections is not None else self._settings.mcp_service_configs()
         self._portal_cm = start_blocking_portal()
         self._portal: BlockingPortal = self._portal_cm.__enter__()
         self._connections: dict[str, _ServerConnection] = {}
@@ -91,9 +89,7 @@ class MCPToolClient:
             if not raw:
                 return None
             return parse_json_response(raw)
-        raise SpecCodingError(
-            f"MCP tool '{tool_name}' on '{server_name}' returned non-JSON payload"
-        )
+        raise SpecCodingError(f"MCP tool '{tool_name}' on '{server_name}' returned non-JSON payload")
 
     def close(self) -> None:
         """Close all active MCP sessions."""
@@ -197,9 +193,7 @@ class MCPToolClient:
 
         if result.isError:
             message = self._collect_text(result) or "Unknown MCP tool error"
-            raise SpecCodingError(
-                f"MCP tool '{tool_name}' on '{server_name}' reported an error: {message}"
-            )
+            raise SpecCodingError(f"MCP tool '{tool_name}' on '{server_name}' reported an error: {message}")
 
         payload = result.structuredContent
         if payload is None:

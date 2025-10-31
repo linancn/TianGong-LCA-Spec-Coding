@@ -26,18 +26,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--run-id",
-        help=(
-            "Identifier used to group artifacts under artifacts/<run_id>/. "
-            "Defaults to a UTC timestamp when omitted."
-        ),
+        help=("Identifier used to group artifacts under artifacts/<run_id>/. " "Defaults to a UTC timestamp when omitted."),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help=(
-            "Optional override for the cleaned markdown path. "
-            "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."
-        ),
+        help=("Optional override for the cleaned markdown path. " "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."),
     )
     return parser.parse_args()
 

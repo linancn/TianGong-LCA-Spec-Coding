@@ -135,11 +135,7 @@ def _build_section_prompt() -> str:
         "will populate flow references after alignment.\n"
         '  * `@dataSetInternalID`: sequential identifiers as strings starting from "0".'
     )
-    metadata_fields = [
-        field
-        for field in repo.summarize_properties("tidas_processes.json", "/properties/processDataSet")
-        if field.name.startswith("@")
-    ]
+    metadata_fields = [field for field in repo.summarize_properties("tidas_processes.json", "/properties/processDataSet") if field.name.startswith("@")]
     metadata_lines = ["processDataSet metadata (auto-populated if omitted):"]
     metadata_lines.extend(_format_fields(metadata_fields, indent=1, depth=1))
     metadata = "\n".join(metadata_lines)
