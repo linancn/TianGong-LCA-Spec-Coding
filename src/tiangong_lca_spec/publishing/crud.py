@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import SpecCodingError
@@ -310,6 +310,8 @@ class FlowPublisher:
                     if not ref.get("unmatched:placeholder"):
                         continue
                     plan = self._build_plan(exchange, process_name)
+                    if plan is None:
+                        continue
                     plans.append(plan)
         self._prepared = plans
         LOGGER.info("flow_publish.plans_ready", count=len(plans))
@@ -334,14 +336,24 @@ class FlowPublisher:
     def close(self) -> None:
         self._crud.close()
 
-    def _build_plan(self, exchange: Mapping[str, Any], process_name: str) -> FlowPublishPlan:
+    def _build_plan(
+        self, exchange: Mapping[str, Any], process_name: str
+    ) -> Optional[FlowPublishPlan]:
         exchange_name = _coerce_text(exchange.get("exchangeName")) or "Unnamed exchange"
         comment = _extract_general_comment(exchange)
         hints = _parse_flowsearch_hints(comment)
         uuid_value = str(uuid.uuid4())
         en_name, zh_name = _derive_language_pairs(hints, exchange_name)
         flow_type = _infer_flow_type(exchange, hints)
-        classification = _build_elementary_classification(hints) if flow_type == "Elementary flow" else _build_product_classification()
+        if flow_type == "Elementary flow":
+            LOGGER.warning(
+                "flow_publish.skip_elementary",
+                exchange=exchange_name,
+                process=process_name,
+                reason="Elementary flows must reuse existing records.",
+            )
+            return None
+        classification = _build_product_classification()
         comment_entries = [_language_entry(comment or f"Auto-generated for {exchange_name}")]
         unit = _resolve_unit(exchange)
         compliance_block = flow_compliance_declarations()
