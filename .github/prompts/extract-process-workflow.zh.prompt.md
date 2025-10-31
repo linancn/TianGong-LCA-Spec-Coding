@@ -183,3 +183,4 @@ class WorkflowResult:
   - 流数据需补齐 `flowProperties.flowProperty`（质量属性 UUID `93a60a56-a3c8-11da-a746-0800200b9a66`）、`quantitativeReference.referenceToReferenceFlowProperty` 以及合适的 `classificationInformation` 或 `elementaryFlowCategorization`。
   - 流程数据保留 Stage 3 的功能单位、交换量与 `modellingAndValidation`；来源数据保留文献元信息与发布时间。
 - 批量发布时优先按 `flows`→`processes`→`sources` 顺序提交，及时记录返回的 `id` / `version` 以备审计。
+- **Elementary flows**：排放/资源类初级流只能从现有数据库选择；若 Stage 3 仍返回 `unmatched:placeholder`，需要先修复提示或手工映射，Stage 4 不会为这类流生成新数据集。只有真实的产品/废物流在库中缺失时才允许按产品流的模板新建。
