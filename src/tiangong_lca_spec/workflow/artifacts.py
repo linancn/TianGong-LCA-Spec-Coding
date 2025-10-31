@@ -489,7 +489,7 @@ def _ownership_reference() -> dict[str, Any]:
         "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
         "@type": "contact data set",
         "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-        "@version": "01.00.000",
+        "@version": "01.01.000",
         "common:shortDescription": [
             _language_entry("Tiangong LCA Data Working Group", "en"),
             _language_entry("天工LCA数据团队", "zh"),
@@ -504,7 +504,7 @@ def _permanent_dataset_uri(dataset_kind: str, uuid_value: str, version: str) -> 
         "source": "showSource.xhtml",
     }
     suffix = suffix_map.get(dataset_kind, "showDataSet.xhtml")
-    version_clean = version.strip() or "01.00.000"
+    version_clean = version.strip() or "01.01.000"
     return f"{TIDAS_PORTAL_BASE}/{suffix}?uuid={uuid_value}&version={version_clean}"
 
 
@@ -568,7 +568,7 @@ def _build_flow_dataset(
         name_block["treatmentStandardsRoutes"].append(_language_entry(zh_treatment or zh_synonyms[0], "zh"))
         name_block["mixAndLocationTypes"].append(_language_entry(zh_synonyms[0], "zh"))
 
-    dataset_version = "01.00.000"
+    dataset_version = "01.01.000"
     compliance_block = flow_compliance_declarations()
     modelling_section: dict[str, Any] = {
         "LCIMethod": {
@@ -607,7 +607,7 @@ def _build_flow_dataset(
                         "@type": "source data set",
                         "@refObjectId": format_source_uuid,
                         "@uri": f"../sources/{format_source_uuid}.xml",
-                        "@version": "01.00.000",
+                        "@version": "01.01.000",
                         "common:shortDescription": _language_entry("ILCD format"),
                     },
                     "common:referenceToPersonOrEntityEnteringTheData": _data_entry_reference(),
@@ -690,7 +690,7 @@ def _build_source_stub(
     short_desc = reference_node.get("common:shortDescription")
     description_entries = _normalise_language(short_desc or "Source reference")
     classification = _build_source_classification(reference_node, uuid_value, format_source_uuid)
-    dataset_version = "01.00.000"
+    dataset_version = "01.01.000"
     dataset = {
         "sourceDataSet": {
             "@xmlns": "http://lca.jrc.it/ILCD/Source",
@@ -721,7 +721,7 @@ def _build_source_stub(
         "@type": "source data set",
         "@refObjectId": format_source_uuid,
         "@uri": f"../sources/{format_source_uuid}.xml",
-        "@version": "01.00.000",
+        "@version": "01.01.000",
         "common:shortDescription": _language_entry("ILCD format"),
     }
     dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToPersonOrEntityEnteringTheData"] = _data_entry_reference()
@@ -738,7 +738,7 @@ def _build_source_reference(uuid_value: str, title: str) -> dict[str, Any]:
         "@type": "source data set",
         "@refObjectId": uuid_value,
         "@uri": f"../sources/{uuid_value}.xml",
-        "@version": "01.00.000",
+        "@version": "01.01.000",
         "common:shortDescription": [_language_entry(title)],
     }
 

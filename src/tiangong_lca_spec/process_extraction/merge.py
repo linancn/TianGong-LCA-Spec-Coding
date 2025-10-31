@@ -163,7 +163,7 @@ def _is_waste(name: str) -> bool:
 
 
 def _reference_from_candidate(candidate: FlowCandidate) -> dict[str, Any]:
-    version = candidate.version or "01.00.000"
+    version = candidate.version or "01.01.000"
     return {
         "@type": "flow data set",
         "@refObjectId": candidate.uuid,
