@@ -13,9 +13,7 @@ from _level_hierarchy_cli import run_cli
 
 def main(argv: list[str]) -> int:
     repo_root = Path(__file__).resolve().parents[1]
-    default_schema = (
-        repo_root / "src" / "tidas" / "schemas" / "tidas_flows_elementary_category.json"
-    )
+    default_schema = repo_root / "src" / "tidas" / "schemas" / "tidas_flows_elementary_category.json"
     return run_cli(argv, default_schema)
 
 

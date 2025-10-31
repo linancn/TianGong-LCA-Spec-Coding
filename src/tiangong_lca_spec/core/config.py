@@ -117,12 +117,8 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
             {
                 "mcp_base_url": flow_cfg.get("url", overrides.get("mcp_base_url")),
                 "mcp_transport": flow_cfg.get("transport", overrides.get("mcp_transport")),
-                "flow_search_service_name": flow_cfg.get(
-                    "service_name", overrides.get("flow_search_service_name")
-                ),
-                "flow_search_tool_name": flow_cfg.get(
-                    "tool_name", overrides.get("flow_search_tool_name")
-                ),
+                "flow_search_service_name": flow_cfg.get("service_name", overrides.get("flow_search_service_name")),
+                "flow_search_tool_name": flow_cfg.get("tool_name", overrides.get("flow_search_tool_name")),
             }
         )
         api_key = _sanitize_api_key(flow_cfg.get("api_key") or flow_cfg.get("authorization"))
@@ -133,9 +129,7 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
             overrides["flow_search_timeout"] = timeout_value
 
     general_cfg = data.get("lca") or {}
-    overrides.update(
-        {key: value for key, value in general_cfg.items() if key in Settings.model_fields}
-    )
+    overrides.update({key: value for key, value in general_cfg.items() if key in Settings.model_fields})
     return {key: value for key, value in overrides.items() if value is not None}
 
 

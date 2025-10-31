@@ -94,9 +94,7 @@ def _merge_exchange_candidates(
         if candidate and candidate.uuid:
             enriched["referenceToFlowDataSet"] = _reference_from_candidate(candidate)
         elif not _has_reference(enriched.get("referenceToFlowDataSet")):
-            enriched["referenceToFlowDataSet"] = _placeholder_reference(
-                _exchange_base_name(enriched) or "Unspecified flow"
-            )
+            enriched["referenceToFlowDataSet"] = _placeholder_reference(_exchange_base_name(enriched) or "Unspecified flow")
         if candidate:
             enriched.setdefault("matchingDetail", asdict(candidate))
         merged.append(enriched)

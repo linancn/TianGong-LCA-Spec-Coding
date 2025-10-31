@@ -31,30 +31,19 @@ def _read_clean_text(path: Path) -> str:
         if not isinstance(value, str):
             raise SystemExit(f"'clean_text' must be a string in {path}")
         return value
-    raise SystemExit(
-        (
-            f"Unexpected clean text format in {path}; expected plain markdown or JSON "
-            "with 'clean_text'."
-        )
-    )
+    raise SystemExit((f"Unexpected clean text format in {path}; expected plain markdown or JSON " "with 'clean_text'."))
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--run-id",
-        help=(
-            "Identifier used to locate run artifacts under artifacts/<run_id>/. "
-            "Defaults to the most recent run recorded by stage1_preprocess."
-        ),
+        help=("Identifier used to locate run artifacts under artifacts/<run_id>/. " "Defaults to the most recent run recorded by stage1_preprocess."),
     )
     parser.add_argument(
         "--clean-text",
         type=Path,
-        help=(
-            "Optional override for the Stage 1 output path. "
-            "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."
-        ),
+        help=("Optional override for the Stage 1 output path. " "Defaults to artifacts/<run_id>/cache/stage1_clean_text.md."),
     )
     parser.add_argument(
         "--secrets",
@@ -65,10 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        help=(
-            "Optional override for the Stage 2 process blocks JSON path. "
-            "Defaults to artifacts/<run_id>/cache/stage2_process_blocks.json."
-        ),
+        help=("Optional override for the Stage 2 process blocks JSON path. " "Defaults to artifacts/<run_id>/cache/stage2_process_blocks.json."),
     )
     parser.add_argument(
         "--resume",
@@ -78,10 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache-dir",
         type=Path,
-        help=(
-            "Directory used to cache OpenAI responses. "
-            "Defaults to artifacts/<run_id>/cache/openai/stage2."
-        ),
+        help=("Directory used to cache OpenAI responses. " "Defaults to artifacts/<run_id>/cache/openai/stage2."),
     )
     parser.add_argument(
         "--disable-cache",
@@ -94,7 +77,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     run_id = resolve_run_id(args.run_id)
-    cache_dir = ensure_run_cache_dir(run_id)
+    ensure_run_cache_dir(run_id)
     save_latest_run_id(run_id)
 
     clean_text_path = args.clean_text or run_cache_path(run_id, "stage1_clean_text.md")

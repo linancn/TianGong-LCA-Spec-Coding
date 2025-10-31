@@ -121,9 +121,7 @@ class ProcessExtractionService:
             state["sections"] = sections
             dataset_entries = _collect_datasets(sections)
         if not dataset_entries:
-            raise ProcessExtractionError(
-                "Section extraction must return `processDataSets` or `processDataSet`"
-            )
+            raise ProcessExtractionError("Section extraction must return `processDataSets` or `processDataSet`")
 
         blocks: list[dict[str, Any]] = []
         for process_id, dataset in dataset_entries:
@@ -162,9 +160,7 @@ class ProcessExtractionService:
             classification = self._classifier.run(process_info)
             data_info = process_info.setdefault("dataSetInformation", {})
             classification_info = data_info.setdefault("classificationInformation", {})
-            class_entries = (
-                list(classification) if isinstance(classification, list) else [classification]
-            )
+            class_entries = list(classification) if isinstance(classification, list) else [classification]
             classification_info["common:classification"] = {"common:class": class_entries}
             classification_info.pop("classification", None)
             block["classification"] = classification
@@ -220,9 +216,7 @@ class ProcessExtractionService:
                 exchange_items = exchanges_container.get("exchange", [])
                 if isinstance(exchange_items, list):
                     for exchange in exchange_items:
-                        enrich_exchange_hints(
-                            exchange, process_name=process_name, geography=geography_hint
-                        )
+                        enrich_exchange_hints(exchange, process_name=process_name, geography=geography_hint)
 
             final_block: dict[str, Any] = {
                 "processDataSet": normalized_dataset,
@@ -329,9 +323,7 @@ def _normalise_parent_processes(summary: dict[str, Any] | None) -> list[dict[str
         keywords_raw = entry.get("keywords") or entry.get("keyTerms") or []
         hints_raw = entry.get("subprocessHints") or entry.get("subProcesses") or []
         aliases = [_stringify(alias) for alias in _ensure_list(aliases_raw) if _stringify(alias)]
-        keywords = [
-            _stringify(keyword) for keyword in _ensure_list(keywords_raw) if _stringify(keyword)
-        ]
+        keywords = [_stringify(keyword) for keyword in _ensure_list(keywords_raw) if _stringify(keyword)]
         hints = [_stringify(hint) for hint in _ensure_list(hints_raw) if _stringify(hint)]
         normalised.append(
             {
@@ -354,11 +346,7 @@ def _slice_text_for_parent(clean_text: str, parent: dict[str, Any]) -> str:
         return clean_text
 
     paragraphs = [paragraph.strip() for paragraph in clean_text.split("\n\n") if paragraph.strip()]
-    matched_indices: list[int] = [
-        index
-        for index, paragraph in enumerate(paragraphs)
-        if any(keyword.lower() in paragraph.lower() for keyword in filtered_keywords)
-    ]
+    matched_indices: list[int] = [index for index, paragraph in enumerate(paragraphs) if any(keyword.lower() in paragraph.lower() for keyword in filtered_keywords)]
     if not matched_indices:
         return clean_text
     selected: list[str] = []
@@ -388,9 +376,7 @@ def _combine_parent_sections(
         if not dataset_entries:
             continue
         for dataset in dataset_entries:
-            identifier = _derive_dataset_identifier(dataset) or json.dumps(
-                dataset, sort_keys=True, default=str
-            )
+            identifier = _derive_dataset_identifier(dataset) or json.dumps(dataset, sort_keys=True, default=str)
             if identifier in seen_keys:
                 continue
             seen_keys.add(identifier)
@@ -577,9 +563,7 @@ def _extract_process_name(dataset: dict[str, Any]) -> str | None:
     if isinstance(name, dict):
         base_name = name.get("baseName")
         if isinstance(base_name, dict):
-            return _stringify(
-                base_name.get("#text") or base_name.get("@value") or base_name.get("text")
-            )
+            return _stringify(base_name.get("#text") or base_name.get("@value") or base_name.get("text"))
         return _stringify(base_name)
     return _stringify(name)
 

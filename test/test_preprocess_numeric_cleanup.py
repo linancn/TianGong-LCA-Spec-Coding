@@ -7,12 +7,7 @@ def test_preprocess_corrects_ocr_numeric_artifacts():
     md_json = json.dumps(
         [
             "1 Introduction",
-            (
-                "The methanol industry started in the 195Os.\n"
-                "Image Description: 195Os remains.\n"
-                "\n"
-                "More text cites 1O7 million tons."
-            ),
+            ("The methanol industry started in the 195Os.\n" "Image Description: 195Os remains.\n" "\n" "More text cites 1O7 million tons."),
             "<table><tr><td>9O</td></tr></table>",
             "Values include 1 . 5 3, 1 6 3 MJ, 2o2l, 11o8.30, and O2/02 samples.",
         ]

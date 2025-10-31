@@ -29,11 +29,7 @@ def load_entries(schema_path: Path) -> List[Entry]:
     entries: List[Entry] = []
     for item in data.get("oneOf", []):
         props = item.get("properties", {})
-        code = (
-            props.get("@classId", {}).get("const")
-            or props.get("@catId", {}).get("const")
-            or props.get("@code", {}).get("const")
-        )
+        code = props.get("@classId", {}).get("const") or props.get("@catId", {}).get("const") or props.get("@code", {}).get("const")
         level_str = props.get("@level", {}).get("const")
         description = props.get("#text", {}).get("const", "")
         if code is None or level_str is None:

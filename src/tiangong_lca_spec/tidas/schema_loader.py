@@ -224,11 +224,7 @@ class TidasSchemaRepository:
         if "const" in schema:
             return "const"
         if "anyOf" in schema:
-            types = [
-                item.get("type")
-                for item in schema["anyOf"]
-                if isinstance(item, dict) and item.get("type")
-            ]
+            types = [item.get("type") for item in schema["anyOf"] if isinstance(item, dict) and item.get("type")]
             return " | ".join(types) if types else "anyOf"
         return None
 

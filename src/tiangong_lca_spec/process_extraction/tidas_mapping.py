@@ -72,9 +72,7 @@ def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, An
     dataset = _apply_root_metadata(process_dataset)
     dataset["@locations"] = BASE_METADATA["@locations"]
     process_information = dataset.setdefault("processInformation", {})
-    normalised_process_information, name_components = _normalise_process_information(
-        process_information
-    )
+    normalised_process_information, name_components = _normalise_process_information(process_information)
     dataset["processInformation"] = normalised_process_information
     dataset_uuid = normalised_process_information.get("dataSetInformation", {}).get("common:UUID")
     modelling = _normalise_modelling_and_validation(dataset.get("modellingAndValidation"))
@@ -190,22 +188,15 @@ def _normalise_dataset_information(
         name_components["base"],
         fallback="Unnamed process",
     )
-    refreshed_name_block["treatmentStandardsRoutes"] = _ensure_multilang(
-        name_components["treatment"]
-    )
+    refreshed_name_block["treatmentStandardsRoutes"] = _ensure_multilang(name_components["treatment"])
     refreshed_name_block["mixAndLocationTypes"] = _ensure_multilang(name_components["mix"])
     functional_properties = name_components.get("functional_unit_properties")
     if functional_properties:
-        refreshed_name_block["functionalUnitFlowProperties"] = _ensure_multilang(
-            functional_properties
-        )
+        refreshed_name_block["functionalUnitFlowProperties"] = _ensure_multilang(functional_properties)
     info["name"] = refreshed_name_block
 
     classification_info = _ensure_dict(info.get("classificationInformation"))
-    specification_text = (
-        _stringify(classification_info.pop("specification", None))
-        or _stringify(info.pop("specification", None))
-    ).strip()
+    specification_text = (_stringify(classification_info.pop("specification", None)) or _stringify(info.pop("specification", None))).strip()
     classification = classification_info.get("classification")
     common_class = classification_info.get("common:classification")
     if isinstance(classification, list):
@@ -250,13 +241,9 @@ def _normalise_dataset_information(
             entry.pop("@text", None)
         classification_info.setdefault("common:classification", {})["common:class"] = normalised_classes
     if specification_text:
-        classification_info.setdefault("common:classification", {}).setdefault(
-            "common:other", specification_text
-        )
+        classification_info.setdefault("common:classification", {}).setdefault("common:other", specification_text)
     allowed_keys = {"common:classification", "common:other"}
-    classification_info = {
-        key: value for key, value in classification_info.items() if key in allowed_keys
-    }
+    classification_info = {key: value for key, value in classification_info.items() if key in allowed_keys}
 
     info["classificationInformation"] = classification_info
 
@@ -299,11 +286,7 @@ def _normalise_dataset_information(
         "classificationInformation",
         "common:generalComment",
     }
-    info = {
-        key: value
-        for key, value in info.items()
-        if key in allowed_dataset_info_keys and value not in (None, "", {}, [])
-    }
+    info = {key: value for key, value in info.items() if key in allowed_dataset_info_keys and value not in (None, "", {}, [])}
     return info, name_components
 
 
@@ -402,9 +385,7 @@ def _normalise_time(section: Any) -> dict[str, Any]:
         time_info["common:referenceYear"] = year_value
     elif "common:referenceYear" in time_info:
         value = time_info["common:referenceYear"]
-        if not isinstance(value, (int, float, str)) or (
-            isinstance(value, str) and not value.isdigit()
-        ):
+        if not isinstance(value, (int, float, str)) or (isinstance(value, str) and not value.isdigit()):
             time_info.pop("common:referenceYear", None)
 
     valid_until = time_info.get("common:dataSetValidUntil")
@@ -429,13 +410,7 @@ def _normalise_time(section: Any) -> dict[str, Any]:
 def _normalise_geography(section: Any) -> dict[str, Any]:
     geo = _ensure_dict(section)
     block = _ensure_dict(geo.get("locationOfOperationSupplyOrProduction"))
-    raw_code = (
-        block.pop("@location", None)
-        or block.pop("location", None)
-        or geo.pop("code", None)
-        or geo.pop("@location", None)
-        or DEFAULT_LOCATION
-    )
+    raw_code = block.pop("@location", None) or block.pop("location", None) or geo.pop("code", None) or geo.pop("@location", None) or DEFAULT_LOCATION
     code, code_description = _extract_location_code(raw_code)
     sub_location = block.pop("subLocation", None) or geo.pop("subLocation", None)
 
@@ -451,13 +426,9 @@ def _normalise_technology(section: Any) -> dict[str, Any]:
     if not technology:
         return {}
     if "technologyDescriptionAndIncludedProcesses" in technology:
-        technology["technologyDescriptionAndIncludedProcesses"] = _ensure_multilang(
-            technology.get("technologyDescriptionAndIncludedProcesses"), fallback=""
-        )
+        technology["technologyDescriptionAndIncludedProcesses"] = _ensure_multilang(technology.get("technologyDescriptionAndIncludedProcesses"), fallback="")
     if technology.get("technologicalApplicability"):
-        technology["technologicalApplicability"] = _ensure_multilang(
-            technology.get("technologicalApplicability"), fallback=""
-        )
+        technology["technologicalApplicability"] = _ensure_multilang(technology.get("technologicalApplicability"), fallback="")
     for key in (
         "referenceToIncludedProcesses",
         "referenceToTechnologyPictogramme",
@@ -507,9 +478,7 @@ def _normalise_exchanges(
         item["exchangeDirection"] = "Input" if direction != "output" else "Output"
         item.setdefault("meanAmount", "0")
         item.setdefault("resultingAmount", "0")
-        item["dataDerivationTypeStatus"] = _normalise_derivation_status(
-            item.get("dataDerivationTypeStatus")
-        )
+        item["dataDerivationTypeStatus"] = _normalise_derivation_status(item.get("dataDerivationTypeStatus"))
         short_description = _compose_short_description(exchange_name, item, name_components)
         comment_value = item.get("generalComment")
         if comment_value:
@@ -625,9 +594,7 @@ def _normalise_lcia_results(section: Any) -> dict[str, Any]:
         else:
             lcia_result["meanAmount"] = f"{mean_value}"
     if lcia_result.get("generalComment"):
-        lcia_result["generalComment"] = _ensure_multilang(
-            lcia_result.get("generalComment"), fallback=""
-        )
+        lcia_result["generalComment"] = _ensure_multilang(lcia_result.get("generalComment"), fallback="")
     if not _has_reference(lcia_result.get("referenceToLCIAMethodDataSet")):
         lcia_result.pop("referenceToLCIAMethodDataSet", None)
     results = {"LCIAResult": lcia_result}
@@ -646,9 +613,7 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
         type_value = DEFAULT_PROCESS_DATA_SET_TYPE
     lci["typeOfDataSet"] = type_value
 
-    principle_value = _match_allowed_option(
-        lci.get("LCIMethodPrinciple"), LCI_METHOD_PRINCIPLE_OPTIONS
-    )
+    principle_value = _match_allowed_option(lci.get("LCIMethodPrinciple"), LCI_METHOD_PRINCIPLE_OPTIONS)
     if principle_value:
         lci["LCIMethodPrinciple"] = principle_value
     else:
@@ -781,9 +746,7 @@ def _normalise_administrative_information(
     data_entry.pop("common:other", None)
     data_entry["common:referenceToDataSetFormat"] = _build_dataset_format_reference()
     data_entry["common:referenceToPersonOrEntityEnteringTheData"] = _build_commissioner_reference()
-    cleaned_data_entry = {
-        key: value for key, value in data_entry.items() if value not in (None, "", {}, [])
-    }
+    cleaned_data_entry = {key: value for key, value in data_entry.items() if value not in (None, "", {}, [])}
     admin["dataEntryBy"] = cleaned_data_entry
 
     publication = _ensure_dict(admin.get("publicationAndOwnership"))
@@ -793,13 +756,9 @@ def _normalise_administrative_information(
     if publication or dataset_uuid:
         publication["common:dataSetVersion"] = version_candidate
         if dataset_uuid:
-            publication["common:permanentDataSetURI"] = _build_permanent_dataset_uri(
-                dataset_kind, dataset_uuid, version_candidate
-            )
+            publication["common:permanentDataSetURI"] = _build_permanent_dataset_uri(dataset_kind, dataset_uuid, version_candidate)
         if "common:registrationNumber" in publication:
-            publication["common:registrationNumber"] = _stringify(
-                publication.get("common:registrationNumber")
-            ).strip()
+            publication["common:registrationNumber"] = _stringify(publication.get("common:registrationNumber")).strip()
         licence_value = publication.get("common:licenseType")
         if licence_value is not None:
             publication["common:licenseType"] = _normalise_license(licence_value)
@@ -814,9 +773,7 @@ def _normalise_administrative_information(
                 publication.pop("common:copyright", None)
         publication["common:referenceToOwnershipOfDataSet"] = _build_commissioner_reference()
         publication.pop("common:other", None)
-        cleaned_publication = {
-            key: value for key, value in publication.items() if value not in (None, "", {}, [])
-        }
+        cleaned_publication = {key: value for key, value in publication.items() if value not in (None, "", {}, [])}
         if cleaned_publication:
             admin["publicationAndOwnership"] = cleaned_publication
         else:
@@ -868,10 +825,7 @@ def _build_compliance_reference() -> dict[str, Any] | None:
     return {
         "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
         "@type": "source data set",
-        "@uri": (
-            "https://lcdn.tiangong.earth/showSource.xhtml?"
-            "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"
-        ),
+        "@uri": ("https://lcdn.tiangong.earth/showSource.xhtml?" "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"),
         "@version": "20.20.002",
         "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD Data Network - Entry-level"},
     }
@@ -923,9 +877,7 @@ def _normalise_derivation_status(value: Any) -> str:
 def _normalise_license(value: Any) -> str:
     allowed = {
         "free of charge for all users and uses": "Free of charge for all users and uses",
-        "free of charge for some user types or use types": (
-            "Free of charge for some user types or use types"
-        ),
+        "free of charge for some user types or use types": ("Free of charge for some user types or use types"),
         "free of charge for members only": "Free of charge for members only",
         "license fee": "License fee",
         "other": "Other",
@@ -1056,10 +1008,7 @@ def _extract_location_code(value: Any) -> tuple[str, str | None]:
         text = value.strip()
         return (text or DEFAULT_LOCATION, None)
     if isinstance(value, dict):
-        fallback_description = (
-            _stringify(value.get("description") or value.get("name") or value.get("common:other"))
-            or None
-        )
+        fallback_description = _stringify(value.get("description") or value.get("name") or value.get("common:other")) or None
         for key in ("code", "@location", "location", "country", "region"):
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.strip():
@@ -1180,9 +1129,7 @@ def _extract_feedstock(sources: list[str], product: str) -> str:
             if candidate:
                 return _title_case_phrase(_clean_feedstock_phrase(candidate))
     for text in sources:
-        match = re.search(
-            r"feedstock\s*(?:is|are|:)?\s*([A-Za-z0-9\s\-/]+)", text or "", re.IGNORECASE
-        )
+        match = re.search(r"feedstock\s*(?:is|are|:)?\s*([A-Za-z0-9\s\-/]+)", text or "", re.IGNORECASE)
         if match:
             candidate = match.group(1).strip(" ,.;:")
             if candidate:
@@ -1278,9 +1225,7 @@ def _resolve_route(product: str, route_candidate: str, sources: list[str]) -> st
     for text in sources:
         if not text:
             continue
-        match = re.search(
-            r"(?:technical|technology)\s+route[:：]\s*([^;\n,]+)", text, re.IGNORECASE
-        )
+        match = re.search(r"(?:technical|technology)\s+route[:：]\s*([^;\n,]+)", text, re.IGNORECASE)
         if match:
             candidate = match.group(1).strip()
             if candidate:
@@ -1362,9 +1307,7 @@ def _deduplicate_preserve_order(parts: list[str]) -> list[str]:
 
 def _strip_common_other(value: Any) -> Any:
     if isinstance(value, dict):
-        return {
-            key: _strip_common_other(val) for key, val in value.items() if key != "common:other"
-        }
+        return {key: _strip_common_other(val) for key, val in value.items() if key != "common:other"}
     if isinstance(value, list):
         return [_strip_common_other(item) for item in value]
     return value
@@ -1403,9 +1346,7 @@ def _select_reference_flow(
         return None
     functional_unit = name_components.get("functional_unit") or ""
     fu_amount, fu_unit = _parse_amount_unit(functional_unit)
-    output_candidates = [
-        candidate for candidate in candidates if candidate.get("direction", "").lower() == "output"
-    ]
+    output_candidates = [candidate for candidate in candidates if candidate.get("direction", "").lower() == "output"]
     search_pool = output_candidates or candidates
 
     for candidate in search_pool:

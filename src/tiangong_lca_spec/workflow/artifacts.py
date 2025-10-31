@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
+from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
 from tiangong_lca_spec.tidas_validation import TidasValidationService
-from tiangong_lca_spec.core.logging import get_logger
 
 DEFAULT_FORMAT_SOURCE_UUID = "00000000-0000-0000-0000-0000000000f0"
 TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
@@ -128,11 +128,7 @@ def generate_artifacts(
         ilcd_dataset = dataset.as_dict()
         if primary_source_uuid and primary_source_title:
             _attach_primary_source(ilcd_dataset, primary_source_uuid, primary_source_title)
-        uuid_value = (
-            ilcd_dataset.get("processInformation", {})
-            .get("dataSetInformation", {})
-            .get("common:UUID")
-        )
+        uuid_value = ilcd_dataset.get("processInformation", {}).get("dataSetInformation", {}).get("common:UUID")
         if not uuid_value:
             raise ValueError("Process dataset missing common:UUID.")
         process_path = artifact_root / "processes" / f"{uuid_value}.json"
@@ -373,9 +369,7 @@ def _build_waste_classification(candidate: dict[str, Any]) -> dict[str, Any]:
     return {"common:classification": {"common:class": classes}}
 
 
-def _infer_elementary_categories(
-    exchange: dict[str, Any], hints: dict[str, list[str]]
-) -> list[dict[str, Any]]:
+def _infer_elementary_categories(exchange: dict[str, Any], hints: dict[str, list[str]]) -> list[dict[str, Any]]:
     parts = [
         _extract_text(exchange.get("location")).lower(),
         " ".join(hints.get("usage_context") or []).lower(),
@@ -394,9 +388,7 @@ def _infer_elementary_categories(
     return _clone_entries(ELEMENTARY_CATEGORY_OTHER)
 
 
-def _build_elementary_classification(
-    exchange: dict[str, Any], hints: dict[str, list[str]]
-) -> dict[str, Any]:
+def _build_elementary_classification(exchange: dict[str, Any], hints: dict[str, list[str]]) -> dict[str, Any]:
     categories = _infer_elementary_categories(exchange, hints)
     return {"common:elementaryFlowCategorization": {"common:category": categories}}
 
@@ -413,9 +405,7 @@ def _source_classification_entry(class_id: str, label: str) -> dict[str, Any]:
     }
 
 
-def _build_source_classification(
-    reference_node: dict[str, Any], uuid_value: str, format_source_uuid: str
-) -> dict[str, Any]:
+def _build_source_classification(reference_node: dict[str, Any], uuid_value: str, format_source_uuid: str) -> dict[str, Any]:
     existing = reference_node.get("classificationInformation")
     if isinstance(existing, dict) and existing.get("common:classification"):
         return existing
@@ -428,27 +418,17 @@ def _build_source_classification(
         return any(keyword in haystack for keyword in keywords if keyword)
 
     class_id, label = SOURCE_CLASSIFICATIONS["other source types"]
-    if uuid_value.lower() == format_source_uuid.lower() or _match_any(
-        short_desc, ("format", "schema")
-    ):
+    if uuid_value.lower() == format_source_uuid.lower() or _match_any(short_desc, ("format", "schema")):
         class_id, label = SOURCE_CLASSIFICATIONS["data set formats"]
     elif ref_uuid == DEFAULT_FORMAT_SOURCE_UUID:
         class_id, label = SOURCE_CLASSIFICATIONS["data set formats"]
-    elif _match_any(
-        short_desc, ("ilcd data network", "compliance", "conformity", "certification")
-    ) or _match_any(uri, ("compliance", "conformity")):
+    elif _match_any(short_desc, ("ilcd data network", "compliance", "conformity", "certification")) or _match_any(uri, ("compliance", "conformity")):
         class_id, label = SOURCE_CLASSIFICATIONS["compliance systems"]
-    elif _match_any(short_desc, ("database", "data bank", "dataset")) or _match_any(
-        uri, ("database",)
-    ):
+    elif _match_any(short_desc, ("database", "data bank", "dataset")) or _match_any(uri, ("database",)):
         class_id, label = SOURCE_CLASSIFICATIONS["databases"]
-    elif _match_any(
-        short_desc, ("nace", "isic", "cpc", "statistical", "classification")
-    ) or _match_any(uri, ("classification",)):
+    elif _match_any(short_desc, ("nace", "isic", "cpc", "statistical", "classification")) or _match_any(uri, ("classification",)):
         class_id, label = SOURCE_CLASSIFICATIONS["statistical classifications"]
-    elif _match_any(short_desc, ("image", "photo", "figure", "diagram")) or uri.endswith(
-        (".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp")
-    ):
+    elif _match_any(short_desc, ("image", "photo", "figure", "diagram")) or uri.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp")):
         class_id, label = SOURCE_CLASSIFICATIONS["images"]
     elif _match_any(
         short_desc,
@@ -491,10 +471,7 @@ def flow_compliance_declarations() -> dict[str, Any]:
             "common:referenceToComplianceSystem": {
                 "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
                 "@type": "source data set",
-                "@uri": (
-                    "https://lcdn.tiangong.earth/showSource.xhtml?"
-                    "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"
-                ),
+                "@uri": ("https://lcdn.tiangong.earth/showSource.xhtml?" "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"),
                 "@version": "20.20.002",
                 "common:shortDescription": _language_entry("ILCD Data Network - Entry-level"),
             },
@@ -539,9 +516,7 @@ def _build_flow_dataset(
 ) -> tuple[str, dict[str, Any]] | None:
     ref = exchange.get("referenceToFlowDataSet") or {}
     uuid_value = ref.get("@refObjectId") or str(uuid4())
-    name = _extract_text(exchange.get("exchangeName")) or _extract_text(
-        ref.get("common:shortDescription")
-    )
+    name = _extract_text(exchange.get("exchangeName")) or _extract_text(ref.get("common:shortDescription"))
     if not name:
         name = "Unnamed flow"
     hints = _parse_flowsearch_hints(exchange.get("generalComment"))
@@ -570,12 +545,7 @@ def _build_flow_dataset(
     if not synonyms_block:
         synonyms_block.append(_language_entry(name, "en"))
 
-    treatment_candidates = (
-        hints.get("state_purity")
-        or hints.get("source_or_pathway")
-        or hints.get("abbreviation")
-        or [name]
-    )
+    treatment_candidates = hints.get("state_purity") or hints.get("source_or_pathway") or hints.get("abbreviation") or [name]
     treatment_text = _unique_join(treatment_candidates)
     zh_treatment = zh_synonyms[0] if zh_synonyms else ""
 
@@ -587,9 +557,7 @@ def _build_flow_dataset(
         mix_candidates = ["Unspecified mix"]
     mix_text = _unique_join(mix_candidates)
 
-    comment_entries = _normalise_language(
-        exchange.get("generalComment") or f"Generated for {process_name}"
-    )
+    comment_entries = _normalise_language(exchange.get("generalComment") or f"Generated for {process_name}")
     name_block = {
         "baseName": [_language_entry(name, "en")],
         "treatmentStandardsRoutes": [_language_entry(treatment_text or name, "en")],
@@ -597,9 +565,7 @@ def _build_flow_dataset(
     }
     if zh_synonyms:
         name_block["baseName"].append(_language_entry(zh_synonyms[0], "zh"))
-        name_block["treatmentStandardsRoutes"].append(
-            _language_entry(zh_treatment or zh_synonyms[0], "zh")
-        )
+        name_block["treatmentStandardsRoutes"].append(_language_entry(zh_treatment or zh_synonyms[0], "zh"))
         name_block["mixAndLocationTypes"].append(_language_entry(zh_synonyms[0], "zh"))
 
     dataset_version = "01.00.000"
@@ -648,9 +614,7 @@ def _build_flow_dataset(
                 },
                 "publicationAndOwnership": {
                     "common:dataSetVersion": dataset_version,
-                    "common:permanentDataSetURI": _permanent_dataset_uri(
-                        "flow", uuid_value, dataset_version
-                    ),
+                    "common:permanentDataSetURI": _permanent_dataset_uri("flow", uuid_value, dataset_version),
                     "common:referenceToOwnershipOfDataSet": _ownership_reference(),
                 },
             },
@@ -747,26 +711,20 @@ def _build_source_stub(
                 },
                 "publicationAndOwnership": {
                     "common:dataSetVersion": dataset_version,
-                    "common:permanentDataSetURI": _permanent_dataset_uri(
-                        "source", uuid_value, dataset_version
-                    ),
+                    "common:permanentDataSetURI": _permanent_dataset_uri("source", uuid_value, dataset_version),
                     "common:referenceToOwnershipOfDataSet": _ownership_reference(),
                 },
             },
         }
     }
-    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"][
-        "common:referenceToDataSetFormat"
-    ] = {
+    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToDataSetFormat"] = {
         "@type": "source data set",
         "@refObjectId": format_source_uuid,
         "@uri": f"../sources/{format_source_uuid}.xml",
         "@version": "01.00.000",
         "common:shortDescription": _language_entry("ILCD format"),
     }
-    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"][
-        "common:referenceToPersonOrEntityEnteringTheData"
-    ] = _data_entry_reference()
+    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToPersonOrEntityEnteringTheData"] = _data_entry_reference()
     return dataset
 
 
@@ -785,9 +743,7 @@ def _build_source_reference(uuid_value: str, title: str) -> dict[str, Any]:
     }
 
 
-def _attach_primary_source(
-    ilcd_dataset: dict[str, Any], source_uuid: str, source_title: str
-) -> None:
+def _attach_primary_source(ilcd_dataset: dict[str, Any], source_uuid: str, source_title: str) -> None:
     admin = ilcd_dataset.setdefault("administrativeInformation", {})
     data_entry = admin.get("dataEntryBy")
     if not isinstance(data_entry, dict):
