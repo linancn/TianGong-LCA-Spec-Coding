@@ -14,7 +14,7 @@ Subsequent stages fall back to the most recent `run_id` when `--run-id` is omitt
 ## 0. Execution Ground Rules (Avoid Wasted Iterations)
 - **Read the source material first**: Before you start, quickly review the original paper or `clean_text` to confirm chapter layout, data tables, and the functional unit.
 - **Run the standard commands directly**: By default, follow the Stage 1-3 CLI templates listed below (input/output paths follow repository conventions) without repeatedly calling `--help`. Only open the help text when you truly need custom parameters.
-- **Always run the staged scripts**: Unless the user explicitly instructs otherwise, invoke `stage1` → `stage3`. Do not handcraft large JSON payloads or skip stages to fabricate intermediate files. If credentials (OpenAI, MCP, TIDAS) are missing, notify the user immediately and wait for guidance. You can execute `stage4_publish` after Stage 3 when publication is required.
+- **Always run the staged scripts**: Unless the user explicitly instructs otherwise, invoke `stage1` → `stage3`. Do not handcraft large JSON payloads or skip stages to fabricate intermediate files. If credentials (OpenAI, MCP, TIDAS) are missing, notify the user immediately and wait for guidance. Stage 3 now triggers publication automatically once validation succeeds, committing flows, processes, and sources as a live insert (no dry run); rerun `stage4_publish` manually only when you need to re-publish or inspect the payload.
 - **Assume credentials are provisioned**: In standard environments `.secrets/secrets.toml` is preconfigured by operations, so Codex can start from any stage. Only revisit credential settings when scripts actually raise missing-credential errors or connection failures.
 - **Validate inputs before calling the LLM/MCP**: Check whether `clean_text` is non-empty and contains tables and units as expected; prompt the user to supplement the data when necessary.
 - **Final JSON requirements**: The delivered `workflow_result.json` must be generated from data that has already passed the Stage 3 artifact validation step. Remove debugging fields, empty structures, and temporary notes so every process dataset strictly follows the schema and is “clean” enough for direct ingestion.
@@ -49,8 +49,8 @@ Scripts read and write intermediate files under `artifacts/<run_id>/cache/` by d
 | ---- | ---- | ---- | ---- |
 | 1 | `stage1_preprocess.py` | `artifacts/<run_id>/cache/stage1_clean_text.md` | Parse Markdown/JSON papers and output `clean_text`. |
 | 2 | `stage2_extract_processes.py` | `artifacts/<run_id>/cache/stage2_process_blocks.json` | Use OpenAI Responses to generate process blocks. |
-| 3 | `stage3_align_flows.py` | `artifacts/<run_id>/cache/stage3_alignment.json`, `.../cache/process_datasets.json`, `.../cache/tidas_validation.json`, `.../cache/workflow_result.json`, plus ILCD JSON archives under `artifacts/<run_id>/exports/processes|flows|sources/` | Invoke `FlowAlignmentService`, enforce hint quality, merge aligned results, materialise ILCD artifacts, and run `tidas_tools.validate`. |
-| 4 (optional) | `stage4_publish.py` | `artifacts/<run_id>/cache/stage4_publish_preview.json` | Read Stage 3 outputs and build the `Database_CRUD_Tool` payload; runs as a dry run by default, add `--commit` to publish flows and process datasets. |
+| 3 | `stage3_align_flows.py` | `artifacts/<run_id>/cache/stage3_alignment.json`, `.../cache/process_datasets.json`, `.../cache/tidas_validation.json`, `.../cache/workflow_result.json`, plus ILCD JSON archives under `artifacts/<run_id>/exports/processes|flows|sources/` | Invoke `FlowAlignmentService`, enforce hint quality, merge aligned results, materialise ILCD artifacts, run `tidas_tools.validate`, and on success trigger publication to persist flows, processes, and sources (live commit; no dry run step). |
+| 4 (optional) | `stage4_publish.py` | `artifacts/<run_id>/cache/stage4_publish_preview.json` | Read Stage 3 outputs and build the `Database_CRUD_Tool` payload; after successful Stage 3 validation it runs automatically to commit flows, processes, and sources (dry run removed). Invoke it manually only when you need to re-publish or debug. |
 
 Recommended execution sequence (from the repository root):
 ```bash
@@ -60,9 +60,9 @@ uv run python scripts/stage2_extract_processes.py --run-id "$RUN_ID"
 uv run python scripts/stage3_align_flows.py --run-id "$RUN_ID"
 uv run python scripts/stage4_publish.py --run-id "$RUN_ID" \
   --publish-flows --publish-processes \
-  --update-alignment --update-datasets \
-  --commit  # omit --commit to preview only
+  --update-alignment --update-datasets
 ```
+Stage 3 invokes the Stage 4 publisher automatically after validation to commit data with no dry run; run the command manually only for re-publication or debugging.
 
 - If `stage3_align_flows.py` detects OpenAI credentials in `.secrets/secrets.toml`, it automatically enables LLM scoring to evaluate the ten MCP candidates; otherwise it falls back to local similarity matching. Before alignment, the script verifies every exchange has both `exchangeName` and `FlowSearch hints` (field requirements are listed in §0). When hints are missing the script stops by default; use `--allow-missing-hints` only to bypass explicit warning handling. If `exchangeName` is absent, it first tries to auto-fill it from the multilingual synonyms in `FlowSearch hints`. The resulting `artifacts/<run_id>/cache/stage3_alignment.json` always includes `process_id`, `matched_flows`, `unmatched_flows`, and `origin_exchanges`, and the CLI prints match statistics for each process.
 
@@ -159,7 +159,7 @@ class WorkflowResult:
 
 ## 9. Validation Recommendations
 - Prioritize unit tests for JSON cleaning (`json_utils`), FlowSearchService filtering/caching, FlowAlignmentService fallback handling, error branches across process extraction stages, and `merge_results` resilience.
-- For integration checks, run `stage1` → `stage3` on a minimal paper sample, then verify schema compliance, match statistics, and validation reports; add a dry-run `stage4_publish` if you need to validate the publication flow.
+- For integration checks, run `stage1` → `stage3` on a minimal paper sample, then verify schema compliance, match statistics, and validation reports; run `stage4_publish` manually only if you need to replay or inspect the publication payload now that the workflow commits automatically after validation.
 - Monitoring: enable `configure_logging` JSON output and filter for events such as `flow_alignment.exchange_failed` and `process_extraction.parents_uncovered` to quickly pinpoint failing stages.
 
 ## 10. Classification and Location Reference Resources
@@ -168,7 +168,7 @@ class WorkflowResult:
 - When a process involves flow classifications, call `uv run python scripts/list_product_flow_category_children.py <code>` for product flows (data source `tidas_flows_product_category.json`) or `uv run python scripts/list_elementary_flow_category_children.py <code>` for elementary flows (data source `tidas_flows_elementary_category.json`).
 
 ## 11. Stage 4 Publish & Database CRUD
-- `stage4_publish.py` calls the `Database_CRUD_Tool` from `tiangong_lca_remote` to persist `flows`, `processes`, and `sources`. The `insert` payload must set the tool-level `id` to the dataset UUID already present in the export: use `flowInformation.dataSetInformation.common:UUID`, `processInformation.dataSetInformation.common:UUID`, or `sourceInformation.dataSetInformation.common:UUID` directly. Do not generate alternate identifiers and do not reuse previous run IDs.
+- `stage4_publish.py` calls the `Database_CRUD_Tool` from `tiangong_lca_remote` to persist `flows`, `processes`, and `sources`. After Stage 3 validation succeeds, this publisher runs automatically to commit the datasets. When rerunning it manually, the `insert` payload must set the tool-level `id` to the dataset UUID already present in the export: use `flowInformation.dataSetInformation.common:UUID`, `processInformation.dataSetInformation.common:UUID`, or `sourceInformation.dataSetInformation.common:UUID` directly. Do not generate alternate identifiers and do not reuse previous run IDs.
 - `Database_CRUD_Tool` payload fields:
   - `operation`: `"select"`, `"insert"`, `"update"`, or `"delete"`.
   - `table`: `"flows"`, `"processes"`, `"sources"`, `"contacts"`, or `"lifecyclemodels"`.
