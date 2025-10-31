@@ -362,9 +362,7 @@ class FlowPublisher:
     def close(self) -> None:
         self._crud.close()
 
-    def _build_plan(
-        self, exchange: Mapping[str, Any], process_name: str
-    ) -> Optional[FlowPublishPlan]:
+    def _build_plan(self, exchange: Mapping[str, Any], process_name: str) -> Optional[FlowPublishPlan]:
         exchange_name = _coerce_text(exchange.get("exchangeName")) or "Unnamed exchange"
         comment = _extract_general_comment(exchange)
         hints = _parse_flowsearch_hints(comment)
@@ -507,9 +505,7 @@ class ProcessPublisher:
                 try:
                     result = self._crud.update_process(payload)
                 except SpecCodingError as exc:  # pragma: no cover - network errors bubbled up
-                    raise SpecCodingError(
-                        f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})"
-                    ) from exc
+                    raise SpecCodingError(f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})") from exc
             results.append(result)
         return results
 

@@ -170,10 +170,7 @@ def _auto_publish(run_id: str) -> None:
     print("Validation passed with no blocking errors -> invoking Stage 4 publisher for direct insert.")
     result = subprocess.run(cmd, check=False)
     if result.returncode != 0:
-        raise SystemExit(
-            "Automatic publication failed when invoking Stage 4. "
-            "Inspect the logs above and rerun `stage4_publish.py` manually once issues are resolved."
-        )
+        raise SystemExit("Automatic publication failed when invoking Stage 4. " "Inspect the logs above and rerun `stage4_publish.py` manually once issues are resolved.")
 
 
 def main() -> None:

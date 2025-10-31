@@ -193,9 +193,7 @@ class FlowSearchClient:
         if not base_name:
             return None
         geography = _extract_geography(info.get("geography"))
-        flow_properties = _first_text(name_block.get("flowProperties")) or _first_text(
-            name_block.get("functionalUnitFlowProperties")
-        )
+        flow_properties = _first_text(name_block.get("flowProperties")) or _first_text(name_block.get("functionalUnitFlowProperties"))
         return {
             "uuid": data_info.get("common:UUID") or flow.get("@uuid"),
             "base_name": base_name,
