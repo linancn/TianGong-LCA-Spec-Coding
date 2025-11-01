@@ -20,6 +20,7 @@ DEFAULT_LOCATION = "GLO"
 DEFAULT_REFERENCE_TYPE = "Reference flow(s)"
 DEFAULT_REFERENCE_ID = "0"
 DEFAULT_LANGUAGE = "en"
+DEFAULT_DATA_SET_VERSION = "01.01.000"
 TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 
 DATA_SET_TYPE_OPTIONS = [
@@ -128,8 +129,14 @@ def _normalise_process_information(
     info["geography"] = geography
     _finalise_mix_string(name_components, geography)
     dataset_name = info["dataSetInformation"].get("name", {})
-    dataset_name["treatmentStandardsRoutes"] = _ensure_multilang(name_components["treatment"])
-    dataset_name["mixAndLocationTypes"] = _ensure_multilang(name_components["mix"])
+    dataset_name["treatmentStandardsRoutes"] = _ensure_multilang(
+        _format_name_field_text(name_components["treatment"]),
+        separator=", ",
+    )
+    dataset_name["mixAndLocationTypes"] = _ensure_multilang(
+        _format_name_field_text(name_components["mix"]),
+        separator=", ",
+    )
     info["dataSetInformation"]["name"] = dataset_name
     info["technology"] = _normalise_technology(info.get("technology"))
     if "technology" in info and not info["technology"]:
@@ -168,7 +175,7 @@ def _normalise_dataset_information(
 
     name_block = _ensure_dict(info.get("name"))
     raw_general_comment = info.get("common:generalComment")
-    general_comment_text = _stringify(raw_general_comment).strip()
+    general_comment_text = _extract_multilang_text(raw_general_comment).strip()
     base_name_text = _extract_multilang_text(name_block.get("baseName", specinfo.get("baseName")))
     for field in (
         "baseName",
@@ -183,16 +190,20 @@ def _normalise_dataset_information(
         specinfo,
         general_comment_text,
     )
+    base_text = _format_name_field_text(name_components["base"])
+    treatment_text = _format_name_field_text(name_components["treatment"])
+    mix_text = _format_name_field_text(name_components["mix"])
+    functional_properties_text = _format_name_field_text(name_components.get("functional_unit_properties"))
     refreshed_name_block: dict[str, Any] = {}
     refreshed_name_block["baseName"] = _ensure_multilang(
-        name_components["base"],
+        base_text,
         fallback="Unnamed process",
+        separator=", ",
     )
-    refreshed_name_block["treatmentStandardsRoutes"] = _ensure_multilang(name_components["treatment"])
-    refreshed_name_block["mixAndLocationTypes"] = _ensure_multilang(name_components["mix"])
-    functional_properties = name_components.get("functional_unit_properties")
-    if functional_properties:
-        refreshed_name_block["functionalUnitFlowProperties"] = _ensure_multilang(functional_properties)
+    refreshed_name_block["treatmentStandardsRoutes"] = _ensure_multilang(treatment_text, separator=", ")
+    refreshed_name_block["mixAndLocationTypes"] = _ensure_multilang(mix_text, separator=", ")
+    if functional_properties_text:
+        refreshed_name_block["functionalUnitFlowProperties"] = _ensure_multilang(functional_properties_text, separator=", ")
     info["name"] = refreshed_name_block
 
     classification_info = _ensure_dict(info.get("classificationInformation"))
@@ -250,13 +261,17 @@ def _normalise_dataset_information(
 
     synonyms_value = info.get("common:synonyms") or specinfo.get("common:synonyms")
     synonyms_entries = _ensure_multilang_list(synonyms_value)
+    synonyms_entries = _filter_multilang_entries(synonyms_entries, target_lang=DEFAULT_LANGUAGE, clean_text=True)
     if synonyms_entries:
         info["common:synonyms"] = synonyms_entries
     else:
         info.pop("common:synonyms", None)
 
-    if general_comment_text:
-        info["common:generalComment"] = _ensure_multilang_list(general_comment_text)
+    general_comment_entries = _ensure_multilang_list(raw_general_comment)
+    if not general_comment_entries and general_comment_text:
+        general_comment_entries = _ensure_multilang_list(general_comment_text)
+    if general_comment_entries:
+        info["common:generalComment"] = general_comment_entries
     else:
         info.pop("common:generalComment", None)
 
@@ -530,6 +545,18 @@ def _clean_note_text(value: str) -> str:
             cleaned = cleaned[len(prefix) :].strip()
             break
     return cleaned.strip()
+
+
+def _format_name_field_text(value: Any) -> str:
+    text = _stringify(value).strip()
+    if not text:
+        return ""
+    if ";" not in text:
+        return text
+    segments = [segment.strip() for segment in text.split(";") if segment.strip()]
+    if len(segments) <= 1:
+        return text
+    return ", ".join(segments)
 
 
 def _ensure_sentence(text: str) -> str:
@@ -860,9 +887,7 @@ def _normalise_administrative_information(
     admin["dataEntryBy"] = cleaned_data_entry
 
     publication = _ensure_dict(admin.get("publicationAndOwnership"))
-    version_candidate = _stringify(publication.get("common:dataSetVersion")).strip()
-    if not version_candidate:
-        version_candidate = "01.01.000"
+    version_candidate = DEFAULT_DATA_SET_VERSION
     if publication or dataset_uuid:
         publication["common:dataSetVersion"] = version_candidate
         if dataset_uuid:
@@ -1062,6 +1087,47 @@ def _ensure_multilang_list(value: Any) -> list[dict[str, Any]]:
     return [_ensure_multilang(value)]
 
 
+def _filter_multilang_entries(
+    entries: list[dict[str, Any]],
+    *,
+    target_lang: str | None,
+    clean_text: bool = False,
+) -> list[dict[str, Any]]:
+    if not entries:
+        return []
+    filtered: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    target = target_lang.lower() if isinstance(target_lang, str) else None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        lang_candidate = _stringify(entry.get("@xml:lang") or DEFAULT_LANGUAGE).strip().lower() or DEFAULT_LANGUAGE
+        if target is not None and lang_candidate != target:
+            continue
+        text_value = _stringify(entry.get("#text")).strip()
+        if clean_text and text_value:
+            text_value = _clean_english_text(text_value)
+        if not text_value:
+            continue
+        canonical_lang = target if target is not None else lang_candidate or DEFAULT_LANGUAGE
+        key = (canonical_lang, text_value)
+        if key in seen:
+            continue
+        filtered.append({"@xml:lang": canonical_lang, "#text": text_value})
+        seen.add(key)
+    return filtered
+
+
+def _clean_english_text(text: str) -> str:
+    if not text:
+        return ""
+    segments = [segment.strip() for segment in re.split(r"[;,]", text) if segment and segment.strip()]
+    english_segments = [segment for segment in segments if segment.isascii()]
+    if english_segments:
+        return "; ".join(english_segments)
+    return text if text.isascii() else ""
+
+
 def _stringify(value: Any) -> str:
     if value is None:
         return ""
@@ -1069,6 +1135,13 @@ def _stringify(value: Any) -> str:
 
 
 def _extract_multilang_text(value: Any) -> str:
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            text = _extract_multilang_text(item)
+            if text:
+                parts.append(text)
+        return "; ".join(parts)
     if isinstance(value, dict):
         if "#text" in value:
             return _stringify(value["#text"])
@@ -1077,14 +1150,20 @@ def _extract_multilang_text(value: Any) -> str:
     return _stringify(value)
 
 
-def _ensure_multilang(value: Any, *, fallback: str | None = None) -> dict[str, Any]:
+def _ensure_multilang(value: Any, *, fallback: str | None = None, separator: str = "; ") -> dict[str, Any]:
     if isinstance(value, dict) and "@xml:lang" in value and "#text" in value:
         return value
-    text = _stringify(value)
-    if not text and fallback is not None:
+    if isinstance(value, list):
+        segments = [segment for segment in (_extract_multilang_text(item).strip() for item in value) if segment]
+        text = separator.join(segments)
+    else:
+        text = _stringify(value)
+    if (not text) and fallback is not None:
         text = fallback
     if text is None:
         text = ""
+    if isinstance(text, str):
+        text = text.strip()
     return {"@xml:lang": DEFAULT_LANGUAGE, "#text": text}
 
 
@@ -1131,13 +1210,17 @@ def _normalise_percentage_coverage(value: Any) -> str | None:
 def _extract_location_code(value: Any) -> tuple[str, str | None]:
     if isinstance(value, str):
         text = value.strip()
+        code = _parse_location_code(text)
+        if code:
+            return code, None
         return (text or DEFAULT_LOCATION, None)
     if isinstance(value, dict):
         fallback_description = _stringify(value.get("description") or value.get("name") or value.get("common:other")) or None
         for key in ("code", "@location", "location", "country", "region"):
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip(), fallback_description
+                parsed = _parse_location_code(candidate)
+                return (parsed or candidate.strip(), fallback_description)
         return DEFAULT_LOCATION, fallback_description
     if isinstance(value, (list, tuple)):
         for item in value:
@@ -1145,6 +1228,29 @@ def _extract_location_code(value: Any) -> tuple[str, str | None]:
             if code:
                 return code, desc
     return DEFAULT_LOCATION, None
+
+
+def _parse_location_code(text: str) -> str | None:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    upper = cleaned.upper()
+    iso_match = re.search(r"ISO[:\s\-]*([A-Z]{2,3})", upper)
+    if iso_match:
+        return iso_match.group(1)
+    paren_match = re.search(r"\(([A-Z]{2,3})\)", upper)
+    if paren_match:
+        return paren_match.group(1)
+    start_match = re.match(r"^([A-Z]{2,3})(?:\b|[^A-Z0-9])", upper)
+    if start_match:
+        return start_match.group(1)
+    tokens = [token for token in re.split(r"[\s,;/()\-]+", upper) if token]
+    for token in tokens:
+        if token == "ISO":
+            continue
+        if len(token) in {2, 3} and token.isalpha():
+            return token
+    return None
 
 
 def _match_allowed_option(value: Any, options: list[str]) -> str | None:
