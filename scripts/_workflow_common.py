@@ -112,9 +112,9 @@ class OpenAIResponsesLLM:
 def load_secrets(path: Path) -> tuple[str, str]:
     """Load OpenAI API credentials from the secrets file."""
     secrets = tomllib.loads(path.read_text(encoding="utf-8"))
-    openai_cfg = secrets.get("OPENAI", {})
-    api_key = openai_cfg.get("API_KEY") or openai_cfg.get("api_key")
-    model = openai_cfg.get("MODEL") or openai_cfg.get("model") or "gpt-5"
+    openai_cfg = secrets.get("openai", {})
+    api_key = openai_cfg.get("api_key")
+    model = openai_cfg.get("model") or "gpt-5"
     if not api_key:
         raise SystemExit(f"OpenAI API key missing in {path}")
     return api_key, model

@@ -26,7 +26,7 @@
 ## 3. 凭据与远程服务
 1. 复制模板并生成本地配置：`cp .secrets/secrets.example.toml .secrets/secrets.toml`。
 2. 编辑 `.secrets/secrets.toml`：
-   - `[OPENAI]`：`API_KEY`, `MODEL`（默认 `gpt-5` 可覆盖）。
+   - `[openai]`：`api_key`, `model`（默认 `gpt-5` 可覆盖）。
    - `[tiangong_lca_remote]`：`url`, `service_name`, `tool_name`, `api_key`。
 3. `api_key` 字段直接写入明文 token，框架会自动带上 `Bearer` 前缀。
 4. 建议在跑 Stage 3 前，先用 1~2 个样例交换调用 `FlowSearchService` 进行连通性自测（可参考工作流提示文档中的 Python 片段）。
