@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -240,11 +241,16 @@ def main() -> None:
     workflow_payload: dict[str, Any] | None = None
     process_replacements = 0
     workflow_replacements = 0
+    flow_plans: list = []
+    flow_results: list[dict[str, Any]] = []
+    process_results: list[dict[str, Any]] = []
+    publish_datasets: list[dict[str, Any]] = []
 
     if args.publish_flows:
         flow_publisher = FlowPublisher(dry_run=dry_run)
         try:
             plans = flow_publisher.prepare_from_alignment(alignment_entries)
+            flow_plans = plans
             for plan in plans:
                 key = (plan.process_name, plan.exchange_name)
                 updates[key] = plan.exchange_ref
@@ -284,6 +290,7 @@ def main() -> None:
                     path=str(dry_run_output_path),
                     created=len(results),
                 )
+                flow_results = results
         finally:
             flow_publisher.close()
 
@@ -298,7 +305,6 @@ def main() -> None:
             process_replacements = _update_process_payload(process_payload, updates)
         datasets = process_payload.get("process_datasets") or []
         exports_root = Path("artifacts") / run_id / "exports" / "processes"
-        publish_datasets: list[dict[str, Any]] = []
         for dataset_entry in datasets:
             ilcd = dataset_entry.get("process_data_set")
             if not isinstance(ilcd, dict):
@@ -340,6 +346,7 @@ def main() -> None:
                     },
                     dry_run_output_path,
                 )
+                process_results = results
         finally:
             process_publisher.close()
 
@@ -371,6 +378,18 @@ def main() -> None:
                 path=str(process_datasets_path),
                 replacements=process_replacements,
             )
+
+    if not dry_run and (args.publish_flows or args.publish_processes):
+        flag_path = run_cache_path(run_id, "published.json")
+        summary_payload = {
+            "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "flows_planned": len(flow_plans),
+            "flows_committed": len(flow_results),
+            "processes_planned": len(publish_datasets),
+            "processes_committed": len(process_results),
+        }
+        flag_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
+        LOGGER.info("stage4.published_flag_written", path=str(flag_path))
 
     if not args.publish_flows and not args.publish_processes:
         LOGGER.info("stage4.noop", message="Nothing selected to publish.")
