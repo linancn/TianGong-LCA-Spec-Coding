@@ -269,6 +269,16 @@ def _language_entry(text: str, lang: str = "en") -> dict[str, str]:
     return {"@xml:lang": lang, "#text": text}
 
 
+def _dataset_format_reference() -> dict[str, Any]:
+    return {
+        "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
+        "@type": "source data set",
+        "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.xml",
+        "@version": "03.00.003",
+        "common:shortDescription": _language_entry("ILCD format", "en"),
+    }
+
+
 def _unique_join(entries: Iterable[str]) -> str:
     seen: list[str] = []
     for entry in entries:
@@ -400,26 +410,41 @@ def _sanitize_matching_detail(detail: dict[str, Any]) -> None:
                     selected[field] = _sanitize_to_english(value)
 
 
+def _normalize_short_description_text(text: str) -> str:
+    if not text:
+        return ""
+    normalized = text.replace("；", ";").replace("，", ",")
+    normalized = re.sub(r"\s*;\s*", "; ", normalized)
+    normalized = re.sub(r"\s*,\s*", ", ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip(" ;,")
+
+
 def _sanitize_reference_node(node: dict[str, Any]) -> None:
     if not isinstance(node, dict):
         return
     short_desc = node.get("common:shortDescription")
     if isinstance(short_desc, dict):
         text = _extract_text(short_desc)
-        if text in ALLOWED_CHINESE_VALUES:
-            return
-        sanitized = _sanitize_comment_text(text)
-        node["common:shortDescription"] = {"@xml:lang": "en", "#text": sanitized or "Unnamed flow"}
+        lang = short_desc.get("@xml:lang") or "en"
+        normalized = _normalize_short_description_text(text)
+        node["common:shortDescription"] = {"@xml:lang": lang, "#text": normalized or "Unnamed flow"}
     elif isinstance(short_desc, list):
-        sanitized_entries = [_sanitize_language_entry(entry) for entry in short_desc if isinstance(entry, (dict, str))]
-        sanitized_entries = [entry for entry in sanitized_entries if entry]
-        if sanitized_entries:
-            node["common:shortDescription"] = sanitized_entries[0]
+        for entry in short_desc:
+            candidate = _sanitize_language_entry(entry)
+            if candidate:
+                normalized_text = _normalize_short_description_text(candidate.get("#text"))
+                if normalized_text:
+                    candidate["#text"] = normalized_text
+                    node["common:shortDescription"] = candidate
+                else:
+                    node["common:shortDescription"] = {"@xml:lang": candidate.get("@xml:lang") or "en", "#text": "Unnamed flow"}
+                break
         else:
             node["common:shortDescription"] = {"@xml:lang": "en", "#text": "Unnamed flow"}
     elif isinstance(short_desc, str):
-        sanitized = _sanitize_comment_text(short_desc)
-        node["common:shortDescription"] = {"@xml:lang": "en", "#text": sanitized or "Unnamed flow"}
+        normalized = _normalize_short_description_text(short_desc)
+        node["common:shortDescription"] = {"@xml:lang": "en", "#text": normalized or "Unnamed flow"}
 
 
 def _sanitize_language_field(container: dict[str, Any], key: str) -> None:
@@ -499,6 +524,40 @@ def _sanitize_exchange_language(exchange: dict[str, Any]) -> dict[str, Any]:
     return sanitized
 
 
+def _merge_intended_applications(container: dict[str, Any]) -> None:
+    key = "common:intendedApplications"
+    if not isinstance(container, dict) or key not in container:
+        return
+    value = container[key]
+    entries = value if isinstance(value, list) else [value]
+    merged: dict[str, list[str]] = {}
+    order: list[str] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            lang = (entry.get("@xml:lang") or "en").lower()
+            text = _extract_text(entry)
+        else:
+            lang = "en"
+            text = _extract_text(entry)
+        text = re.sub(r"\s+", " ", text).strip(" ;,")
+        if not text:
+            continue
+        if lang not in merged:
+            merged[lang] = []
+            order.append(lang)
+        if text not in merged[lang]:
+            merged[lang].append(text)
+    if not merged:
+        container.pop(key, None)
+        return
+    preferred_order = [lang for lang in order if lang == "en"]
+    if preferred_order:
+        order = preferred_order
+    container[key] = [
+        {"@xml:lang": lang, "#text": "; ".join(merged[lang])} for lang in order if merged.get(lang)
+    ]
+
+
 def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     if "processDataSet" in dataset and isinstance(dataset["processDataSet"], dict):
         dataset["processDataSet"] = _sanitize_process_dataset(dataset["processDataSet"])
@@ -516,13 +575,24 @@ def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
             _sanitize_language_field(data_info, "common:synonyms")
         _sanitize_language_field(info, "generalComment")
 
-    admin = dataset.get("administrativeInformation") or dataset.get("administrative_information")
-    if isinstance(admin, dict):
-        _sanitize_language_field(admin, "common:generalComment")
-
     modelling = dataset.get("modellingAndValidation") or dataset.get("modelling_and_validation")
     if isinstance(modelling, dict):
         _sanitize_language_field(modelling, "common:generalComment")
+        validation = modelling.get("validation")
+        if isinstance(validation, dict):
+            review = validation.get("review")
+            if isinstance(review, list):
+                review = review[0] if review else {}
+            if isinstance(review, dict):
+                review["@type"] = "Not reviewed"
+                for key in list(review.keys()):
+                    if key != "@type":
+                        review.pop(key, None)
+                validation["review"] = review
+            else:
+                validation["review"] = {"@type": "Not reviewed"}
+        else:
+            modelling["validation"] = {"review": {"@type": "Not reviewed"}}
 
     exchanges_container = dataset.get("exchanges")
     if isinstance(exchanges_container, dict):
@@ -537,6 +607,16 @@ def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
         dataset["exchanges"] = [
             _sanitize_exchange_language(item) for item in exchanges_container if isinstance(item, dict)
         ]
+
+    admin = dataset.get("administrativeInformation") or dataset.get("administrative_information")
+    if isinstance(admin, dict):
+        _sanitize_language_field(admin, "common:generalComment")
+        commissioner = admin.get("common:commissionerAndGoal")
+        if isinstance(commissioner, dict):
+            _merge_intended_applications(commissioner)
+        data_entry = admin.get("dataEntryBy")
+        if isinstance(data_entry, dict):
+            data_entry["common:referenceToDataSetFormat"] = _dataset_format_reference()
 
     return dataset
 
@@ -1073,9 +1153,7 @@ def _attach_primary_source(ilcd_dataset: dict[str, Any], source_uuid: str, sourc
     if notes:
         reference_entry["common:fullReference"] = [_language_entry("; ".join(notes))]
     data_sources["referenceToDataSource"] = [reference_entry]
-    format_reference = deepcopy(reference_entry)
-    format_reference.pop("common:fullReference", None)
-    data_entry["common:referenceToDataSetFormat"] = format_reference
+    data_entry["common:referenceToDataSetFormat"] = _dataset_format_reference()
 
 
 def _run_validation(artifact_root: Path) -> list[dict[str, Any]]:
