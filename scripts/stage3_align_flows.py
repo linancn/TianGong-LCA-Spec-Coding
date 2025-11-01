@@ -142,6 +142,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_FORMAT_SOURCE_UUID,
         help="UUID to use for the generated ILCD format source stub.",
     )
+    parser.add_argument(
+        "--force-publish",
+        action="store_true",
+        help="Ignore the cached publication flag and force auto-publish after validation succeeds.",
+    )
     return parser.parse_args()
 
 
@@ -152,7 +157,7 @@ def _has_blocking_errors(findings: Iterable[dict[str, Any]]) -> bool:
     return False
 
 
-def _auto_publish(run_id: str) -> None:
+def _auto_publish(run_id: str, overrides: dict[str, Path]) -> None:
     stage4_script = Path(__file__).with_name("stage4_publish.py")
     if not stage4_script.exists():
         raise SystemExit(f"Stage 4 script not found at {stage4_script}; cannot publish automatically.")
@@ -167,6 +172,10 @@ def _auto_publish(run_id: str) -> None:
         "--update-datasets",
         "--commit",
     ]
+    for flag, value in overrides.items():
+        if value is None:
+            continue
+        cmd.extend([flag, str(value)])
     print("Validation passed with no blocking errors -> invoking Stage 4 publisher for direct insert.")
     result = subprocess.run(cmd, check=False)
     if result.returncode != 0:
@@ -252,13 +261,29 @@ def main() -> None:
         print(f"Validation succeeded -> {validation_output}")
     print(f"Workflow bundle written to {workflow_output}")
 
+    published_flag_path = run_cache_path(run_id, "published.json")
+    stage4_overrides: dict[str, Path] = {
+        "--alignment": alignment_output,
+        "--process-datasets": process_datasets_path,
+        "--validation": validation_output,
+        "--workflow-result": workflow_output,
+    }
+
     if args.skip_artifact_validation:
         print("Artifact validation skipped; automatic publication disabled. Run Stage 4 manually when ready.")
     else:
         if _has_blocking_errors(summary.validation_report):
             print("Validation reported blocking errors; automatic publication skipped. Fix findings before publishing.")
         else:
-            _auto_publish(run_id)
+            if published_flag_path.exists() and not args.force_publish:
+                print(
+                    f"Detected existing publication flag at {published_flag_path}. "
+                    "Skipping automatic Stage 4 run. Remove the flag or rerun with --force-publish to publish updated datasets."
+                )
+            else:
+                # Drop overrides with None values before invoking Stage 4.
+                valid_overrides = {flag: path for flag, path in stage4_overrides.items() if path is not None}
+                _auto_publish(run_id, valid_overrides)
 
 
 def _resolve_process_id(block: dict[str, Any], dataset: dict[str, Any]) -> str | None:
