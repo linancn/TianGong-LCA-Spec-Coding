@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -25,6 +26,31 @@ SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
     "statistical classifications": ("4", "Statistical classifications"),
     "publications and communications": ("5", "Publications and communications"),
     "other source types": ("6", "Other source types"),
+}
+
+FLOW_HINT_FIELDS: tuple[str, ...] = (
+    "en_synonyms",
+    "zh_synonyms",
+    "abbreviation",
+    "formula_or_CAS",
+    "state_purity",
+    "source_or_pathway",
+    "usage_context",
+)
+
+CJK_CHAR_PATTERN = re.compile(r"[\u2e80-\u2eff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ua000-\ua4cf\uac00-\ud7af\uff00-\uffef]+")
+CHINESE_PUNCT_REPLACEMENTS: dict[str, str] = {
+    "，": ", ",
+    "。": ". ",
+    "；": "; ",
+    "：": ": ",
+    "、": ", ",
+    "（": "(",
+    "）": ")",
+    "【": "[",
+    "】": "]",
+    "《": "",
+    "》": "",
 }
 
 PRODUCT_FALLBACK_CLASSIFICATION = [
@@ -113,7 +139,13 @@ def generate_artifacts(
             info["processes"] = processes_block
             dataset.process_information = info
 
-    merged_payload = {"process_datasets": [_serialise_dataset(dataset) for dataset in datasets]}
+    merged_serialised: list[dict[str, Any]] = []
+    for dataset in datasets:
+        serialised = _serialise_dataset(dataset)
+        _sanitize_process_dataset(serialised)
+        merged_serialised.append(serialised)
+
+    merged_payload = {"process_datasets": merged_serialised}
     _dump_json(merged_payload, merged_output)
 
     timestamp = _utc_timestamp()
@@ -124,10 +156,13 @@ def generate_artifacts(
         primary_source_uuid = str(uuid4())
 
     source_references: dict[str, dict[str, Any]] = {}
+    sanitized_ilcd_datasets: list[dict[str, Any]] = []
     for dataset in datasets:
         ilcd_dataset = dataset.as_dict()
+        _sanitize_process_dataset(ilcd_dataset)
         if primary_source_uuid and primary_source_title:
             _attach_primary_source(ilcd_dataset, primary_source_uuid, primary_source_title)
+        sanitized_ilcd_datasets.append(deepcopy(ilcd_dataset))
         uuid_value = ilcd_dataset.get("processInformation", {}).get("dataSetInformation", {}).get("common:UUID")
         if not uuid_value:
             raise ValueError("Process dataset missing common:UUID.")
@@ -175,8 +210,8 @@ def generate_artifacts(
 
     if workflow_output is not None:
         payload = {
-            "process_datasets": [dataset.as_dict() for dataset in datasets],
-            "alignment": alignment_entries,
+            "process_datasets": sanitized_ilcd_datasets,
+            "alignment": [_sanitize_alignment_entry(entry) for entry in alignment_entries],
             "validation_report": validation_report,
         }
         _dump_json(payload, workflow_output)
@@ -271,6 +306,269 @@ def _extract_text(value: Any) -> str:
         if isinstance(text, str):
             return text.strip()
     return str(value).strip()
+
+
+ALLOWED_CHINESE_VALUES = {"天工LCA数据团队"}
+
+
+def _sanitize_to_english(text: str) -> str:
+    if not text:
+        return ""
+    sanitized = text
+    for src, dst in CHINESE_PUNCT_REPLACEMENTS.items():
+        sanitized = sanitized.replace(src, dst)
+    sanitized = CJK_CHAR_PATTERN.sub("", sanitized)
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    return sanitized.strip()
+
+
+def _normalize_flowsearch_hints(text: str) -> str:
+    prefix = "FlowSearch hints:"
+    body = text[len(prefix) :].strip()
+    segments = []
+    seen: set[str] = set()
+    for raw_segment in body.split("|"):
+        segment = raw_segment.strip()
+        if not segment:
+            continue
+        key, _, value = segment.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        value = value or "NA"
+        segments.append(f"{key}={value}")
+    for field in FLOW_HINT_FIELDS:
+        if field not in seen:
+            segments.append(f"{field}=NA")
+    return f"{prefix} " + " | ".join(segments)
+
+
+def _sanitize_comment_text(text: str) -> str:
+    if not text:
+        return ""
+    sanitized = _sanitize_to_english(text)
+    if sanitized.startswith("FlowSearch hints:"):
+        sanitized = _normalize_flowsearch_hints(sanitized)
+    sanitized = re.sub(r"(zh_synonyms=)(\s*(?:[|,;]|$))", r"\1NA\2", sanitized)
+    sanitized = re.sub(r"(Synonyms \(ZH\)(?:[:=]))(\s*(?:[,;.]|$))", r"\1 NA\2", sanitized)
+    return sanitized.strip()
+
+
+def _sanitize_language_entry(entry: Any) -> dict[str, Any] | None:
+    if isinstance(entry, dict):
+        text = _extract_text(entry)
+        if text in ALLOWED_CHINESE_VALUES:
+            return entry
+        sanitized_text = _sanitize_comment_text(text)
+        if not sanitized_text:
+            return None
+        return {"@xml:lang": "en", "#text": sanitized_text}
+    if isinstance(entry, str):
+        sanitized_text = _sanitize_comment_text(entry)
+        if not sanitized_text:
+            return None
+        return {"@xml:lang": "en", "#text": sanitized_text}
+    return None
+
+
+def _sanitize_matching_detail(detail: dict[str, Any]) -> None:
+    for key, value in list(detail.items()):
+        if isinstance(value, str):
+            detail[key] = _sanitize_comment_text(value) if "comment" in key.lower() else _sanitize_to_english(value)
+    selected = detail.get("selectedCandidate")
+    if isinstance(selected, dict):
+        for field in (
+            "base_name",
+            "treatment_standards_routes",
+            "mix_and_location_types",
+            "flow_properties",
+            "version",
+            "general_comment",
+            "reasoning",
+            "evaluation_reason",
+            "combined_name",
+        ):
+            value = selected.get(field)
+            if isinstance(value, str):
+                if field == "general_comment":
+                    selected[field] = _sanitize_comment_text(value)
+                else:
+                    selected[field] = _sanitize_to_english(value)
+
+
+def _sanitize_reference_node(node: dict[str, Any]) -> None:
+    if not isinstance(node, dict):
+        return
+    short_desc = node.get("common:shortDescription")
+    if isinstance(short_desc, dict):
+        text = _extract_text(short_desc)
+        if text in ALLOWED_CHINESE_VALUES:
+            return
+        sanitized = _sanitize_comment_text(text)
+        node["common:shortDescription"] = {"@xml:lang": "en", "#text": sanitized or "Unnamed flow"}
+    elif isinstance(short_desc, list):
+        sanitized_entries = [_sanitize_language_entry(entry) for entry in short_desc if isinstance(entry, (dict, str))]
+        sanitized_entries = [entry for entry in sanitized_entries if entry]
+        if sanitized_entries:
+            node["common:shortDescription"] = sanitized_entries[0]
+        else:
+            node["common:shortDescription"] = {"@xml:lang": "en", "#text": "Unnamed flow"}
+    elif isinstance(short_desc, str):
+        sanitized = _sanitize_comment_text(short_desc)
+        node["common:shortDescription"] = {"@xml:lang": "en", "#text": sanitized or "Unnamed flow"}
+
+
+def _sanitize_language_field(container: dict[str, Any], key: str) -> None:
+    if not isinstance(container, dict) or key not in container:
+        return
+    value = container[key]
+    if isinstance(value, list):
+        sanitized_entries = [_sanitize_language_entry(entry) for entry in value]
+        sanitized_entries = [entry for entry in sanitized_entries if entry]
+        if sanitized_entries:
+            container[key] = sanitized_entries
+        else:
+            container.pop(key, None)
+    elif isinstance(value, dict):
+        sanitized = _sanitize_language_entry(value)
+        if sanitized:
+            container[key] = sanitized
+        else:
+            container.pop(key, None)
+    elif isinstance(value, str):
+        sanitized = _sanitize_comment_text(value)
+        if sanitized:
+            container[key] = sanitized
+        else:
+            container.pop(key, None)
+
+
+def _sanitize_name_block(name_block: Any) -> None:
+    if not isinstance(name_block, dict):
+        return
+    for key, value in list(name_block.items()):
+        if isinstance(value, dict):
+            sanitized = _sanitize_language_entry(value)
+            if sanitized:
+                name_block[key] = sanitized
+            else:
+                name_block.pop(key, None)
+        elif isinstance(value, list):
+            sanitized_entries = [_sanitize_language_entry(entry) for entry in value]
+            sanitized_entries = [entry for entry in sanitized_entries if entry]
+            if sanitized_entries:
+                name_block[key] = sanitized_entries
+            else:
+                name_block.pop(key, None)
+        elif isinstance(value, str):
+            sanitized = _sanitize_to_english(value)
+            if sanitized:
+                name_block[key] = sanitized
+            else:
+                name_block.pop(key, None)
+
+
+def _sanitize_exchange_language(exchange: dict[str, Any]) -> dict[str, Any]:
+    sanitized = deepcopy(exchange)
+    name = _sanitize_to_english(_extract_text(sanitized.get("exchangeName")))
+    if name:
+        sanitized["exchangeName"] = name
+    comment = sanitized.get("generalComment")
+    if isinstance(comment, list):
+        sanitized_comment = None
+        for entry in comment:
+            sanitized_comment = _sanitize_language_entry(entry)
+            if sanitized_comment:
+                break
+    else:
+        sanitized_comment = _sanitize_language_entry(comment)
+    if sanitized_comment:
+        sanitized["generalComment"] = sanitized_comment
+    else:
+        sanitized.pop("generalComment", None)
+    reference = sanitized.get("referenceToFlowDataSet")
+    if isinstance(reference, dict):
+        _sanitize_reference_node(reference)
+    matching_detail = sanitized.get("matchingDetail")
+    if isinstance(matching_detail, dict):
+        _sanitize_matching_detail(matching_detail)
+    return sanitized
+
+
+def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
+    if "processDataSet" in dataset and isinstance(dataset["processDataSet"], dict):
+        dataset["processDataSet"] = _sanitize_process_dataset(dataset["processDataSet"])
+        return dataset
+    if "process_data_set" in dataset and isinstance(dataset["process_data_set"], dict):
+        dataset["process_data_set"] = _sanitize_process_dataset(dataset["process_data_set"])
+
+    info = dataset.get("processInformation") or dataset.get("process_information")
+    if isinstance(info, dict):
+        data_info = info.get("dataSetInformation") or info.get("data_set_information")
+        if isinstance(data_info, dict):
+            _sanitize_language_field(data_info, "common:generalComment")
+            name_node = data_info.get("name")
+            _sanitize_name_block(name_node)
+            _sanitize_language_field(data_info, "common:synonyms")
+        _sanitize_language_field(info, "generalComment")
+
+    admin = dataset.get("administrativeInformation") or dataset.get("administrative_information")
+    if isinstance(admin, dict):
+        _sanitize_language_field(admin, "common:generalComment")
+
+    modelling = dataset.get("modellingAndValidation") or dataset.get("modelling_and_validation")
+    if isinstance(modelling, dict):
+        _sanitize_language_field(modelling, "common:generalComment")
+
+    exchanges_container = dataset.get("exchanges")
+    if isinstance(exchanges_container, dict):
+        exchanges = exchanges_container.get("exchange")
+        if isinstance(exchanges, list):
+            exchanges_container["exchange"] = [
+                _sanitize_exchange_language(item) for item in exchanges if isinstance(item, dict)
+            ]
+        elif isinstance(exchanges, dict):
+            exchanges_container["exchange"] = [_sanitize_exchange_language(exchanges)]
+    elif isinstance(exchanges_container, list):
+        dataset["exchanges"] = [
+            _sanitize_exchange_language(item) for item in exchanges_container if isinstance(item, dict)
+        ]
+
+    return dataset
+
+
+def _sanitize_alignment_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    sanitized = deepcopy(entry)
+    process_name = sanitized.get("process_name")
+    if isinstance(process_name, str):
+        sanitized["process_name"] = _sanitize_to_english(process_name)
+
+    for key in ("matched_flows", "unmatched_flows"):
+        value = sanitized.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                for field in ("base_name", "general_comment", "process_name"):
+                    if field in item and isinstance(item[field], str):
+                        sanitizer = _sanitize_comment_text if "comment" in field else _sanitize_to_english
+                        item[field] = sanitizer(item[field])
+
+    origin = sanitized.get("origin_exchanges")
+    if isinstance(origin, dict):
+        sanitized_origin: dict[str, list[dict[str, Any]]] = {}
+        for name, exchanges in origin.items():
+            sanitized_name = _sanitize_to_english(name) if isinstance(name, str) else name
+            if isinstance(exchanges, list):
+                sanitized_origin[sanitized_name] = [
+                    _sanitize_exchange_language(exchange) for exchange in exchanges if isinstance(exchange, dict)
+                ]
+        sanitized["origin_exchanges"] = sanitized_origin
+    return sanitized
 
 
 def _parse_flowsearch_hints(comment: Any) -> dict[str, list[str]]:
@@ -514,9 +812,11 @@ def _build_flow_dataset(
     timestamp: str,
     format_source_uuid: str,
 ) -> tuple[str, dict[str, Any]] | None:
+    exchange = _sanitize_exchange_language(exchange)
     ref = exchange.get("referenceToFlowDataSet") or {}
     uuid_value = ref.get("@refObjectId") or str(uuid4())
     name = _extract_text(exchange.get("exchangeName")) or _extract_text(ref.get("common:shortDescription"))
+    name = _sanitize_to_english(name)
     if not name:
         name = "Unnamed flow"
     hints = _parse_flowsearch_hints(exchange.get("generalComment"))
@@ -536,18 +836,15 @@ def _build_flow_dataset(
         classification = _build_product_classification(candidate)
 
     en_synonyms = hints.get("en_synonyms") or []
-    zh_synonyms = hints.get("zh_synonyms") or []
     synonyms_block: list[dict[str, str]] = []
     if en_synonyms:
         synonyms_block.append(_language_entry("; ".join(en_synonyms), "en"))
-    if zh_synonyms:
-        synonyms_block.append(_language_entry("; ".join(zh_synonyms), "zh"))
     if not synonyms_block:
         synonyms_block.append(_language_entry(name, "en"))
 
     treatment_candidates = hints.get("state_purity") or hints.get("source_or_pathway") or hints.get("abbreviation") or [name]
     treatment_text = _unique_join(treatment_candidates)
-    zh_treatment = zh_synonyms[0] if zh_synonyms else ""
+    treatment_text = _sanitize_to_english(treatment_text)
 
     mix_candidates = hints.get("usage_context") or hints.get("source_or_pathway") or []
     location_hint = _extract_text(exchange.get("location"))
@@ -556,6 +853,7 @@ def _build_flow_dataset(
     if not mix_candidates:
         mix_candidates = ["Unspecified mix"]
     mix_text = _unique_join(mix_candidates)
+    mix_text = _sanitize_to_english(mix_text)
 
     comment_entries = _normalise_language(exchange.get("generalComment") or f"Generated for {process_name}")
     comment_entries = [
@@ -576,10 +874,6 @@ def _build_flow_dataset(
         "treatmentStandardsRoutes": [_language_entry(treatment_text or name, "en")],
         "mixAndLocationTypes": [_language_entry(mix_text, "en")],
     }
-    if zh_synonyms:
-        name_block["baseName"].append(_language_entry(zh_synonyms[0], "zh"))
-        name_block["treatmentStandardsRoutes"].append(_language_entry(zh_treatment or zh_synonyms[0], "zh"))
-        name_block["mixAndLocationTypes"].append(_language_entry(zh_synonyms[0], "zh"))
 
     dataset_version = "01.01.000"
     compliance_block = flow_compliance_declarations()
