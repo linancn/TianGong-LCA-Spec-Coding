@@ -558,6 +558,19 @@ def _build_flow_dataset(
     mix_text = _unique_join(mix_candidates)
 
     comment_entries = _normalise_language(exchange.get("generalComment") or f"Generated for {process_name}")
+    comment_entries = [
+        entry
+        for entry in comment_entries
+        if isinstance(entry, dict)
+        and (entry.get("@xml:lang") or "en").lower() == "en"
+        and _extract_text(entry.get("#text"))
+    ]
+    if not comment_entries:
+        fallback_comment = _extract_text(exchange.get("generalComment"))
+        if not fallback_comment or not fallback_comment.isascii():
+            sanitized_name = "".join(ch for ch in process_name if ch.isascii()).strip()
+            fallback_comment = f"Generated for {sanitized_name}" if sanitized_name else "Generated placeholder comment"
+        comment_entries = [_language_entry(fallback_comment, "en")]
     name_block = {
         "baseName": [_language_entry(name, "en")],
         "treatmentStandardsRoutes": [_language_entry(treatment_text or name, "en")],
