@@ -130,15 +130,6 @@ def generate_artifacts(
 
     matched_lookup, origin_exchanges = _build_alignment_indexes(alignment_entries)
     datasets = merge_results(process_blocks, matched_lookup, origin_exchanges)
-    for dataset in datasets:
-        functional_unit = determine_functional_unit(dataset.exchanges)
-        if functional_unit:
-            info = dict(dataset.process_information)
-            processes_block = dict(info.get("processes", {}))
-            processes_block["functionalUnit"] = functional_unit
-            info["processes"] = processes_block
-            dataset.process_information = info
-
     merged_serialised: list[dict[str, Any]] = []
     for dataset in datasets:
         serialised = _serialise_dataset(dataset)
@@ -337,22 +328,28 @@ def _normalize_flowsearch_hints(text: str) -> str:
     body = text[len(prefix) :].strip()
     segments = []
     seen: set[str] = set()
+    canonical_map = {field.lower(): field for field in FLOW_HINT_FIELDS}
+    fields_to_include = [field for field in FLOW_HINT_FIELDS if field != "zh_synonyms"]
     for raw_segment in body.split("|"):
         segment = raw_segment.strip()
         if not segment:
             continue
         key, _, value = segment.partition("=")
         key = key.strip()
+        key_lower = key.lower()
+        canonical_key = canonical_map.get(key_lower, key)
+        if not key_lower or canonical_key == "zh_synonyms":
+            continue
         value = value.strip()
-        if not key:
+        if not key_lower:
             continue
-        if key in seen:
+        if key_lower in seen:
             continue
-        seen.add(key)
+        seen.add(key_lower)
         value = value or "NA"
-        segments.append(f"{key}={value}")
-    for field in FLOW_HINT_FIELDS:
-        if field not in seen:
+        segments.append(f"{canonical_key}={value}")
+    for field in fields_to_include:
+        if field.lower() not in seen:
             segments.append(f"{field}=NA")
     return f"{prefix} " + " | ".join(segments)
 
@@ -363,9 +360,56 @@ def _sanitize_comment_text(text: str) -> str:
     sanitized = _sanitize_to_english(text)
     if sanitized.startswith("FlowSearch hints:"):
         sanitized = _normalize_flowsearch_hints(sanitized)
-    sanitized = re.sub(r"(zh_synonyms=)(\s*(?:[|,;]|$))", r"\1NA\2", sanitized)
-    sanitized = re.sub(r"(Synonyms \(ZH\)(?:[:=]))(\s*(?:[,;.]|$))", r"\1 NA\2", sanitized)
-    return sanitized.strip()
+        sanitized = re.sub(r"(?:\|\s*)?zh_synonyms=[^|]*", "", sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r"\|\s*\|", "|", sanitized)
+    sanitized = re.sub(r"Synonyms\s*\(ZH\)\s*:[^.;|]*", "", sanitized, flags=re.IGNORECASE)
+    for prefix in (
+        "Usage context: ",
+        "Notes: ",
+        "Source/pathway: ",
+        "State/purity: ",
+        "Synonyms (EN): ",
+    ):
+        sanitized = sanitized.replace(prefix, "")
+    sanitized = CJK_CHAR_PATTERN.sub("", sanitized)
+    sanitized = re.sub(r"\s{2,}", " ", sanitized)
+    sanitized = re.sub(r"\|\s*\|", "|", sanitized)
+    sanitized = re.sub(r"\s*\|\s*$", "", sanitized)
+    sanitized = re.sub(r"\s*;\s*;", ";", sanitized)
+    return sanitized.strip(" ;|.")
+
+
+def _normalize_candidate_component_text(value: Any) -> str:
+    if value is None:
+        return ""
+    sanitized = _sanitize_to_english(_extract_text(value))
+    if not sanitized:
+        return ""
+    tokens = [token.strip(" ,;") for token in re.split(r"[;,]", sanitized) if token.strip(" ,;")]
+    if not tokens:
+        return ""
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(token)
+    return ", ".join(deduped)
+
+
+def _build_candidate_short_description(candidate: dict[str, Any], fallback: str | None) -> str:
+    if not candidate:
+        return _normalize_candidate_component_text(fallback)
+    parts: list[str] = []
+    for field in ("base_name", "treatment_standards_routes", "mix_and_location_types", "flow_properties"):
+        formatted = _normalize_candidate_component_text(candidate.get(field))
+        if formatted:
+            parts.append(formatted)
+    if parts:
+        return "; ".join(parts)
+    return _normalize_candidate_component_text(fallback)
 
 
 def _sanitize_language_entry(entry: Any) -> dict[str, Any] | None:
@@ -518,6 +562,12 @@ def _sanitize_exchange_language(exchange: dict[str, Any]) -> dict[str, Any]:
     reference = sanitized.get("referenceToFlowDataSet")
     if isinstance(reference, dict):
         _sanitize_reference_node(reference)
+        candidate = _extract_candidate(sanitized)
+        if candidate:
+            fallback = name or _extract_text(reference.get("common:shortDescription"))
+            short_desc = _build_candidate_short_description(candidate, fallback)
+            if short_desc:
+                reference["common:shortDescription"] = _language_entry(short_desc, "en")
     matching_detail = sanitized.get("matchingDetail")
     if isinstance(matching_detail, dict):
         _sanitize_matching_detail(matching_detail)
@@ -1140,18 +1190,7 @@ def _attach_primary_source(ilcd_dataset: dict[str, Any], source_uuid: str, sourc
 
     modelling = ilcd_dataset.setdefault("modellingAndValidation", {})
     data_sources = modelling.setdefault("dataSourcesTreatmentAndRepresentativeness", {})
-    raw_ref = data_sources.get("referenceToDataSource")
-    notes: list[str] = []
-    if isinstance(raw_ref, list):
-        for item in raw_ref:
-            if isinstance(item, str) and item.strip():
-                notes.append(item.strip())
-    elif isinstance(raw_ref, str) and raw_ref.strip():
-        notes.append(raw_ref.strip())
-
     reference_entry = _build_source_reference(source_uuid, source_title)
-    if notes:
-        reference_entry["common:fullReference"] = [_language_entry("; ".join(notes))]
     data_sources["referenceToDataSource"] = [reference_entry]
     data_entry["common:referenceToDataSetFormat"] = _dataset_format_reference()
 

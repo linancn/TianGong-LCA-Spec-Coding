@@ -189,22 +189,89 @@ class FlowSearchClient:
         info = flow.get("flowInformation", {})
         data_info = info.get("dataSetInformation", {})
         name_block = data_info.get("name") or {}
-        base_name = _first_text(name_block.get("baseName"))
+        base_name = _preferred_language_text(name_block.get("baseName"))
         if not base_name:
             return None
         geography = _extract_geography(info.get("geography"))
-        flow_properties = _first_text(name_block.get("flowProperties")) or _first_text(name_block.get("functionalUnitFlowProperties"))
+        flow_properties = _preferred_language_text(name_block.get("flowProperties")) or _preferred_language_text(
+            name_block.get("functionalUnitFlowProperties")
+        )
         return {
             "uuid": data_info.get("common:UUID") or flow.get("@uuid"),
             "base_name": base_name,
-            "treatment_standards_routes": _first_text(name_block.get("treatmentStandardsRoutes")),
-            "mix_and_location_types": _first_text(name_block.get("mixAndLocationTypes")),
+            "treatment_standards_routes": _preferred_language_text(name_block.get("treatmentStandardsRoutes")),
+            "mix_and_location_types": _preferred_language_text(name_block.get("mixAndLocationTypes")),
             "flow_properties": flow_properties,
             "version": flow.get("administrativeInformation", {}).get("publicationAndOwnership", {}).get("common:dataSetVersion"),
-            "general_comment": _first_text(data_info.get("common:generalComment")),
+            "general_comment": _preferred_language_text(data_info.get("common:generalComment")),
             "geography": geography,
             "classification": data_info.get("classificationInformation", {}).get("common:classification", {}).get("common:class"),
         }
+
+
+ENGLISH_LANG_KEYS = (
+    "en",
+    "en-us",
+    "en-gb",
+    "english",
+)
+
+CHINESE_LANG_KEYS = (
+    "zh-hans",
+    "zh-cn",
+    "zh",
+    "\u7b80\u4f53\u4e2d\u6587",
+)
+
+
+def _preferred_language_text(value: Any) -> str | None:
+    english = _find_language_text(value, ENGLISH_LANG_KEYS)
+    if english:
+        return english
+    chinese = _find_language_text(value, CHINESE_LANG_KEYS)
+    if chinese:
+        return chinese
+    return _first_text(value)
+
+
+def _find_language_text(value: Any, language_keys: tuple[str, ...]) -> str | None:
+    normalized_targets = {_normalize_language_key(token) for token in language_keys}
+    return _find_language_text_recursive(value, normalized_targets)
+
+
+def _find_language_text_recursive(value: Any, language_targets: set[str]) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        for item in value:
+            match = _find_language_text_recursive(item, language_targets)
+            if match:
+                return match
+        return None
+    if isinstance(value, dict):
+        lang = value.get("@xml:lang") or value.get("xml:lang") or value.get("@lang") or value.get("lang")
+        lang_normalized = _normalize_language_key(str(lang)) if lang else None
+        if lang_normalized and lang_normalized in language_targets:
+            text = value.get("#text") or value.get("text") or value.get("@value")
+            if text:
+                return str(text)
+        for key, item in value.items():
+            if isinstance(key, str) and _normalize_language_key(key) in language_targets:
+                match = _first_text(item)
+                if match:
+                    return match
+        for item in value.values():
+            match = _find_language_text_recursive(item, language_targets)
+            if match:
+                return match
+        return None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _normalize_language_key(token: str) -> str:
+    return token.lower().replace("_", "-").strip()
 
 
 def _first_text(value: Any) -> str | None:

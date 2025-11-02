@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 
+_CJK_CHAR_PATTERN = re.compile(r"[\u2e80-\u2eff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ua000-\ua4cf\uac00-\ud7af\uff00-\uffef]+")
+
 
 def _resolve_base_name(name_block: Any) -> str | None:
     if isinstance(name_block, dict):
@@ -180,6 +182,15 @@ def _is_waste(name: str) -> bool:
     return any(keyword in name for keyword in waste_keywords)
 
 
+def _sanitize_component_text(value: str | None) -> str:
+    if not value:
+        return ""
+    sanitized = value.replace("；", ";").replace("，", ",")
+    sanitized = _CJK_CHAR_PATTERN.sub("", sanitized)
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    return sanitized.strip(" ,;")
+
+
 def _normalise_candidate_component(value: str | None) -> str | None:
     if not value:
         return None
@@ -198,7 +209,9 @@ def _normalise_candidate_component(value: str | None) -> str | None:
         lower = normalised.lower()
         if lower not in seen:
             seen.add(lower)
-            unique.append(normalised)
+            english = _sanitize_component_text(normalised)
+            if english:
+                unique.append(english)
     return ", ".join(unique)
 
 
@@ -208,6 +221,7 @@ def _join_short_description_parts(parts: list[str]) -> str:
         candidate = part.replace("；", ";").replace("，", ",").strip()
         candidate = re.sub(r"\s*,\s*", ", ", candidate)
         candidate = re.sub(r"\s+", " ", candidate).strip(" ,;")
+        candidate = _sanitize_component_text(candidate)
         if candidate:
             cleaned.append(candidate)
     return "; ".join(cleaned)
@@ -229,15 +243,15 @@ def _candidate_reference_parts(candidate: FlowCandidate, exchange: dict[str, Any
             field_values[key] = formatted
             parts.append(formatted)
     if not parts and fallback:
-        formatted = _normalise_candidate_component(fallback) or fallback.strip()
+        formatted = _normalise_candidate_component(fallback) or _sanitize_component_text(fallback)
         if formatted:
-            parts.append(re.sub(r"\s+", " ", formatted))
+            parts.append(formatted)
     return parts, field_values
 
 
 def _reference_from_candidate(candidate: FlowCandidate, exchange: dict[str, Any]) -> dict[str, Any]:
     version = candidate.version or "01.01.000"
-    parts, field_values = _candidate_reference_parts(candidate, exchange)
+    parts, _ = _candidate_reference_parts(candidate, exchange)
     short_description = _join_short_description_parts(parts or ["Matched flow"])
     reference: dict[str, Any] = {
         "@type": "flow data set",
@@ -246,8 +260,6 @@ def _reference_from_candidate(candidate: FlowCandidate, exchange: dict[str, Any]
         "@uri": f"https://tiangong.earth/flows/{candidate.uuid}",
         "common:shortDescription": _multilang(short_description or "Matched flow"),
     }
-    for key, value in field_values.items():
-        reference[key] = value
     return reference
 
 
