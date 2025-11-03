@@ -369,6 +369,8 @@ def _sanitize_comment_text(text: str) -> str:
         "Source/pathway: ",
         "State/purity: ",
         "Synonyms (EN): ",
+        "Abbreviation: ",
+        "Formula/CAS: ",
     ):
         sanitized = sanitized.replace(prefix, "")
     sanitized = CJK_CHAR_PATTERN.sub("", sanitized)
@@ -917,7 +919,7 @@ def _ownership_reference() -> dict[str, Any]:
         "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
         "@type": "contact data set",
         "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-        "@version": "01.01.000",
+        "@version": "01.00.000",
         "common:shortDescription": [
             _language_entry("Tiangong LCA Data Working Group", "en"),
             _language_entry("天工LCA数据团队", "zh"),
@@ -993,6 +995,13 @@ def _build_flow_dataset(
         and (entry.get("@xml:lang") or "en").lower() == "en"
         and _extract_text(entry.get("#text"))
     ]
+    sanitized_comments: list[dict[str, str]] = []
+    for entry in comment_entries:
+        text = _sanitize_comment_text(entry.get("#text", ""))
+        if text:
+            sanitized_comments.append(_language_entry(text, entry.get("@xml:lang", "en")))
+    if sanitized_comments:
+        comment_entries = sanitized_comments
     if not comment_entries:
         fallback_comment = _extract_text(exchange.get("generalComment"))
         if not fallback_comment or not fallback_comment.isascii():
@@ -1158,7 +1167,7 @@ def _build_source_stub(
         "@type": "source data set",
         "@refObjectId": format_source_uuid,
         "@uri": f"../sources/{format_source_uuid}.xml",
-        "@version": "01.01.000",
+        "@version": "03.00.003",
         "common:shortDescription": _language_entry("ILCD format"),
     }
     dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToPersonOrEntityEnteringTheData"] = _data_entry_reference()

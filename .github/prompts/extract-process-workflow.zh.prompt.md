@@ -182,7 +182,7 @@ class WorkflowResult:
 - 成功响应会回显 `id`、`version` 以及 `data` 数组；校验失败会抛出 `SpecCodingError`，直接根据错误中的 JSON 路径修正数据集再重试。
 - 入库自查清单：
   - 保留 ILCD 根级属性（`@xmlns`、`@xmlns:common`、`@xmlns:xsi`、schemaLocation）并写入 `administrativeInformation.dataEntryBy.common:timeStamp`、`common:referenceToDataSetFormat`、`common:referenceToPersonOrEntityEnteringTheData`。
-  - 保持合规引用（ILCD 格式 UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`、权属 UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`、联系人 UUID `1f8176e3-86ba-49d1-bab7-4eca2741cdc1`）并声明 `modellingAndValidation.LCIMethod.typeOfDataSet`。
+  - 保持合规引用（ILCD 格式 UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`、权属 UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`、数据录入人 UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`）并声明 `modellingAndValidation.LCIMethod.typeOfDataSet`。
   - 流数据需补齐 `flowProperties.flowProperty`（质量属性 UUID `93a60a56-a3c8-11da-a746-0800200b9a66`）、`quantitativeReference.referenceToReferenceFlowProperty` 以及合适的 `classificationInformation` 或 `elementaryFlowCategorization`。
   - 流程数据保留 Stage 3 的功能单位、交换量与 `modellingAndValidation`；来源数据保留文献元信息与发布时间。
 - 批量发布时优先按 `flows`→`processes`→`sources` 顺序提交，及时记录返回的 `id` / `version` 以备审计。

@@ -936,7 +936,7 @@ def _build_commissioner_reference() -> dict[str, Any]:
         "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
         "@type": "contact data set",
         "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-        "@version": "01.01.000",
+        "@version": "01.00.000",
         "common:shortDescription": [
             {"@xml:lang": "en", "#text": "Tiangong LCA Data Working Group"},
             {"@xml:lang": "zh", "#text": "天工LCA数据团队"},
