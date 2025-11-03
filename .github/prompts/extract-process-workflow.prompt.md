@@ -181,7 +181,7 @@ class WorkflowResult:
 - Successful responses echo the record `id`, `version`, and a `data` array. Validation failures raise `SpecCodingError`; log the payload path from the error and fix the dataset before retrying.
 - Minimum insert checklist:
   - Preserve ILCD root attributes (`@xmlns`, `@xmlns:common`, `@xmlns:xsi`, schema location) and include `administrativeInformation.dataEntryBy.common:timeStamp`, `common:referenceToDataSetFormat`, and `common:referenceToPersonOrEntityEnteringTheData`.
-  - Keep compliance references (e.g., ILCD format UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`, ownership UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`, contact UUID `1f8176e3-86ba-49d1-bab7-4eca2741cdc1`) and declare `modellingAndValidation.LCIMethod.typeOfDataSet`.
+  - Keep compliance references (e.g., ILCD format UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`, ownership UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`, data entry person UUID `f4b4c314-8c4c-4c83-968f-5b3c7724f6a8`) and declare `modellingAndValidation.LCIMethod.typeOfDataSet`.
   - Flows additionally require `flowProperties.flowProperty` (mass property UUID `93a60a56-a3c8-11da-a746-0800200b9a66`), `quantitativeReference.referenceToReferenceFlowProperty`, and `classificationInformation`/`elementaryFlowCategorization` as applicable.
   - Processes must retain the Stage 3 functional unit, exchange list, and `modellingAndValidation` blocks. Sources must keep bibliographic metadata and publication timestamps.
 - For batch publication, queue inserts per dataset type (`flows` → `processes` → `sources`) so references resolve immediately, and record each returned `id`/`version` pair for audit.
