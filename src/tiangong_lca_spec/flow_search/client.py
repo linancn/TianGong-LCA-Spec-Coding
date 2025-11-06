@@ -255,15 +255,24 @@ def _find_language_text_recursive(value: Any, language_targets: set[str]) -> str
             text = value.get("#text") or value.get("text") or value.get("@value")
             if text:
                 return str(text)
+        allow_unlabeled_fallback = lang_normalized is None
+        deferred_string: str | None = None
+        child_containers: list[Any] = []
         for key, item in value.items():
             if isinstance(key, str) and _normalize_language_key(key) in language_targets:
                 match = _first_text(item)
                 if match:
                     return match
-        for item in value.values():
+            if isinstance(item, (dict, list)):
+                child_containers.append(item)
+            elif allow_unlabeled_fallback and isinstance(item, str) and deferred_string is None:
+                deferred_string = item
+        for item in child_containers:
             match = _find_language_text_recursive(item, language_targets)
             if match:
                 return match
+        if allow_unlabeled_fallback:
+            return deferred_string
         return None
     if isinstance(value, str):
         return value
