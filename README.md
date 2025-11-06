@@ -111,5 +111,6 @@ uv run tidas-validate -i artifacts
 ```bash
 uv run python scripts/convert_prompt_to_inline.py --source-json test/data/test_process.json
 
-codex --full-auto "$(cat inline_prompt.txt)"
+# 危险操作：直接执行转换后的内联prompt（请确保已了解风险）
+codex --dangerously-bypass-approvals-and-sandbox "$(cat inline_prompt.txt)"
 ```
