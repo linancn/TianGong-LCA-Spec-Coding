@@ -2,6 +2,8 @@
 
 This document focuses on data extraction and workflow orchestration: it outlines the staged scripts, core modules, data structures, and critical validation checkpoints so Codex can follow a unified strategy during execution. For development environment details and general collaboration conventions, see `AGENTS.md` in the repository root.
 
+**Always execute Python with `uv`: the workstation does not provide a bare `python` binary.** Use `uv run python …` (or `uv run -- python script.py`) for scripts, one-liners via `uv run python - <<'PY'`, and `uv run python -m module` when invoking modules.
+
 The process extraction workflow splits responsibilities as follows:
 - **Stage 1 (Preprocessing)**: Parse the source paper/material and output structured `clean_text` for downstream steps.
 - **Stage 2 (Process generation)**: Codex drives the LLM to extract process blocks, add `FlowSearch hints`, and document conversion assumptions—the foundational input for alignment.
