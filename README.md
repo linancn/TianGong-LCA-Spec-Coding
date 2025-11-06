@@ -111,5 +111,5 @@ uv run tidas-validate -i artifacts
 ```bash
 uv run python scripts/convert_prompt_to_inline.py --source-json test/data/test_process.json
 
-codex exec "$(cat inline_prompt.txt)"
+codex --full-auto "$(cat inline_prompt.txt)"
 ```
