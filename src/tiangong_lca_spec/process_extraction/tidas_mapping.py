@@ -23,6 +23,23 @@ DEFAULT_LANGUAGE = "en"
 DEFAULT_DATA_SET_VERSION = "01.01.000"
 TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 
+ILCD_ENTRY_LEVEL_REFERENCE_ID = "d92a1a12-2545-49e2-a585-55c259997756"
+
+COMPLIANCE_STATUS_OPTIONS = (
+    "Fully compliant",
+    "Not compliant",
+    "Not defined",
+)
+
+COMPLIANCE_STATUS_FIELDS = (
+    "common:approvalOfOverallCompliance",
+    "common:nomenclatureCompliance",
+    "common:methodologicalCompliance",
+    "common:reviewCompliance",
+    "common:documentationCompliance",
+    "common:qualityCompliance",
+)
+
 DATA_SET_TYPE_OPTIONS = [
     "Unit process, single operation",
     "Unit process, black box",
@@ -827,34 +844,101 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
     validation["review"] = review
     mv["validation"] = validation
 
-    compliance = _ensure_dict(mv_raw.get("complianceDeclarations"))
-    compliance_block = compliance.get("compliance")
-    if not isinstance(compliance_block, dict):
-        compliance_block = {}
-    compliance_block.pop("referenceToComplianceSystem", None)
-    compliance_block.pop("value", None)
-    for key in list(compliance_block.keys()):
-        if not key.startswith("common:"):
-            compliance_block.pop(key, None)
-    if not _has_reference(compliance_block.get("common:referenceToComplianceSystem")):
-        reference = _build_compliance_reference()
-        if reference:
-            compliance_block["common:referenceToComplianceSystem"] = reference
-    if not compliance_block.get("common:approvalOfOverallCompliance"):
-        compliance_block["common:approvalOfOverallCompliance"] = "Not defined"
-    for field in (
-        "common:nomenclatureCompliance",
-        "common:methodologicalCompliance",
-        "common:reviewCompliance",
-        "common:documentationCompliance",
-        "common:qualityCompliance",
-    ):
-        if not compliance_block.get(field):
-            compliance_block[field] = "Not defined"
-    compliance["compliance"] = compliance_block
-    mv["complianceDeclarations"] = compliance
+    mv["complianceDeclarations"] = _build_compliance_declarations(mv_raw.get("complianceDeclarations"))
 
     return mv
+
+
+def _build_compliance_declarations(section: Any) -> dict[str, Any]:
+    declarations_container = _ensure_dict(section)
+    extras = _collect_additional_compliance_entries(declarations_container)
+    baseline = _build_entry_level_compliance()
+    if extras:
+        compliance_value: Any = [baseline, *extras]
+    else:
+        compliance_value = baseline
+    result: dict[str, Any] = {"compliance": compliance_value}
+    other_text = _stringify(declarations_container.get("common:other")).strip()
+    if other_text:
+        result["common:other"] = other_text
+    return result
+
+
+def _collect_additional_compliance_entries(container: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_entries = container.get("compliance")
+    if isinstance(raw_entries, list):
+        candidates = raw_entries
+    elif isinstance(raw_entries, dict):
+        candidates = [raw_entries]
+    else:
+        candidates = []
+    extras: list[dict[str, Any]] = []
+    for candidate in candidates:
+        normalised = _normalise_compliance_entry(candidate)
+        if not normalised:
+            continue
+        if _is_entry_level_reference(normalised):
+            continue
+        extras.append(normalised)
+    return extras
+
+
+def _normalise_compliance_entry(entry: Any) -> dict[str, Any] | None:
+    data = _ensure_dict(entry)
+    if not data:
+        return None
+    reference = _select_reference(data.get("common:referenceToComplianceSystem"))
+    if not reference:
+        return None
+    normalised: dict[str, Any] = {"common:referenceToComplianceSystem": reference}
+    for field in COMPLIANCE_STATUS_FIELDS:
+        status = _normalise_compliance_status(data.get(field))
+        if status is None:
+            return None
+        normalised[field] = status
+    other_value = _stringify(data.get("common:other")).strip()
+    if other_value:
+        normalised["common:other"] = other_value
+    return normalised
+
+
+def _normalise_compliance_status(value: Any) -> str | None:
+    text = _stringify(value).strip()
+    if not text:
+        return None
+    for option in COMPLIANCE_STATUS_OPTIONS:
+        if text.lower() == option.lower():
+            return option
+    return None
+
+
+def _select_reference(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict) and "@refObjectId" in value:
+        return value
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and "@refObjectId" in item:
+                return item
+    return None
+
+
+def _is_entry_level_reference(entry: dict[str, Any]) -> bool:
+    reference = entry.get("common:referenceToComplianceSystem")
+    if isinstance(reference, dict):
+        return reference.get("@refObjectId") == ILCD_ENTRY_LEVEL_REFERENCE_ID
+    return False
+
+
+def _build_entry_level_compliance() -> dict[str, Any]:
+    return {
+        "common:referenceToComplianceSystem": _build_compliance_reference(),
+        "common:approvalOfOverallCompliance": "Fully compliant",
+        "common:nomenclatureCompliance": "Fully compliant",
+        "common:methodologicalCompliance": "Not defined",
+        "common:reviewCompliance": "Not defined",
+        "common:documentationCompliance": "Not defined",
+        "common:qualityCompliance": "Not defined",
+    }
 
 
 def _normalise_administrative_information(
