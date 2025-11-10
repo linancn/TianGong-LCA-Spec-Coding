@@ -193,36 +193,53 @@ def _build_section_prompt() -> str:
     repo = get_schema_repository()
     process_guidelines = (
         "Process extraction guidelines:\n"
-        "1. Process definition: a concrete activity that produces a product or service, "
+        "1. Process Definition: a concrete activity that produces a product or service, "
         "consumes resources (energy, materials, land, transport, services), and has "
         "quantified LCI exchanges.\n"
         "2. Only create a process when quantifiable LCI data is provided; descriptive text "
         "without amounts is ignored.\n"
-        "3. When both parent and subprocess data are present, create entries for each "
-        "subprocess. Treat the parent dataset as the aggregation of its subprocesses and "
-        "document that relation in `common:generalComment` instead of creating "
-        "an additional record.\n"
-        "4. Do not promote a single exchange from another dataset into its own process "
-        "unless the literature provides an independent LCI for it.\n"
-        "5. If the same activity has distinct LCI variants by geography, year, or technology "
-        "route, create separate records; otherwise merge them.\n"
-        "6. Always capture which subprocesses are bundled together, the functional unit, "
-        "and key allocation or shared-resource notes inside `common:generalComment`.\n"
-        "7. Treat shared preparation steps, raw material staging, or utility supply that "
-        "lack their own functional unit as supplemental information. Write such details "
-        "into the relevant subprocess `common:generalComment` instead of creating a new "
-        "process entry.\n"
-        "8. Only introduce a new process when the document explicitly labels a unit "
+        "3. Only introduce a new process when the document explicitly labels a unit "
         "operation (in tables, section headings, or prose) and associates it with its own "
         "inventory or functional output.\n"
-        "9. Stage 3 flow alignment performs serial MCP lookups; therefore you must "
+        "4. Do not promote a single exchange from another dataset's inventory into its own "
+        "process unless the literature provides an independent LCI for that activity.\n"
+        "5. When both parent (aggregated system) and subprocess data are present, create "
+        "entries for each subprocess. Treat the parent dataset as the aggregation of its "
+        "subprocesses and document that relation in `common:generalComment` instead of "
+        "creating an additional record.\n"
+        "6. If the literature mentions subprocesses in the text but provides only a total, "
+        "system-boundary inventory in the data tables (black-box), create only one process "
+        "representing the entire system, and do not create entries for the subprocesses "
+        "lacking independent LCI data.\n"
+        "7. Treat shared preparation steps, raw material staging, or unallocated "
+        "\"common\" flows that lack their own functional unit as supplemental information. "
+        "Do not create a separate Process for them. Write such details, or their total "
+        "values, into the relevant subprocess `common:generalComment`.\n"
+        "8. Every Process created must define one, and only one, primary product or service "
+        "output directly related to its function, which serves as the **Reference Flow**.\n"
+        "9. When identifying the Reference Flow, do not blindly assume the overall table "
+        "header is the functional unit. You **must** look for the unique functional output "
+        "(name and amount) explicitly associated with **this specific unit process** within "
+        "the prose, table structure, or dedicated captions. The exchange amount **must be "
+        "the exact numerical value specified in the literature**.\n"
+        "10. The **Reference Flow** must not be an environmental emission or resource "
+        "consumption (Elementary Flow); it **must** be a Product/Service flow "
+        "(Technosphere Flow).\n"
+        "11. If a Process yields multiple valuable products, you **must** clearly document "
+        "the allocation method and basis described in the literature (e.g., \"allocation by "
+        "economic value,\" \"mass allocation\") inside the `common:generalComment`.\n"
+        "12. If the same activity has distinct LCI variants by geography, year, or technology "
+        "route, create separate records; otherwise merge them.\n"
+        "13. Always capture which subprocesses are bundled together, the functional unit, "
+        "and key allocation or shared-resource notes inside the process-level "
+        "`common:generalComment`.\n"
+        "14. Stage 3 flow alignment performs serial MCP lookups; therefore you **must** "
         "reproduce each table row or inventory line as its own `exchange` entry. Never "
         "merge, drop, or average distinct rows—even if values are similar. Preserve the "
-        "original units, qualifiers, scenario labels, and footnotes inside "
-        "`generalComment` so downstream alignment can trace every "
-        "source datum.\n"
-        "10. Normalize exchange names to Tiangong/ILCD canonical wording (e.g., "
-        '"Electricity, medium voltage", "Carbon dioxide, fossil") and ensure every '
+        "original units, qualifiers, scenario labels, and footnotes inside `generalComment` "
+        "so downstream alignment can trace every source datum.\n"
+        "15. Normalize exchange names to Tiangong/ILCD canonical wording (e.g., "
+        "\"Electricity, medium voltage\", \"Carbon dioxide, fossil\") and ensure every "
         "`generalComment` begins with the exact prefix `FlowSearch hints:` followed by "
         "the pipe-delimited template "
         "`en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | "
@@ -326,15 +343,17 @@ def _build_section_prompt() -> str:
 
 SECTION_PROMPT = _build_section_prompt()
 
-PARENT_PROMPT = (
+AGGREGATE_SYSTEM_PROMPT = (
     "You are analysing a life cycle assessment document. Identify every top-level or parent "
     "process system described (for example, production routes, technology options, or supply "
     "chains that contain multiple subprocesses with their own LCIs). Return JSON with the key "
     "`parentProcesses`, whose value is an array. Each item must include `name` (string), optional "
     "`aliases` (array of alternative names), optional `keywords` (array of distinguishing terms), "
     "and optional `subprocessHints` (array summarising important subprocesses mentioned). Only "
-    "include parents that have at least one quantified subprocess in the text. Ensure every "
-    "parent mentioned in the document appears exactly once."
+    "include parents that have at least one quantified subprocess in the text, and skip shared "
+    "preparation steps or utilities that lack independent LCIs or a functional unit. If the "
+    "document only provides a single black-box inventory with no decomposed subprocesses, return "
+    "an empty array. Ensure every qualifying parent mentioned in the document appears exactly once."
 )
 
 CLASSIFICATION_PROMPT = (
@@ -359,20 +378,20 @@ class SectionExtractor:
         self,
         clean_text: str,
         *,
-        focus_parent: str | None = None,
-        parent_aliases: list[str] | None = None,
+        focus_system: str | None = None,
+        system_aliases: list[str] | None = None,
     ) -> dict[str, Any]:
         LOGGER.info("process_extraction.section_extraction")
         prompt = SECTION_PROMPT
-        if focus_parent:
+        if focus_system:
             alias_text = ""
-            if parent_aliases:
-                filtered_aliases = [alias for alias in parent_aliases if alias]
+            if system_aliases:
+                filtered_aliases = [alias for alias in system_aliases if alias]
                 if filtered_aliases:
                     alias_text = f" (aliases: {', '.join(filtered_aliases)})"
             focus_directive = (
-                "Focus exclusively on the parent process "
-                f"`{focus_parent}`{alias_text}. Extract every subprocess that the document "
+                "Focus exclusively on the top-level system "
+                f"`{focus_system}`{alias_text}. Extract every subprocess or unit process that the document "
                 "explicitly assigns to this parent (headings, tables, or prose with a named "
                 "unit process). Do not split out generic raw-material staging or shared "
                 "utilities unless the text states they operate as distinct unit processes. "
@@ -395,7 +414,7 @@ class SectionExtractor:
         if truncated:
             LOGGER.warning(
                 "process_extraction.section_extraction_truncated",
-                focus_parent=focus_parent,
+                focus_system=focus_system,
             )
         return data
 
@@ -430,14 +449,14 @@ class LocationNormalizer:
 
 
 @dataclass
-class ParentProcessExtractor:
+class AggregateSystemExtractor:
     llm: LanguageModelProtocol
 
     def run(self, clean_text: str) -> dict[str, Any]:
-        LOGGER.info("process_extraction.parent_process_identification")
+        LOGGER.info("process_extraction.aggregate_system_identification")
         response = self.llm.invoke(
             {
-                "prompt": PARENT_PROMPT,
+                "prompt": AGGREGATE_SYSTEM_PROMPT,
                 "context": clean_text,
                 "response_format": {"type": "json_object"},
             }
