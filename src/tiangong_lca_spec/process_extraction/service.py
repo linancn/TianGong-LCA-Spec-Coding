@@ -11,13 +11,7 @@ from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import ProcessExtractionError, SpecCodingError
 from tiangong_lca_spec.core.logging import get_logger
 
-from .extractors import (
-    LanguageModelProtocol,
-    LocationNormalizer,
-    ParentProcessExtractor,
-    ProcessClassifier,
-    SectionExtractor,
-)
+from .extractors import AggregateSystemExtractor, LanguageModelProtocol, LocationNormalizer, ProcessClassifier, SectionExtractor
 from .hints import enrich_exchange_hints
 from .tidas_mapping import build_tidas_process_dataset
 
@@ -43,7 +37,7 @@ class ExtractionState(TypedDict, total=False):
     clean_text: str
     sections: dict[str, Any]
     process_blocks: list[dict[str, Any]]
-    parent_processes: list[dict[str, Any]]
+    aggregate_systems: list[dict[str, Any]]
     fallback_reference_year: int
 
 
@@ -57,7 +51,7 @@ class ProcessExtractionService:
     ) -> None:
         self._settings = settings or get_settings()
         self._section_extractor = SectionExtractor(llm)
-        self._parent_extractor = ParentProcessExtractor(llm)
+        self._aggregate_extractor = AggregateSystemExtractor(llm)
         self._classifier = ProcessClassifier(llm)
         self._location_normalizer = LocationNormalizer(llm)
 
@@ -80,34 +74,34 @@ class ProcessExtractionService:
         if not clean_text:
             raise ProcessExtractionError("Clean text missing for extraction")
 
-        parent_summary = self._parent_extractor.run(clean_text)
-        parents = _normalise_parent_processes(parent_summary)
-        state["parent_processes"] = parents
+        aggregate_summary = self._aggregate_extractor.run(clean_text)
+        systems = _normalise_aggregate_systems(aggregate_summary)
+        state["aggregate_systems"] = systems
 
         sections: dict[str, Any] | None = None
-        if parents:
+        if systems:
             parent_results: list[tuple[dict[str, Any], dict[str, Any]]] = []
             missing_parents: list[str] = []
-            for parent in parents:
-                context = _slice_text_for_parent(clean_text, parent)
+            for parent in systems:
+                context = _slice_text_for_system(clean_text, parent)
                 section = self._section_extractor.run(
                     context,
-                    focus_parent=parent["name"],
-                    parent_aliases=parent.get("aliases"),
+                    focus_system=parent["name"],
+                    system_aliases=parent.get("aliases"),
                 )
                 if not _has_process_datasets(section):
                     section = self._section_extractor.run(
                         clean_text,
-                        focus_parent=parent["name"],
-                        parent_aliases=parent.get("aliases"),
+                        focus_system=parent["name"],
+                        system_aliases=parent.get("aliases"),
                     )
                 if not _has_process_datasets(section):
                     missing_parents.append(parent["name"])
                 parent_results.append((parent, section))
-            sections = _combine_parent_sections(parent_results, parent_summary)
+            sections = _combine_system_sections(parent_results, aggregate_summary)
             if missing_parents:
                 LOGGER.warning(
-                    "process_extraction.parents_uncovered",
+                    "process_extraction.aggregate_systems_uncovered",
                     missing_parents=missing_parents,
                 )
         else:
@@ -116,7 +110,7 @@ class ProcessExtractionService:
         state["sections"] = sections
 
         dataset_entries = _collect_datasets(sections)
-        if not dataset_entries and parents:
+        if not dataset_entries and systems:
             sections = self._section_extractor.run(clean_text)
             state["sections"] = sections
             dataset_entries = _collect_datasets(sections)
@@ -308,7 +302,7 @@ def _coerce_year(value: Any) -> int | None:
     return None
 
 
-def _normalise_parent_processes(summary: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _normalise_aggregate_systems(summary: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not summary:
         return []
     raw_parents = summary.get("parentProcesses") or summary.get("parent_processes") or []
@@ -337,7 +331,7 @@ def _normalise_parent_processes(summary: dict[str, Any] | None) -> list[dict[str
     return normalised
 
 
-def _slice_text_for_parent(clean_text: str, parent: dict[str, Any]) -> str:
+def _slice_text_for_system(clean_text: str, parent: dict[str, Any]) -> str:
     keywords = {parent.get("name", "")}
     keywords.update(parent.get("aliases") or [])
     keywords.update(parent.get("keywords") or [])
@@ -361,7 +355,7 @@ def _slice_text_for_parent(clean_text: str, parent: dict[str, Any]) -> str:
     return context
 
 
-def _combine_parent_sections(
+def _combine_system_sections(
     parent_sections: list[tuple[dict[str, Any], dict[str, Any]]],
     parent_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
