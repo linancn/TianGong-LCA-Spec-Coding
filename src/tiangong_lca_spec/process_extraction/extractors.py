@@ -26,24 +26,165 @@ def _truncate(text: str, limit: int = 160) -> str:
     return cleaned[: limit - 3].rstrip() + "..."
 
 
-def _format_fields(fields: list[FieldSummary], indent: int = 0, depth: int = 2) -> list[str]:
+def _schema_type_hint(schema: dict[str, Any] | None) -> str:
+    if not isinstance(schema, dict):
+        return ""
+    type_value = schema.get("type")
+    if isinstance(type_value, list):
+        # Preserve order but avoid duplicate fragments
+        seen: list[str] = []
+        for item in type_value:
+            if item not in seen:
+                seen.append(str(item))
+        type_hint = " | ".join(seen)
+    elif isinstance(type_value, str):
+        type_hint = type_value
+    elif "enum" in schema:
+        type_hint = "enum"
+    else:
+        return ""
+    return f" [{type_hint}]"
+
+
+def _schema_is_array(schema: dict[str, Any] | None) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    type_value = schema.get("type")
+    if isinstance(type_value, list):
+        return "array" in type_value
+    return type_value == "array"
+
+
+def _render_enum_values(values: list[Any], indent: int) -> list[str]:
+    prefix = "  " * indent
+    formatted = ", ".join(str(value) for value in values)
+    return [f"{prefix}- allowed values: {formatted}"]
+
+
+def _is_multilang_field(field: FieldSummary, schema: dict[str, Any] | None) -> bool:
+    if field.reference and "MultiLang" in field.reference:
+        return True
+    if not isinstance(schema, dict):
+        return False
+    options = schema.get("anyOf") or schema.get("oneOf") or schema.get("allOf")
+    if not isinstance(options, list):
+        return False
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        properties = option.get("properties")
+        if isinstance(properties, dict) and "@xml:lang" in properties and "#text" in properties:
+            return True
+    return False
+
+
+def _render_schema_details(schema: dict[str, Any] | None, indent: int, seen: set[int]) -> list[str]:
+    if not isinstance(schema, dict):
+        return []
+    schema_id = id(schema)
+    if schema_id in seen:
+        prefix = "  " * indent
+        return [f"{prefix}- ... (recursive reference)"]
+    seen.add(schema_id)
+
     lines: list[str] = []
     prefix = "  " * indent
+
+    for key in ("allOf", "anyOf", "oneOf"):
+        options = schema.get(key)
+        if isinstance(options, list) and options:
+            for index, option in enumerate(options, start=1):
+                option_hint = _schema_type_hint(option)
+                lines.append(f"{prefix}- {key} option {index}{option_hint}")
+                lines.extend(_render_schema_details(option, indent + 1, seen))
+            seen.remove(schema_id)
+            return lines
+
+    if _schema_is_array(schema) and isinstance(schema.get("items"), dict):
+        extras: list[str] = []
+        if schema.get("uniqueItems"):
+            extras.append("uniqueItems")
+        if "minItems" in schema:
+            extras.append(f"minItems={schema['minItems']}")
+        if "maxItems" in schema:
+            extras.append(f"maxItems={schema['maxItems']}")
+        extras_text = f" ({', '.join(extras)})" if extras else ""
+        item_schema = schema["items"]
+        lines.append(f"{prefix}- items{_schema_type_hint(item_schema)}{extras_text}")
+        lines.extend(_render_schema_details(item_schema, indent + 1, seen))
+        seen.remove(schema_id)
+        return lines
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict) and properties:
+        required = set(schema.get("required", []))
+        for name, child_schema in properties.items():
+            type_hint = _schema_type_hint(child_schema)
+            flags: list[str] = []
+            if name in required:
+                flags.append("required")
+            if "maxLength" in child_schema:
+                flags.append(f"maxLength={child_schema['maxLength']}")
+            if "minLength" in child_schema:
+                flags.append(f"minLength={child_schema['minLength']}")
+            if "pattern" in child_schema:
+                flags.append(f"pattern={child_schema['pattern']}")
+            suffix = f" ({'; '.join(flags)})" if flags else ""
+            lines.append(f"{prefix}- {name}{type_hint}{suffix}")
+            enum_values = child_schema.get("enum")
+            if isinstance(enum_values, list) and enum_values:
+                lines.extend(_render_enum_values(enum_values, indent + 1))
+            lines.extend(_render_schema_details(child_schema, indent + 1, seen))
+
+    seen.remove(schema_id)
+    return lines
+
+
+def _format_fields(
+    fields: list[FieldSummary],
+    schema_node: dict[str, Any] | None,
+    *,
+    indent: int = 0,
+    depth: int = 2,
+) -> list[str]:
+    lines: list[str] = []
+    prefix = "  " * indent
+    properties = schema_node.get("properties") if isinstance(schema_node, dict) else {}
     for field in fields:
+        field_schema = properties.get(field.name, {}) if isinstance(properties, dict) else {}
         type_hint = f" [{field.type}]" if field.type else ""
         required = " (required)" if field.required else ""
         description = f": {_truncate(field.description)}" if field.description else ""
         lines.append(f"{prefix}- {field.name}{type_hint}{required}{description}")
+
+        enum_values = field_schema.get("enum")
+        if isinstance(enum_values, list) and enum_values:
+            lines.extend(_render_enum_values(enum_values, indent + 1))
+
+        if _is_multilang_field(field, field_schema):
+            lines.extend(_render_schema_details(field_schema, indent + 1, seen=set()))
+
         if field.children and depth > 1:
-            lines.extend(_format_fields(field.children, indent + 1, depth - 1))
+            next_schema = field_schema
+            if _schema_is_array(field_schema) and isinstance(field_schema.get("items"), dict):
+                next_schema = field_schema["items"]
+            lines.extend(
+                _format_fields(
+                    field.children,
+                    next_schema,
+                    indent=indent + 1,
+                    depth=depth - 1,
+                )
+            )
     return lines
 
 
 def _render_summary(title: str, pointer: str, depth: int = 2) -> str:
     repo = get_schema_repository()
     fields = repo.summarize_properties("tidas_processes.json", pointer)
+    schema_node = repo.resolve_with_references("tidas_processes.json", pointer)
     lines = [title]
-    lines.extend(_format_fields(fields, indent=1, depth=depth))
+    lines.extend(_format_fields(fields, schema_node, indent=1, depth=depth))
     return "\n".join(lines)
 
 
@@ -135,9 +276,14 @@ def _build_section_prompt() -> str:
         "will populate flow references after alignment.\n"
         '  * `@dataSetInternalID`: sequential identifiers as strings starting from "0".'
     )
-    metadata_fields = [field for field in repo.summarize_properties("tidas_processes.json", "/properties/processDataSet") if field.name.startswith("@")]
+    metadata_schema = repo.resolve_with_references("tidas_processes.json", "/properties/processDataSet")
+    metadata_fields = [
+        field
+        for field in repo.summarize_properties("tidas_processes.json", "/properties/processDataSet")
+        if field.name.startswith("@")
+    ]
     metadata_lines = ["processDataSet metadata (auto-populated if omitted):"]
-    metadata_lines.extend(_format_fields(metadata_fields, indent=1, depth=1))
+    metadata_lines.extend(_format_fields(metadata_fields, metadata_schema, indent=1, depth=1))
     metadata = "\n".join(metadata_lines)
     process_info = _render_summary(
         "processInformation fields:",
