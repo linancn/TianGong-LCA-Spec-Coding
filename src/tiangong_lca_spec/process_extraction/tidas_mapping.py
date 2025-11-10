@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 from uuid import uuid4
+
+from tiangong_lca_spec.tidas import get_schema_repository
 
 BASE_METADATA = {
     "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
@@ -25,63 +29,39 @@ TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 
 ILCD_ENTRY_LEVEL_REFERENCE_ID = "d92a1a12-2545-49e2-a585-55c259997756"
 
-COMPLIANCE_STATUS_OPTIONS = (
-    "Fully compliant",
-    "Not compliant",
-    "Not defined",
+COMPLIANCE_BASE_POINTER = (
+    "/properties/processDataSet/properties/modellingAndValidation"
+    "/properties/complianceDeclarations/properties/compliance"
 )
 
-COMPLIANCE_STATUS_FIELDS = (
-    "common:approvalOfOverallCompliance",
-    "common:nomenclatureCompliance",
-    "common:methodologicalCompliance",
-    "common:reviewCompliance",
-    "common:documentationCompliance",
-    "common:qualityCompliance",
+COMPLIANCE_DEFAULT_PREFERENCES = {
+    "common:approvalOfOverallCompliance": "Fully compliant",
+    "common:nomenclatureCompliance": "Fully compliant",
+    "common:methodologicalCompliance": "Not defined",
+    "common:reviewCompliance": "Not defined",
+    "common:documentationCompliance": "Not defined",
+    "common:qualityCompliance": "Not defined",
+}
+
+TYPE_OF_DATA_SET_POINTER = (
+    "/properties/processDataSet/properties/modellingAndValidation"
+    "/properties/LCIMethodAndAllocation/properties/typeOfDataSet"
+)
+LCI_METHOD_PRINCIPLE_POINTER = (
+    "/properties/processDataSet/properties/modellingAndValidation"
+    "/properties/LCIMethodAndAllocation/properties/LCIMethodPrinciple"
+)
+LCI_METHOD_APPROACH_POINTER = (
+    "/properties/processDataSet/properties/modellingAndValidation"
+    "/properties/LCIMethodAndAllocation/properties/LCIMethodApproaches"
 )
 
-DATA_SET_TYPE_OPTIONS = [
-    "Unit process, single operation",
-    "Unit process, black box",
-    "LCI result",
-    "Partly terminated system",
-    "Avoided product system",
-]
-DEFAULT_PROCESS_DATA_SET_TYPE = DATA_SET_TYPE_OPTIONS[0]
-
-LCI_METHOD_PRINCIPLE_OPTIONS = [
-    "Attributional",
-    "Consequential",
-    "Consequential with attributional components",
-    "Not applicable",
-    "Other",
-]
-
-LCI_METHOD_APPROACH_OPTIONS = [
-    "Allocation - market value",
-    "Allocation - gross calorific value",
-    "Allocation - net calorific value",
-    "Allocation - exergetic content",
-    "Allocation - element content",
-    "Allocation - mass",
-    "Allocation - volume",
-    "Allocation - ability to bear",
-    "Allocation - marginal causality",
-    "Allocation - physical causality",
-    "Allocation - 100% to main function",
-    "Allocation - other explicit assignment",
-    "Allocation - equal distribution",
-    "Allocation - recycled content",
-    "Substitution - BAT",
-    "Substitution - average, market price correction",
-    "Substitution - average, technical properties correction",
-    "Substitution - recycling potential",
-    "Substitution - average, no correction",
-    "Substitution - specific",
-    "Consequential effects - other",
-    "Not applicable",
-    "Other",
-]
+@dataclass(frozen=True)
+class ProcessSchemaMetadata:
+    enum_fields: dict[str, tuple[str, ...]]
+    multilang_fields: frozenset[str]
+    compliance_status_fields: tuple[str, ...]
+    compliance_field_pointers: dict[str, str]
 
 
 def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, Any]:
@@ -120,6 +100,7 @@ def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, An
         dataset["LCIAResults"] = lcia
     else:
         dataset.pop("LCIAResults", None)
+    _apply_schema_normalisation(dataset)
     return _strip_common_other(dataset)
 
 
@@ -759,10 +740,14 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
     lci = _ensure_dict(mv_raw.get("LCIMethodAndAllocation"))
     type_value = _normalise_dataset_type(lci.get("typeOfDataSet"))
     if not type_value:
-        type_value = DEFAULT_PROCESS_DATA_SET_TYPE
-    lci["typeOfDataSet"] = type_value
+        type_value = _default_enum_value(TYPE_OF_DATA_SET_POINTER)
+    if type_value:
+        lci["typeOfDataSet"] = type_value
+    else:
+        lci.pop("typeOfDataSet", None)
 
-    principle_value = _match_allowed_option(lci.get("LCIMethodPrinciple"), LCI_METHOD_PRINCIPLE_OPTIONS)
+    principle_options = _get_enum_options(LCI_METHOD_PRINCIPLE_POINTER)
+    principle_value = _match_enum_value(lci.get("LCIMethodPrinciple"), principle_options)
     if principle_value:
         lci["LCIMethodPrinciple"] = principle_value
     else:
@@ -891,8 +876,8 @@ def _normalise_compliance_entry(entry: Any) -> dict[str, Any] | None:
     if not reference:
         return None
     normalised: dict[str, Any] = {"common:referenceToComplianceSystem": reference}
-    for field in COMPLIANCE_STATUS_FIELDS:
-        status = _normalise_compliance_status(data.get(field))
+    for field in _get_compliance_status_fields():
+        status = _normalise_compliance_status(field, data.get(field))
         if status is None:
             return None
         normalised[field] = status
@@ -902,14 +887,11 @@ def _normalise_compliance_entry(entry: Any) -> dict[str, Any] | None:
     return normalised
 
 
-def _normalise_compliance_status(value: Any) -> str | None:
-    text = _stringify(value).strip()
-    if not text:
-        return None
-    for option in COMPLIANCE_STATUS_OPTIONS:
-        if text.lower() == option.lower():
-            return option
-    return None
+def _normalise_compliance_status(field: str, value: Any) -> str | None:
+    metadata = _get_process_schema_metadata()
+    pointer = metadata.compliance_field_pointers.get(field, "")
+    options = list(metadata.enum_fields.get(pointer, ()))
+    return _match_enum_value(value, options)
 
 
 def _select_reference(value: Any) -> dict[str, Any] | None:
@@ -930,15 +912,15 @@ def _is_entry_level_reference(entry: dict[str, Any]) -> bool:
 
 
 def _build_entry_level_compliance() -> dict[str, Any]:
-    return {
+    metadata = _get_process_schema_metadata()
+    entry = {
         "common:referenceToComplianceSystem": _build_compliance_reference(),
-        "common:approvalOfOverallCompliance": "Fully compliant",
-        "common:nomenclatureCompliance": "Fully compliant",
-        "common:methodologicalCompliance": "Not defined",
-        "common:reviewCompliance": "Not defined",
-        "common:documentationCompliance": "Not defined",
-        "common:qualityCompliance": "Not defined",
     }
+    for field in _get_compliance_status_fields():
+        pointer = metadata.compliance_field_pointers.get(field, "")
+        preferred = COMPLIANCE_DEFAULT_PREFERENCES.get(field)
+        entry[field] = _default_enum_value(pointer, preferred)
+    return entry
 
 
 def _normalise_administrative_information(
@@ -1251,6 +1233,347 @@ def _ensure_multilang(value: Any, *, fallback: str | None = None, separator: str
     return {"@xml:lang": DEFAULT_LANGUAGE, "#text": text}
 
 
+def _normalize_enum_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _schema_pointer_get(schema: dict[str, Any], pointer: str) -> Any:
+    if not pointer or pointer == "/":
+        return schema
+    parts = pointer.lstrip("/").split("/")
+    node: Any = schema
+    for part in parts:
+        key = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, list):
+            try:
+                index = int(key)
+            except ValueError:
+                return {}
+            if index < 0 or index >= len(node):
+                return {}
+            node = node[index]
+        elif isinstance(node, dict):
+            if key not in node:
+                return {}
+            node = node[key]
+        else:
+            return {}
+    return node
+
+
+def _collect_enum_options(node: Any) -> list[str]:
+    if not isinstance(node, dict):
+        return []
+    options: list[str] = []
+    enum_values = node.get("enum")
+    if isinstance(enum_values, list):
+        options.extend(str(item) for item in enum_values)
+    for key in ("allOf", "anyOf", "oneOf"):
+        variants = node.get(key)
+        if isinstance(variants, list):
+            for variant in variants:
+                options.extend(_collect_enum_options(variant))
+    seen: set[str] = set()
+    unique: list[str] = []
+    for option in options:
+        if option not in seen:
+            seen.add(option)
+            unique.append(option)
+    return unique
+
+
+def _pointer_from_path(path: tuple[str, ...]) -> str:
+    if not path:
+        return ""
+    return "/" + "/".join(path)
+
+
+def _build_process_schema_metadata(schema: dict[str, Any]) -> ProcessSchemaMetadata:
+    enum_fields: dict[str, tuple[str, ...]] = {}
+    multilang_fields: set[str] = set()
+    compliance_fields: list[str] = []
+    compliance_pointers: dict[str, str] = {}
+    visited: set[int] = set()
+
+    def walk(node: Any, path: tuple[str, ...]) -> None:
+        node_id = id(node)
+        if node_id in visited:
+            return
+        visited.add(node_id)
+
+        pointer = _pointer_from_path(path)
+        is_property_field = len(path) >= 2 and path[-2] == "properties"
+        is_items_field = path[-1] == "items"
+        is_additional_field = path[-1] == "additionalProperties"
+        is_field_node = is_property_field or is_items_field or is_additional_field
+
+        if isinstance(node, dict):
+            if is_field_node and _schema_has_multilang_signature(node):
+                multilang_fields.add(pointer)
+
+            enum_values = node.get("enum")
+            if is_field_node and isinstance(enum_values, list) and enum_values:
+                enum_fields[pointer] = tuple(_collect_enum_options(node))
+
+            if is_property_field and pointer.startswith(COMPLIANCE_BASE_POINTER):
+                field_name = path[-1]
+                if field_name and field_name not in compliance_pointers:
+                    compliance_pointers[field_name] = pointer
+                    compliance_fields.append(field_name)
+
+            for key in ("allOf", "anyOf", "oneOf"):
+                variants = node.get(key)
+                if isinstance(variants, list):
+                    for idx, variant in enumerate(variants):
+                        walk(variant, path + (key, str(idx)))
+
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                for name, child in properties.items():
+                    walk(child, path + ("properties", name))
+
+            items = node.get("items")
+            if isinstance(items, dict):
+                walk(items, path + ("items",))
+
+            additional = node.get("additionalProperties")
+            if isinstance(additional, dict):
+                walk(additional, path + ("additionalProperties",))
+
+    walk(schema, ())
+
+    compliance_status_fields = tuple(compliance_fields)
+    return ProcessSchemaMetadata(
+        enum_fields=enum_fields,
+        multilang_fields=frozenset(multilang_fields),
+        compliance_status_fields=compliance_status_fields,
+        compliance_field_pointers=compliance_pointers,
+    )
+
+
+@lru_cache(maxsize=None)
+def _get_enum_options(pointer: str) -> list[str]:
+    metadata = _get_process_schema_metadata()
+    options = metadata.enum_fields.get(pointer)
+    return list(options) if options else []
+
+
+@lru_cache(maxsize=1)
+def _get_process_schema_metadata() -> ProcessSchemaMetadata:
+    schema = _get_process_dataset_schema()
+    return _build_process_schema_metadata(schema)
+
+
+def _get_compliance_status_fields() -> tuple[str, ...]:
+    return _get_process_schema_metadata().compliance_status_fields
+
+
+def _match_enum_value(value: Any, options: list[str]) -> str | None:
+    if not options:
+        return None
+    text = _stringify(value).strip()
+    if not text:
+        return None
+    segments = [segment.strip() for segment in re.split(r"[;,/]| and ", text) if segment and segment.strip()]
+    for segment in segments:
+        match = _match_enum_token(segment, options)
+        if match is not None:
+            return match
+    return _match_enum_token(text, options)
+
+
+def _match_enum_token(value: Any, options: list[str]) -> str | None:
+    text = _stringify(value).strip()
+    if not text:
+        return None
+    lower = text.lower()
+    normalized = _normalize_enum_text(text)
+    best_match: str | None = None
+    best_score = 0
+    for option in options:
+        candidate = option.strip()
+        candidate_lower = candidate.lower()
+        candidate_normalized = _normalize_enum_text(candidate)
+        if lower == candidate_lower:
+            return candidate
+        if normalized and candidate_normalized == normalized:
+            return candidate
+        score = 0
+        if candidate_lower in lower or lower in candidate_lower:
+            score = max(score, len(candidate_lower))
+        overlap = set(normalized.split()) & set(candidate_normalized.split())
+        if overlap:
+            score = max(score, len(overlap))
+        if score > best_score:
+            best_score = score
+            best_match = candidate
+    return best_match if best_score > 0 else None
+
+
+def _find_enum_option_by_keywords(options: list[str], *keywords: str) -> str | None:
+    if not keywords:
+        return None
+    lowered_keywords = [keyword.lower() for keyword in keywords]
+    for option in options:
+        candidate_lower = option.lower()
+        if all(keyword in candidate_lower for keyword in lowered_keywords):
+            return option
+    return None
+
+
+def _default_enum_value(pointer: str, preferred: str | None = None) -> str | None:
+    options = _get_enum_options(pointer)
+    if preferred:
+        match = _match_enum_value(preferred, options)
+        if match is not None:
+            return match
+    return options[0] if options else preferred
+
+
+@lru_cache(maxsize=1)
+def _get_process_dataset_schema() -> dict[str, Any]:
+    repo = get_schema_repository()
+    return repo.resolve_with_references("tidas_processes.json", "/properties/processDataSet")
+
+
+def _apply_schema_normalisation(dataset: dict[str, Any]) -> None:
+    schema = _get_process_dataset_schema()
+    metadata = _get_process_schema_metadata()
+    _coerce_schema_fields(dataset, schema, (), metadata)
+
+
+def _coerce_schema_fields(
+    value: Any,
+    schema: Any,
+    path: tuple[str, ...],
+    metadata: ProcessSchemaMetadata,
+) -> Any:
+    if not isinstance(schema, dict):
+        return value
+
+    pointer = _pointer_from_path(path)
+
+    if pointer in metadata.multilang_fields:
+        return _coerce_value_to_multilang(value)
+
+    enum_values = metadata.enum_fields.get(pointer)
+    if enum_values:
+        return _coerce_enum_value(value, list(enum_values))
+
+    # Apply composite schema options before descending to properties/items.
+    for composite_key in ("allOf",):
+        options = schema.get(composite_key)
+        if isinstance(options, list):
+            for idx, option in enumerate(options):
+                value = _coerce_schema_fields(value, option, path + (composite_key, str(idx)), metadata)
+
+    for composite_key in ("anyOf", "oneOf"):
+        options = schema.get(composite_key)
+        if isinstance(options, list):
+            for idx, option in enumerate(options):
+                value = _coerce_schema_fields(value, option, path + (composite_key, str(idx)), metadata)
+            return value
+
+    if isinstance(value, dict):
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            for key, child_schema in properties.items():
+                if key in value:
+                    value[key] = _coerce_schema_fields(
+                        value[key],
+                        child_schema,
+                        path + ("properties", key),
+                        metadata,
+                    )
+        additional = schema.get("additionalProperties")
+        if isinstance(additional, dict):
+            known = set(properties or {})
+            for key, child_value in list(value.items()):
+                if key not in known:
+                    value[key] = _coerce_schema_fields(child_value, additional, path + ("additionalProperties",), metadata)
+        return value
+
+    if isinstance(value, list):
+        items_schema = schema.get("items")
+        if isinstance(items_schema, dict):
+            for index, item in enumerate(value):
+                value[index] = _coerce_schema_fields(item, items_schema, path + ("items",), metadata)
+        return value
+
+    return value
+
+
+def _schema_is_multilang(schema: dict[str, Any]) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    if _schema_has_multilang_signature(schema):
+        return True
+    for composite_key in ("allOf", "anyOf", "oneOf"):
+        options = schema.get(composite_key)
+        if isinstance(options, list) and any(_schema_is_multilang(option) for option in options if isinstance(option, dict)):
+            return True
+    return False
+
+
+def _schema_has_multilang_signature(schema: dict[str, Any]) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    if isinstance(schema.get("properties"), dict):
+        properties = schema["properties"]
+        if "@xml:lang" in properties and "#text" in properties:
+            return True
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and "MultiLang" in ref:
+        return True
+    type_value = schema.get("type")
+    type_candidates: tuple[str, ...]
+    if isinstance(type_value, list):
+        type_candidates = tuple(str(item) for item in type_value)
+    elif isinstance(type_value, str):
+        type_candidates = (type_value,)
+    else:
+        type_candidates = ()
+    if "array" in type_candidates:
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            return _schema_has_multilang_signature(item_schema)
+    return False
+
+
+def _coerce_value_to_multilang(value: Any) -> Any:
+    if isinstance(value, list):
+        entries = _ensure_multilang_list(value)
+        if len(entries) <= 1:
+            return entries[0] if entries else {"@xml:lang": DEFAULT_LANGUAGE, "#text": ""}
+        return entries
+    return _ensure_multilang(value)
+
+
+def _coerce_enum_value(value: Any, options: list[Any]) -> Any:
+    if not options:
+        return value
+    lookup: dict[str, Any] = {}
+    ordered_keys: list[str] = []
+    for option in options:
+        key = str(option)
+        if key not in lookup:
+            lookup[key] = option
+            ordered_keys.append(key)
+    if isinstance(value, list):
+        coerced: list[Any] = []
+        for item in value:
+            match_key = _match_enum_value(item, ordered_keys)
+            if match_key is not None:
+                coerced.append(lookup.get(match_key, item))
+            else:
+                coerced.append(item)
+        return coerced
+    match_key = _match_enum_value(value, ordered_keys)
+    if match_key is not None:
+        return lookup.get(match_key, value)
+    return value
+
+
 def _extract_flow_name(reference: Any) -> str | None:
     if isinstance(reference, dict):
         if isinstance(reference.get("common:shortDescription"), dict):
@@ -1337,81 +1660,68 @@ def _parse_location_code(text: str) -> str | None:
     return None
 
 
-def _match_allowed_option(value: Any, options: list[str]) -> str | None:
-    text = _stringify(value).strip().lower()
-    if not text:
-        return None
-    for option in options:
-        candidate = option.lower()
-        if text == candidate:
-            return option
-    for option in options:
-        candidate = option.lower()
-        if candidate in text or text in candidate:
-            return option
-    return None
-
-
 def _normalise_dataset_type(value: Any) -> str | None:
-    match = _match_allowed_option(value, DATA_SET_TYPE_OPTIONS)
+    options = _get_enum_options(TYPE_OF_DATA_SET_POINTER)
+    match = _match_enum_value(value, options)
     if match:
         return match
-    text = _stringify(value).strip().lower()
+    text_raw = _stringify(value)
+    text = text_raw.strip().lower()
     if not text:
         return None
-    if "non" in text and "aggreg" in text:
-        return "Unit process, single operation"
-    if "single" in text and "operation" in text:
-        return "Unit process, single operation"
-    if "black" in text and "box" in text:
-        return "Unit process, black box"
-    if "lci" in text or "inventory" in text:
-        return "LCI result"
-    if "partly" in text or "terminated" in text:
-        return "Partly terminated system"
-    if "avoid" in text:
-        return "Avoided product system"
+    single_operation = _find_enum_option_by_keywords(options, "single", "operation")
+    if (("non" in text and "aggreg" in text) or ("single" in text and "operation" in text)) and single_operation:
+        return single_operation
+    black_box = _find_enum_option_by_keywords(options, "black", "box")
+    if "black" in text and "box" in text and black_box:
+        return black_box
+    lci_result = _find_enum_option_by_keywords(options, "lci")
+    if ("lci" in text or "inventory" in text) and lci_result:
+        return lci_result
+    partly_terminated = _find_enum_option_by_keywords(options, "partly")
+    if ("partly" in text or "terminated" in text) and partly_terminated:
+        return partly_terminated
+    avoided_system = _find_enum_option_by_keywords(options, "avoid")
+    if "avoid" in text and avoided_system:
+        return avoided_system
     return None
 
 
 def _normalise_lci_method_approach(value: Any) -> str | None:
-    text = _stringify(value).strip()
-    if not text:
-        return None
-    segments = re.split(r"[;,/]| and ", text)
-    for segment in segments:
-        match = _match_allowed_option(segment, LCI_METHOD_APPROACH_OPTIONS)
-        if match:
-            return match
-    match = _match_allowed_option(text, LCI_METHOD_APPROACH_OPTIONS)
+    options = _get_enum_options(LCI_METHOD_APPROACH_POINTER)
+    match = _match_enum_value(value, options)
     if match:
         return match
+    text_raw = _stringify(value)
+    text = text_raw.strip()
+    if not text:
+        return None
     lowered = text.lower()
-    keyword_map = {
-        "market value": "Allocation - market value",
-        "gross calorific": "Allocation - gross calorific value",
-        "net calorific": "Allocation - net calorific value",
-        "exergetic": "Allocation - exergetic content",
-        "element content": "Allocation - element content",
-        "mass": "Allocation - mass",
-        "volume": "Allocation - volume",
-        "ability to bear": "Allocation - ability to bear",
-        "marginal causality": "Allocation - marginal causality",
-        "physical causality": "Allocation - physical causality",
-        "100%": "Allocation - 100% to main function",
-        "other explicit": "Allocation - other explicit assignment",
-        "equal distribution": "Allocation - equal distribution",
-        "recycled content": "Allocation - recycled content",
-        "bat": "Substitution - BAT",
-        "market price": "Substitution - average, market price correction",
-        "technical properties": "Substitution - average, technical properties correction",
-        "recycling potential": "Substitution - recycling potential",
-        "no correction": "Substitution - average, no correction",
-        "specific": "Substitution - specific",
-        "consequential": "Consequential effects - other",
+    keyword_map: dict[tuple[str, ...], str | None] = {
+        ("market", "value"): _find_enum_option_by_keywords(options, "market", "value"),
+        ("gross", "calorific"): _find_enum_option_by_keywords(options, "gross", "calorific"),
+        ("net", "calorific"): _find_enum_option_by_keywords(options, "net", "calorific"),
+        ("exergetic",): _find_enum_option_by_keywords(options, "exergetic"),
+        ("element", "content"): _find_enum_option_by_keywords(options, "element", "content"),
+        ("mass",): _find_enum_option_by_keywords(options, "mass"),
+        ("volume",): _find_enum_option_by_keywords(options, "volume"),
+        ("ability", "bear"): _find_enum_option_by_keywords(options, "ability", "bear"),
+        ("marginal", "causality"): _find_enum_option_by_keywords(options, "marginal", "causality"),
+        ("physical", "causality"): _find_enum_option_by_keywords(options, "physical", "causality"),
+        ("100",): _find_enum_option_by_keywords(options, "100"),
+        ("other", "explicit"): _find_enum_option_by_keywords(options, "other", "explicit"),
+        ("equal", "distribution"): _find_enum_option_by_keywords(options, "equal", "distribution"),
+        ("recycled", "content"): _find_enum_option_by_keywords(options, "recycled", "content"),
+        ("bat",): _find_enum_option_by_keywords(options, "bat"),
+        ("market", "price"): _find_enum_option_by_keywords(options, "market", "price"),
+        ("technical", "properties"): _find_enum_option_by_keywords(options, "technical", "properties"),
+        ("recycling", "potential"): _find_enum_option_by_keywords(options, "recycling", "potential"),
+        ("no", "correction"): _find_enum_option_by_keywords(options, "no", "correction"),
+        ("specific",): _find_enum_option_by_keywords(options, "specific"),
+        ("consequential",): _find_enum_option_by_keywords(options, "consequential"),
     }
-    for keyword, option in keyword_map.items():
-        if keyword in lowered:
+    for keywords, option in keyword_map.items():
+        if option and all(keyword in lowered for keyword in keywords):
             return option
     return None
 
