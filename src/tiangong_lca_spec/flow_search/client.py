@@ -17,9 +17,6 @@ from tiangong_lca_spec.core.models import FlowQuery
 LOGGER = get_logger(__name__)
 
 TIMEOUT_ERRORS = (httpx.TimeoutException, TimeoutError)
-DEFAULT_CONTEXT_LIMIT = 800
-
-
 class FlowSearchClient:
     """Thin wrapper around the MCP flow search tool."""
 
@@ -35,47 +32,25 @@ class FlowSearchClient:
         self._mcp = mcp_client or MCPToolClient(self._settings)
         self._timeout_seconds = self._resolve_timeout()
         self._max_attempts = max(1, self._settings.max_retries)
-        self._context_char_limit = int(getattr(self._settings, "flow_search_context_chars", DEFAULT_CONTEXT_LIMIT))
 
     def _build_arguments(
         self,
         query: FlowQuery,
-        *,
-        include_context: bool = True,
     ) -> Mapping[str, Any]:
         parts: list[str] = []
         if query.exchange_name:
             parts.append(f"exchange: {query.exchange_name}")
-        if query.process_name:
-            parts.append(f"process: {query.process_name}")
         if query.description:
             parts.append(f"description: {query.description}")
-        if include_context and query.paper_md:
-            limit = max(self._context_char_limit, 0)
-            if limit > 0:
-                parts.append(f"context: {query.paper_md[:limit]}")
         joined = " \n".join(parts)
         return {"query": joined or query.exchange_name}
 
     def search(self, query: FlowQuery) -> list[dict[str, Any]]:
         """Execute the remote flow search and return parsed candidates."""
-        include_context = True
-        arguments = self._build_arguments(query, include_context=include_context)
+        arguments = self._build_arguments(query)
         LOGGER.info("flow_search.request", arguments=arguments)
         try:
             raw = self._call_with_retry(arguments)
-        except FlowSearchError as exc:
-            if self._should_strip_context(exc, include_context):
-                LOGGER.warning(
-                    "flow_search.context_stripped",
-                    exchange=query.exchange_name,
-                    process=query.process_name,
-                )
-                include_context = False
-                arguments = self._build_arguments(query, include_context=False)
-                raw = self._call_with_retry(arguments)
-            else:
-                raise
         except Exception as exc:  # pylint: disable=broad-except
             raise FlowSearchError("Flow search invocation failed") from exc
 
@@ -127,23 +102,6 @@ class FlowSearchClient:
         if timeout is None or timeout <= 0:
             return None
         return float(timeout)
-
-    @staticmethod
-    def _should_strip_context(exc: FlowSearchError, include_context: bool) -> bool:
-        if not include_context:
-            return False
-        cause: Exception | None = exc.__cause__  # type: ignore[assignment]
-        while cause:
-            if isinstance(cause, httpx.HTTPStatusError):
-                status = cause.response.status_code
-                if status == 413 or status >= 500:
-                    return True
-            if isinstance(cause, McpError):
-                message = str(cause)
-                if "413" in message or "payload too large" in message.lower():
-                    return True
-            cause = cause.__cause__  # type: ignore[assignment]
-        return False
 
     def close(self) -> None:
         self._mcp.close()
