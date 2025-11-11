@@ -147,8 +147,6 @@ def _normalise_dataset_information(
     data_info: Any,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     info = _ensure_dict(data_info)
-    specinfo = _ensure_dict(info.pop("specinfo", None))
-
     uuid_value = info.get("common:UUID")
     if not isinstance(uuid_value, str) or not _is_valid_uuid(uuid_value):
         uuid_value = str(uuid4())
@@ -162,18 +160,14 @@ def _normalise_dataset_information(
     name_block = _ensure_dict(info.get("name"))
     raw_general_comment = info.get("common:generalComment")
     general_comment_text = _extract_multilang_text(raw_general_comment).strip()
-    base_name_text = _extract_multilang_text(name_block.get("baseName", specinfo.get("baseName")))
-    for field in (
-        "baseName",
-        "treatmentStandardsRoutes",
-        "mixAndLocationTypes",
-        "functionalUnitFlowProperties",
-    ):
-        if field in specinfo and specinfo[field]:
-            name_block[field] = specinfo[field]
+    name_fields = {
+        field: name_block.get(field)
+        for field in ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes", "functionalUnitFlowProperties")
+    }
+    base_name_text = _extract_multilang_text(name_fields.get("baseName"))
     name_components = _derive_name_components(
         base_name_text,
-        specinfo,
+        name_fields,
         general_comment_text,
     )
     base_text = _format_name_field_text(name_components["base"])
@@ -245,7 +239,7 @@ def _normalise_dataset_information(
 
     info["classificationInformation"] = classification_info
 
-    synonyms_value = info.get("common:synonyms") or specinfo.get("common:synonyms")
+    synonyms_value = info.get("common:synonyms")
     synonyms_entries = _ensure_multilang_list(synonyms_value)
     synonyms_entries = _filter_multilang_entries(synonyms_entries, target_lang=DEFAULT_LANGUAGE, clean_text=True)
     if synonyms_entries:
@@ -329,14 +323,16 @@ FEEDSTOCK_KEYWORDS = [
 
 def _derive_name_components(
     base_name: str,
-    specinfo: dict[str, Any],
+    name_fields: dict[str, Any],
     general_comment: str,
 ) -> dict[str, Any]:
     base = base_name.strip() or "Unnamed process"
     product, initial_route = _split_product_and_route(base)
     expanded_sources = []
-    for value in specinfo.values():
-        expanded_sources.append(_stringify(value))
+    for value in name_fields.values():
+        text_value = _extract_multilang_text(value)
+        if text_value:
+            expanded_sources.append(text_value)
     if general_comment:
         expanded_sources.append(general_comment)
     route = _resolve_route(product, initial_route, expanded_sources)
@@ -348,7 +344,7 @@ def _derive_name_components(
     treatment = _semicolon_join([product] + treatment_segments)
     treatment_short = _semicolon_join(treatment_segments)
     mix = _compose_mix_string(mix_type, location_type, None)
-    functional_properties = _stringify(specinfo.get("functionalUnitFlowProperties"))
+    functional_properties = _extract_multilang_text(name_fields.get("functionalUnitFlowProperties"))
     return {
         "base": base,
         "product": product,
@@ -794,7 +790,7 @@ def _normalise_modelling_and_validation(section: Any) -> dict[str, Any]:
         if coverage_value is not None:
             dsr["percentageSupplyOrProductionCovered"] = coverage_value
         else:
-            dsr["percentageSupplyOrProductionCovered"] = "100"
+            dsr.pop("percentageSupplyOrProductionCovered", None)
         if dsr:
             mv["dataSourcesTreatmentAndRepresentativeness"] = dsr
 
