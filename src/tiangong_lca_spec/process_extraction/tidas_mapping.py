@@ -29,10 +29,7 @@ TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 
 ILCD_ENTRY_LEVEL_REFERENCE_ID = "d92a1a12-2545-49e2-a585-55c259997756"
 
-COMPLIANCE_BASE_POINTER = (
-    "/properties/processDataSet/properties/modellingAndValidation"
-    "/properties/complianceDeclarations/properties/compliance"
-)
+COMPLIANCE_BASE_POINTER = "/properties/modellingAndValidation/properties/complianceDeclarations/properties/compliance"
 
 COMPLIANCE_DEFAULT_PREFERENCES = {
     "common:approvalOfOverallCompliance": "Fully compliant",
@@ -43,18 +40,9 @@ COMPLIANCE_DEFAULT_PREFERENCES = {
     "common:qualityCompliance": "Not defined",
 }
 
-TYPE_OF_DATA_SET_POINTER = (
-    "/properties/processDataSet/properties/modellingAndValidation"
-    "/properties/LCIMethodAndAllocation/properties/typeOfDataSet"
-)
-LCI_METHOD_PRINCIPLE_POINTER = (
-    "/properties/processDataSet/properties/modellingAndValidation"
-    "/properties/LCIMethodAndAllocation/properties/LCIMethodPrinciple"
-)
-LCI_METHOD_APPROACH_POINTER = (
-    "/properties/processDataSet/properties/modellingAndValidation"
-    "/properties/LCIMethodAndAllocation/properties/LCIMethodApproaches"
-)
+TYPE_OF_DATA_SET_POINTER = "/properties/modellingAndValidation/properties/LCIMethodAndAllocation/properties/typeOfDataSet"
+LCI_METHOD_PRINCIPLE_POINTER = "/properties/modellingAndValidation/properties/LCIMethodAndAllocation/properties/LCIMethodPrinciple"
+LCI_METHOD_APPROACH_POINTER = "/properties/modellingAndValidation/properties/LCIMethodAndAllocation/properties/LCIMethodApproaches"
 
 @dataclass(frozen=True)
 class ProcessSchemaMetadata:
@@ -1302,9 +1290,11 @@ def _build_process_schema_metadata(schema: dict[str, Any]) -> ProcessSchemaMetad
         visited.add(node_id)
 
         pointer = _pointer_from_path(path)
-        is_property_field = len(path) >= 2 and path[-2] == "properties"
-        is_items_field = path[-1] == "items"
-        is_additional_field = path[-1] == "additionalProperties"
+        last_segment = path[-1] if path else None
+        second_last_segment = path[-2] if len(path) >= 2 else None
+        is_property_field = second_last_segment == "properties"
+        is_items_field = last_segment == "items"
+        is_additional_field = last_segment == "additionalProperties"
         is_field_node = is_property_field or is_items_field or is_additional_field
 
         if isinstance(node, dict):
@@ -1315,11 +1305,12 @@ def _build_process_schema_metadata(schema: dict[str, Any]) -> ProcessSchemaMetad
             if is_field_node and isinstance(enum_values, list) and enum_values:
                 enum_fields[pointer] = tuple(_collect_enum_options(node))
 
-            if is_property_field and pointer.startswith(COMPLIANCE_BASE_POINTER):
+            if is_property_field and pointer.startswith(COMPLIANCE_BASE_POINTER) and pointer != COMPLIANCE_BASE_POINTER:
                 field_name = path[-1]
                 if field_name and field_name not in compliance_pointers:
                     compliance_pointers[field_name] = pointer
-                    compliance_fields.append(field_name)
+                    if field_name not in {"compliance", "common:referenceToComplianceSystem", "common:other"}:
+                        compliance_fields.append(field_name)
 
             for key in ("allOf", "anyOf", "oneOf"):
                 variants = node.get(key)
