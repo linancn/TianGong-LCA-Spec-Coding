@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 from uuid import uuid4
@@ -932,6 +933,7 @@ def _normalise_administrative_information(
     data_entry.pop("common:other", None)
     data_entry["common:referenceToDataSetFormat"] = _build_dataset_format_reference()
     data_entry["common:referenceToPersonOrEntityEnteringTheData"] = _build_commissioner_reference()
+    data_entry["common:timeStamp"] = _current_timestamp()
     cleaned_data_entry = {key: value for key, value in data_entry.items() if value not in (None, "", {}, [])}
     admin["dataEntryBy"] = cleaned_data_entry
 
@@ -943,18 +945,8 @@ def _normalise_administrative_information(
             publication["common:permanentDataSetURI"] = _build_permanent_dataset_uri(dataset_kind, dataset_uuid, version_candidate)
         if "common:registrationNumber" in publication:
             publication["common:registrationNumber"] = _stringify(publication.get("common:registrationNumber")).strip()
-        licence_value = publication.get("common:licenseType")
-        if licence_value is not None:
-            publication["common:licenseType"] = _normalise_license(licence_value)
-        copyright_value = publication.get("common:copyright")
-        if copyright_value is not None:
-            lowered = _stringify(copyright_value).strip().lower()
-            if lowered in {"yes", "true"}:
-                publication["common:copyright"] = "true"
-            elif lowered in {"no", "false"}:
-                publication["common:copyright"] = "false"
-            else:
-                publication.pop("common:copyright", None)
+        publication["common:licenseType"] = "Free of charge for all users and uses"
+        publication["common:copyright"] = "false"
         publication["common:referenceToOwnershipOfDataSet"] = _build_commissioner_reference()
         publication.pop("common:other", None)
         access_entries = _ensure_multilang_list(publication.get("common:accessRestrictions"))
@@ -1019,6 +1011,12 @@ def _build_commissioner_reference() -> dict[str, Any]:
 
 def _build_dataset_format_reference() -> dict[str, Any]:
     return build_dataset_format_reference()
+
+
+def _current_timestamp() -> str:
+    """Return an ISO 8601 timestamp with timezone information."""
+
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def _build_compliance_reference() -> dict[str, Any] | None:
