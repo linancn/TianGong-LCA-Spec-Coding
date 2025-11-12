@@ -180,6 +180,14 @@ class WorkflowResult:
   - `version`: required for update/delete and stored alongside `json_ordered`.
   - Optional `filters` and `limit` cover equality queries during select operations.
 - During live runs the publisher automatically retries with an `update` if an `insert` collides with an existing UUID; keep `administrativeInformation.publicationAndOwnership.common:dataSetVersion` aligned with the record you intend to overwrite.
+- Flow properties are now resolved through `src/tiangong_lca_spec/tidas/flow_property_registry.py`. Use `uv run python scripts/flow_property_cli.py list` to inspect available mappings, `emit-block` to print an ILCD-compatible `flowProperties` fragment, and `match-unit --unit <name>` when you only know the unit. The CLI reads `flowproperty_unitgroup_mapping.json`, so updates propagate automatically to the scripted stages.
+- Stage 3 and Stage 4 enforce the following publication rules:
+  - When alignment finds a matching catalogue flow **without** a declared flow property, Stage 4 rebuilds the dataset with the correct property block, increments `common:dataSetVersion` (patch component `+1`), and commits it via `update` while preserving the original UUID.
+  - When no catalogue flow matches, Stage 4 continues to insert a new dataset (UUID generated at publish time) using the registry to attach the correct flow property and unit group.
+  - Elementary flows remain lookup-only—you must supply an existing dataset manually before Stage 4 runs.
+- Stage 4 exposes two flags to control the registry:
+  - `--default-flow-property <uuid>` overrides the fallback property used when neither the hints nor overrides resolve a specific UUID (defaults to Mass `93a60a56-a3c8-11da-a746-0800200b9a66`).
+  - `--flow-property-overrides overrides.json` loads a list of objects (`{"exchange": "Copper content", "flow_property_uuid": "<uuid>", "process": "Battery pack …", "mean_value": "1.0"}`) that force specific process/exchange pairs—or all processes when `process` is omitted—to adopt the given property and optional mean value before publication.
 - Successful responses echo the record `id`, `version`, and a `data` array. Validation failures raise `SpecCodingError`; log the payload path from the error and fix the dataset before retrying.
 - Minimum insert checklist:
   - Preserve ILCD root attributes (`@xmlns`, `@xmlns:common`, `@xmlns:xsi`, schema location) and include `administrativeInformation.dataEntryBy.common:timeStamp`, `common:referenceToDataSetFormat`, and `common:referenceToPersonOrEntityEnteringTheData`.
@@ -187,4 +195,3 @@ class WorkflowResult:
   - Flows additionally require `flowProperties.flowProperty` (mass property UUID `93a60a56-a3c8-11da-a746-0800200b9a66`), `quantitativeReference.referenceToReferenceFlowProperty`, and `classificationInformation`/`elementaryFlowCategorization` as applicable.
   - Processes must retain the Stage 3 functional unit, exchange list, and `modellingAndValidation` blocks. Sources must keep bibliographic metadata and publication timestamps.
 - For batch publication, queue inserts per dataset type (`flows` → `processes` → `sources`) so references resolve immediately, and record each returned `id`/`version` pair for audit.
-- **Elementary flows**: Treat emission/resource exchanges as lookup-only. Resolve them to existing flow datasets before Stage 4; if Stage 3 still returns `unmatched:placeholder`, fix the hints or manually map the flow instead of publishing. Stage 4 only auto-generates new product (or waste) flow datasets for true products when the catalogue lacks a record.

@@ -27,7 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover - executed when run as CLI
     )
 
 from tiangong_lca_spec.core.logging import get_logger
-from tiangong_lca_spec.publishing import FlowPublisher, ProcessPublisher
+from tiangong_lca_spec.publishing import FlowPropertyOverride, FlowPublisher, ProcessPublisher
 
 LOGGER = get_logger(__name__)
 
@@ -87,6 +87,16 @@ def parse_args() -> argparse.Namespace:
         "--dry-run-output",
         type=Path,
         help=("Optional override for the dry-run preview payload path. " "Defaults to artifacts/<run_id>/cache/stage4_publish_preview.json."),
+    )
+    parser.add_argument(
+        "--default-flow-property",
+        dest="default_flow_property",
+        help="Fallback flow property UUID when no hints or overrides resolve (default: Mass).",
+    )
+    parser.add_argument(
+        "--flow-property-overrides",
+        type=Path,
+        help=("Path to a JSON file describing flow property overrides. " "Each entry must contain 'exchange', 'flow_property_uuid', and optional 'process', 'mean_value'."),
     )
     return parser.parse_args()
 
@@ -207,6 +217,43 @@ def _update_process_payload(
     return replacements
 
 
+def _load_flow_property_overrides(path: Path | None) -> dict[tuple[str | None, str], FlowPropertyOverride]:
+    overrides: dict[tuple[str | None, str], FlowPropertyOverride] = {}
+    if path is None:
+        return overrides
+    if not path.exists():
+        raise SystemExit(f"Flow property overrides file not found: {path}")
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        entries = payload.get("overrides") or payload.get("entries") or payload.get("data")
+        if entries is None:
+            entries = [payload]
+    else:
+        entries = payload
+
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        raise SystemExit("Flow property overrides must be a list or an object containing an 'overrides' array.")
+
+    for index, item in enumerate(entries):
+        if not isinstance(item, dict):
+            raise SystemExit(f"Override entry #{index} must be an object.")
+        exchange = item.get("exchange")
+        flow_property_uuid = item.get("flow_property_uuid")
+        if not exchange or not flow_property_uuid:
+            raise SystemExit(f"Override entry #{index} must define 'exchange' and 'flow_property_uuid'.")
+        process = item.get("process")
+        process_key = str(process).strip() if process not in (None, "") else None
+        mean_value = item.get("mean_value")
+        overrides[(process_key, str(exchange))] = FlowPropertyOverride(
+            flow_property_uuid=str(flow_property_uuid),
+            mean_value=str(mean_value) if mean_value not in (None, "") else None,
+        )
+    return overrides
+
+
 def main() -> None:
     args = parse_args()
     dry_run = not args.commit
@@ -245,9 +292,14 @@ def main() -> None:
     flow_results: list[dict[str, Any]] = []
     process_results: list[dict[str, Any]] = []
     publish_datasets: list[dict[str, Any]] = []
+    flow_property_overrides = _load_flow_property_overrides(args.flow_property_overrides)
 
     if args.publish_flows:
-        flow_publisher = FlowPublisher(dry_run=dry_run)
+        flow_publisher = FlowPublisher(
+            dry_run=dry_run,
+            default_flow_property_uuid=args.default_flow_property,
+            flow_property_overrides=flow_property_overrides,
+        )
         try:
             plans = flow_publisher.prepare_from_alignment(alignment_entries)
             flow_plans = plans
@@ -265,6 +317,8 @@ def main() -> None:
                                 "exchange_name": plan.exchange_name,
                                 "process_name": plan.process_name,
                                 "uuid": plan.uuid,
+                                "publication_mode": plan.mode,
+                                "flow_property_uuid": plan.flow_property_uuid,
                                 "dataset": {"flowDataSet": plan.dataset},
                             }
                             for plan in plans

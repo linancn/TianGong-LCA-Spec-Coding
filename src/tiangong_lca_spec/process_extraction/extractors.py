@@ -212,7 +212,7 @@ def _build_section_prompt() -> str:
         "representing the entire system, and do not create entries for the subprocesses "
         "lacking independent LCI data.\n"
         "7. Treat shared preparation steps, raw material staging, or unallocated "
-        "\"common\" flows that lack their own functional unit as supplemental information. "
+        '"common" flows that lack their own functional unit as supplemental information. '
         "Do not create a separate Process for them. Write such details, or their total "
         "values, into the relevant subprocess `common:generalComment`.\n"
         "8. Every Process created must define one, and only one, primary product or service "
@@ -226,8 +226,8 @@ def _build_section_prompt() -> str:
         "consumption (Elementary Flow); it **must** be a Product/Service flow "
         "(Technosphere Flow).\n"
         "11. If a Process yields multiple valuable products, you **must** clearly document "
-        "the allocation method and basis described in the literature (e.g., \"allocation by "
-        "economic value,\" \"mass allocation\") inside the `common:generalComment`.\n"
+        'the allocation method and basis described in the literature (e.g., "allocation by '
+        'economic value," "mass allocation") inside the `common:generalComment`.\n'
         "12. If the same activity has distinct LCI variants by geography, year, or technology "
         "route, create separate records; otherwise merge them.\n"
         "13. Always capture which subprocesses are bundled together, the functional unit, "
@@ -239,7 +239,7 @@ def _build_section_prompt() -> str:
         "original units, qualifiers, scenario labels, and footnotes inside `generalComment` "
         "so downstream alignment can trace every source datum.\n"
         "15. Normalize exchange names to Tiangong/ILCD canonical wording (e.g., "
-        "\"Electricity, medium voltage\", \"Carbon dioxide, fossil\") and ensure every "
+        '"Electricity, medium voltage", "Carbon dioxide, fossil") and ensure every '
         "`generalComment` begins with the exact prefix `FlowSearch hints:` followed by "
         "the pipe-delimited template "
         "`en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | "
@@ -256,7 +256,7 @@ def _build_section_prompt() -> str:
         "Populate these required fields whenever evidence exists:\n"
         "- processInformation.dataSetInformation:\n"
         "  * `baseName`: concise description of the main activity or function "
-        "(e.g., \"Coal mining\", \"Electricity generation\").\n"
+        '(e.g., "Coal mining", "Electricity generation").\n'
         "  * `treatmentStandardsRoutes`: provide technical descriptors of the good, "
         "service, or process. Include treatment steps (e.g., pyrolysis, catalytic "
         "reforming), referenced standards (list the full identifier when available), "
@@ -265,8 +265,8 @@ def _build_section_prompt() -> str:
         "secondary. Separate descriptors with commas and use established industrial "
         "terminology. Exclude end-of-pipe environmental controls.\n"
         "  * `mixAndLocationTypes`: state whether the record is a production or "
-        "consumption mix and note the availability location type (e.g., \"to consumer\", "
-        "\"at plant\"). Separate descriptors with commas.\n"
+        'consumption mix and note the availability location type (e.g., "to consumer", '
+        '"at plant"). Separate descriptors with commas.\n'
         "  * `functionalUnitFlowProperties`: list technical qualifiers such as "
         "constituent content or energy content per unit. Separate values with commas. "
         "Non-qualifying metadata (CAS numbers, synonyms, formulas) belongs in the "
@@ -312,11 +312,7 @@ def _build_section_prompt() -> str:
         '  * `@dataSetInternalID`: sequential identifiers as strings starting from "0".'
     )
     metadata_schema = repo.resolve_with_references("tidas_processes.json", "/properties/processDataSet")
-    metadata_fields = [
-        field
-        for field in repo.summarize_properties("tidas_processes.json", "/properties/processDataSet")
-        if field.name.startswith("@")
-    ]
+    metadata_fields = [field for field in repo.summarize_properties("tidas_processes.json", "/properties/processDataSet") if field.name.startswith("@")]
     metadata_lines = ["processDataSet metadata (auto-populated if omitted):"]
     metadata_lines.extend(_format_fields(metadata_fields, metadata_schema, indent=1, depth=1))
     metadata = "\n".join(metadata_lines)
