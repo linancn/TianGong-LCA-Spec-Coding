@@ -78,11 +78,26 @@ class LLMCandidateSelector:
 
     PROMPT = (
         "You are matching an inventory exchange from a life cycle assessment dataset to "
-        "the best flow definition in Tiangong's flow catalogue. Review the exchange and "
-        "the candidate flows carefully. Select the single best candidate or respond with "
-        "`best_index: null` if no candidate is appropriate. Prefer candidates whose "
-        "flow name, geography, classification, and general comments best align with the "
-        "exchange details. Return strict JSON with keys:\n"
+        "the best flow definition in Tiangong's flow catalogue. Your primary task is to find the "
+        "most logically consistent match, acknowledging that most flows are complex Product Flows "
+        "(whose CAS/Formula may be absent or irrelevant)."
+        "\n\n"
+        "**Matching Hierarchy (Highest Priority First):**\n"
+        "1. **Primary Attributes (Top Priority):** Prioritize strong alignment on **Flow Name** and "
+        "**Geography**. Most product flows are uniquely defined by these two attributes.\n"
+        "2. **Chemical Check (Conditional Constraint):** If both the Query Flow and the Candidate Flow "
+        "possess a **CAS Number / Formula**, an exact match is a mandatory hard constraint. If either "
+        "is missing this data, proceed to the next step.\n"
+        "3. **Flow Property Rule (Soft Constraint):** If a candidate matches on Primary Attributes but "
+        "the **Flow Property** (e.g., mass vs. volume) is different, still select the candidate, but "
+        "note in `reason` that a property addition is required. Flow Property mismatch alone MUST NOT "
+        "prevent matching.\n"
+        "4. **Secondary Attributes:** Consider **Classification**, **Physical State** (if applicable), "
+        "and **General Comment** for final tie-breaking.\n"
+        "\n"
+        "Respond with `best_index: null` if no candidate is appropriate. Prefer candidates whose flow "
+        "name, geography, classification, and general comments best align with the exchange details. "
+        "Return strict JSON with keys:\n"
         "- `best_index`: integer index into the candidates array (0-based) or null.\n"
         "- `confidence`: number between 0 and 1 estimating confidence (optional).\n"
         "- `reason`: short natural-language justification.\n"
@@ -156,11 +171,8 @@ class LLMCandidateSelector:
         summary = {
             "exchange": {
                 "exchange_name": query.exchange_name,
-                "process_name": query.process_name,
                 "description": query.description,
                 "direction": exchange.get("exchangeDirection") or exchange.get("direction"),
-                "unit": exchange.get("unit") or exchange.get("resultingAmountUnit"),
-                "mean_amount": exchange.get("meanAmount") or exchange.get("resultingAmount"),
                 "general_comment": self._stringify_comment(exchange),
             },
             "candidates": [
@@ -171,7 +183,7 @@ class LLMCandidateSelector:
                     "geography": candidate.geography,
                     "classification": candidate.classification,
                     "general_comment": candidate.general_comment,
-                    "reasoning": candidate.reasoning,
+                    "flow_property_short_descriptions": self._flow_property_short_descriptions(candidate.flow_properties),
                 }
                 for idx, candidate in enumerate(candidates[:10])
             ],
@@ -188,6 +200,31 @@ class LLMCandidateSelector:
             if text:
                 return str(text)
         return str(comment)
+
+    @staticmethod
+    def _flow_property_short_descriptions(raw: Any) -> list[str]:
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            parts = [segment.strip() for segment in raw.replace("|", ";").split(";") if segment.strip()]
+            if parts:
+                return parts
+            return [raw.strip()] if raw.strip() else []
+        if isinstance(raw, (list, tuple, set)):
+            collected: list[str] = []
+            for item in raw:
+                collected.extend(LLMCandidateSelector._flow_property_short_descriptions(item))
+            return collected
+        if isinstance(raw, dict):
+            text_keys = ("#text", "text", "@value")
+            for key in text_keys:
+                if key in raw and isinstance(raw[key], str):
+                    return LLMCandidateSelector._flow_property_short_descriptions(raw[key])
+            collected: list[str] = []
+            for value in raw.values():
+                collected.extend(LLMCandidateSelector._flow_property_short_descriptions(value))
+            return collected
+        return [str(raw)]
 
     @staticmethod
     def _parse_response(raw_response: Any) -> dict[str, Any]:
