@@ -532,8 +532,9 @@ def _default_usage_context(exchange: dict[str, Any], process_name: str | None) -
 
 
 def _safe_value(value: str | None) -> str:
-    clean = (value or "NA").strip()
-    return clean or "NA"
+    if value is None:
+        return ""
+    return value.strip()
 
 
 def _strip_hint_prefix(text: str | None) -> str:

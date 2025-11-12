@@ -19,7 +19,7 @@ from tiangong_lca_spec.flow_alignment.selector import (
     SelectorDecision,
     SimilarityCandidateSelector,
 )
-from tiangong_lca_spec.flow_search import search_flows
+from tiangong_lca_spec.flow_search import FlowSearchService
 
 LOGGER = get_logger(__name__)
 
@@ -39,7 +39,13 @@ class FlowAlignmentService:
     ) -> None:
         self._settings = settings or get_settings()
         self._profile = self._settings.profile
-        self._flow_search = flow_search_fn or search_flows
+        self._flow_search_service: FlowSearchService | None = None
+        if flow_search_fn is not None:
+            self._flow_search = flow_search_fn
+        else:
+            # Reuse a single FlowSearchService instance to avoid repeated MCP handshakes.
+            self._flow_search_service = FlowSearchService(self._settings)
+            self._flow_search = self._flow_search_service.lookup
         if selector is not None:
             self._selector = selector
         elif llm is not None:
@@ -285,6 +291,9 @@ class FlowAlignmentService:
         if hasattr(self, "__executor"):
             self.__executor.shutdown(wait=True)
             delattr(self, "__executor")
+        if self._flow_search_service is not None:
+            self._flow_search_service.close()
+            self._flow_search_service = None
 
     def _iter_exchanges(self, process_dataset: dict[str, Any]) -> Iterable[dict[str, Any]]:
         exchanges_block = process_dataset.get("exchanges") or {}
