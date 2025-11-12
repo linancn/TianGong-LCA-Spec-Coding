@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Any
 from uuid import uuid4
 
+from tiangong_lca_spec.core.uris import build_portal_uri
 from tiangong_lca_spec.tidas import get_schema_repository
 
 BASE_METADATA = {
@@ -25,7 +26,6 @@ DEFAULT_REFERENCE_TYPE = "Reference flow(s)"
 DEFAULT_REFERENCE_ID = "0"
 DEFAULT_LANGUAGE = "en"
 DEFAULT_DATA_SET_VERSION = "01.01.000"
-TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 
 ILCD_ENTRY_LEVEL_REFERENCE_ID = "d92a1a12-2545-49e2-a585-55c259997756"
 
@@ -970,11 +970,19 @@ def _normalise_administrative_information(
 
 def _build_reference(ref_type: str, description: str) -> dict[str, Any]:
     identifier = str(uuid4())
+    version = "01.01.000"
+    kind_map = {
+        "flow data set": "flow",
+        "process data set": "process",
+        "source data set": "source",
+    }
+    dataset_kind = kind_map.get(ref_type.lower())
+    uri = build_portal_uri(dataset_kind, identifier, version) if dataset_kind else ""
     return {
         "@type": ref_type,
         "@refObjectId": identifier,
-        "@uri": f"https://tiangong.earth/{ref_type}/{identifier}",
-        "@version": "01.01.000",
+        "@uri": uri,
+        "@version": version,
         "common:shortDescription": _ensure_multilang(description),
     }
 
@@ -1096,14 +1104,7 @@ def _is_valid_uuid(value: str) -> bool:
 def _build_permanent_dataset_uri(dataset_kind: str, uuid_value: str, version: str) -> str:
     if not uuid_value:
         return ""
-    version_clean = version.strip() or "01.01.000"
-    suffix_map = {
-        "process": "showProcess.xhtml",
-        "flow": "showProductFlow.xhtml",
-        "source": "showSource.xhtml",
-    }
-    suffix = suffix_map.get(dataset_kind, "showDataSet.xhtml")
-    return f"{TIDAS_PORTAL_BASE}/{suffix}?uuid={uuid_value}&version={version_clean}"
+    return build_portal_uri(dataset_kind, uuid_value, version)
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:

@@ -11,6 +11,7 @@ from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import FlowAlignmentError, FlowSearchError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, FlowQuery, UnmatchedFlow
+from tiangong_lca_spec.core.uris import build_portal_uri
 from tiangong_lca_spec.flow_alignment.selector import (
     CandidateSelector,
     LanguageModelProtocol,
@@ -188,22 +189,25 @@ class FlowAlignmentService:
     def _candidate_reference(candidate: FlowCandidate) -> dict[str, Any]:
         version = candidate.version or "01.01.000"
         uuid = candidate.uuid or str(uuid4())
+        uri = build_portal_uri("flow", uuid, version)
         return {
             "@type": "flow data set",
             "@refObjectId": uuid,
             "@version": version,
-            "@uri": f"https://tiangong.earth/flows/{uuid}",
+            "@uri": uri,
             "common:shortDescription": FlowAlignmentService._multilang(FlowAlignmentService._compose_candidate_short_description(candidate)),
         }
 
     @staticmethod
     def _placeholder_reference(name: str) -> dict[str, Any]:
         identifier = str(uuid4())
+        version = "00.00.000"
+        uri = build_portal_uri("flow", identifier, version)
         return {
             "@type": "flow data set",
             "@refObjectId": identifier,
-            "@version": "00.00.000",
-            "@uri": f"https://tiangong.earth/flows/{identifier}",
+            "@version": version,
+            "@uri": uri,
             "common:shortDescription": FlowAlignmentService._multilang(name),
             "unmatched:placeholder": True,
         }

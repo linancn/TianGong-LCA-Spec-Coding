@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
+from tiangong_lca_spec.core.uris import build_portal_uri
 
 _CJK_CHAR_PATTERN = re.compile(r"[\u2e80-\u2eff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ua000-\ua4cf\uac00-\ud7af\uff00-\uffef]+")
 
@@ -238,13 +239,15 @@ def _candidate_reference_parts(candidate: FlowCandidate, exchange: dict[str, Any
 
 def _reference_from_candidate(candidate: FlowCandidate, exchange: dict[str, Any]) -> dict[str, Any]:
     version = candidate.version or "01.01.000"
+    uuid_value = candidate.uuid or str(uuid4())
+    uri = build_portal_uri("flow", uuid_value, version)
     parts, _ = _candidate_reference_parts(candidate, exchange)
     short_description = _join_short_description_parts(parts or ["Matched flow"])
     reference: dict[str, Any] = {
         "@type": "flow data set",
-        "@refObjectId": candidate.uuid,
+        "@refObjectId": uuid_value,
         "@version": version,
-        "@uri": f"https://tiangong.earth/flows/{candidate.uuid}",
+        "@uri": uri,
         "common:shortDescription": _multilang(short_description or "Matched flow"),
     }
     return reference
@@ -252,12 +255,14 @@ def _reference_from_candidate(candidate: FlowCandidate, exchange: dict[str, Any]
 
 def _placeholder_reference(name: str) -> dict[str, Any]:
     identifier = str(uuid4())
+    version = "00.00.000"
+    uri = build_portal_uri("flow", identifier, version)
     short_description = _join_short_description_parts([name or "Unspecified flow"])
     return {
         "@type": "flow data set",
         "@refObjectId": identifier,
-        "@version": "00.00.000",
-        "@uri": f"https://tiangong.earth/flows/{identifier}",
+        "@version": version,
+        "@uri": uri,
         "common:shortDescription": _multilang(short_description or "Unspecified flow"),
     }
 

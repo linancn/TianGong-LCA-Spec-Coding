@@ -67,7 +67,10 @@ def test_flow_publisher_builds_plan_without_network():
 
 def test_alignment_updates_replace_placeholders():
     alignment_entries = _build_alignment_payload()
-    fake_ref = {"@refObjectId": "1234", "@uri": "https://tiangong.earth/flows/1234"}
+    fake_ref = {
+        "@refObjectId": "1234",
+        "@uri": "https://lcdn.tiangong.earth/showProductFlow.xhtml?uuid=1234&version=01.01.000",
+    }
     updates = {("Sample process", "Electric power"): fake_ref, (None, "Electric power"): fake_ref}
     replacements = stage4_publish._update_alignment_entries(alignment_entries, updates)  # type: ignore[attr-defined]
     assert replacements == 1

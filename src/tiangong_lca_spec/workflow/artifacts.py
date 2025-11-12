@@ -13,11 +13,11 @@ from uuid import uuid4
 
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
+from tiangong_lca_spec.core.uris import build_portal_uri
 from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = "00000000-0000-0000-0000-0000000000f0"
-TIDAS_PORTAL_BASE = "https://lcdn.tiangong.earth"
 SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
     "images": ("0", "Images"),
     "data set formats": ("1", "Data set formats"),
@@ -920,14 +920,7 @@ def _ownership_reference() -> dict[str, Any]:
 
 
 def _permanent_dataset_uri(dataset_kind: str, uuid_value: str, version: str) -> str:
-    suffix_map = {
-        "process": "showProcess.xhtml",
-        "flow": "showProductFlow.xhtml",
-        "source": "showSource.xhtml",
-    }
-    suffix = suffix_map.get(dataset_kind, "showDataSet.xhtml")
-    version_clean = version.strip() or "01.01.000"
-    return f"{TIDAS_PORTAL_BASE}/{suffix}?uuid={uuid_value}&version={version_clean}"
+    return build_portal_uri(dataset_kind, uuid_value, version)
 
 
 def _build_flow_dataset(
