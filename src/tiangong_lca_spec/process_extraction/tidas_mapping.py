@@ -10,8 +10,8 @@ from functools import lru_cache
 from typing import Any
 from uuid import uuid4
 
-from tiangong_lca_spec.core.uris import build_portal_uri
 from tiangong_lca_spec.core.constants import build_dataset_format_reference
+from tiangong_lca_spec.core.uris import build_portal_uri
 from tiangong_lca_spec.tidas import get_schema_repository
 
 BASE_METADATA = {

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 import httpx
-from mcp import McpError
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from tiangong_lca_spec.core.config import Settings, get_settings

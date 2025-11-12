@@ -19,7 +19,7 @@ from tiangong_lca_spec.core.constants import (
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
-from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
+from tiangong_lca_spec.process_extraction.merge import merge_results
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = ILCD_FORMAT_SOURCE_UUID
@@ -484,9 +484,38 @@ def _normalize_short_description_text(text: str) -> str:
     return normalized.strip(" ;,")
 
 
+def _localize_reference_uri(node: dict[str, Any]) -> None:
+    if not isinstance(node, dict):
+        return
+    uuid_value = str(node.get("@refObjectId") or "").strip()
+    if not uuid_value:
+        return
+    version = str(node.get("@version") or "").strip() or "01.01.000"
+    ref_type = str(node.get("@type") or "").strip().lower()
+    uri_text = str(node.get("@uri") or "")
+
+    dataset_kind: str | None = None
+    if ref_type in {"flow data set", "flow"}:
+        dataset_kind = "flow"
+    elif ref_type in {"source data set", "source"}:
+        dataset_kind = "source"
+    elif ref_type in {"process data set", "process"}:
+        dataset_kind = "process"
+    elif "showproductflow" in uri_text.lower():
+        dataset_kind = "flow"
+    elif "showsource" in uri_text.lower():
+        dataset_kind = "source"
+    elif "showprocess" in uri_text.lower():
+        dataset_kind = "process"
+
+    if dataset_kind:
+        node["@uri"] = build_local_dataset_uri(dataset_kind, uuid_value, version)
+
+
 def _sanitize_reference_node(node: dict[str, Any]) -> None:
     if not isinstance(node, dict):
         return
+    _localize_reference_uri(node)
     short_desc = node.get("common:shortDescription")
     if isinstance(short_desc, dict):
         text = _extract_text(short_desc)
@@ -661,6 +690,7 @@ def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
                 validation["review"] = {"@type": "Not reviewed"}
         else:
             modelling["validation"] = {"review": {"@type": "Not reviewed"}}
+        _localize_compliance_references(modelling.get("complianceDeclarations"))
 
     exchanges_container = dataset.get("exchanges")
     if isinstance(exchanges_container, dict):
@@ -683,6 +713,25 @@ def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
             data_entry["common:referenceToDataSetFormat"] = _dataset_format_reference()
 
     return dataset
+
+
+def _localize_compliance_references(container: Any) -> None:
+    if not isinstance(container, dict):
+        return
+    reference = container.get("common:referenceToComplianceSystem")
+    if isinstance(reference, dict):
+        _localize_reference_uri(reference)
+    compliance_entries = container.get("compliance")
+    if isinstance(compliance_entries, list):
+        for entry in compliance_entries:
+            if isinstance(entry, dict):
+                ref = entry.get("common:referenceToComplianceSystem")
+                if isinstance(ref, dict):
+                    _localize_reference_uri(ref)
+    elif isinstance(compliance_entries, dict):
+        ref = compliance_entries.get("common:referenceToComplianceSystem")
+        if isinstance(ref, dict):
+            _localize_reference_uri(ref)
 
 
 def _sanitize_alignment_entry(entry: dict[str, Any]) -> dict[str, Any]:
@@ -902,17 +951,19 @@ def _flow_property_reference() -> dict[str, Any]:
 def flow_compliance_declarations() -> dict[str, Any]:
     """Return the default compliance declaration block for generated datasets.
 
-    The compliance system reference points to the public ILCD Data Network URI so we do
-    not need to ship an additional local source artifact.
+    The compliance system reference is emitted as a local ILCD-relative URI so the
+    generated archive can include the corresponding source stub.
     """
 
+    compliance_uuid = "d92a1a12-2545-49e2-a585-55c259997756"
+    compliance_version = "20.20.002"
     return {
         "compliance": {
             "common:referenceToComplianceSystem": {
-                "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
+                "@refObjectId": compliance_uuid,
                 "@type": "source data set",
-                "@uri": ("https://lcdn.tiangong.earth/showSource.xhtml?" "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"),
-                "@version": "20.20.002",
+                "@uri": build_local_dataset_uri("source", compliance_uuid, compliance_version),
+                "@version": compliance_version,
                 "common:shortDescription": _language_entry("ILCD Data Network - Entry-level"),
             },
             "common:approvalOfOverallCompliance": "Fully compliant",

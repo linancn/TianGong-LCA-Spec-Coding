@@ -13,7 +13,7 @@ EXPECTED_COMPLIANCE_DECLARATIONS = {
         "common:referenceToComplianceSystem": {
             "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
             "@type": "source data set",
-            "@uri": ("https://lcdn.tiangong.earth/showSource.xhtml?" "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"),
+            "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756_20.20.002.xml",
             "@version": "20.20.002",
             "common:shortDescription": {
                 "@xml:lang": "en",
