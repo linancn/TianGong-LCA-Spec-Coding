@@ -5,7 +5,6 @@ import re
 import sys
 from pathlib import Path
 
-
 PREFIX = "Follow the staged workflow strictly:"
 DEFAULT_PROMPT_PATH = Path(".github/prompts/extract-process-workflow.prompt.md")
 

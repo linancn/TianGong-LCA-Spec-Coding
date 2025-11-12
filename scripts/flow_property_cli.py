@@ -9,6 +9,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
+
 from tiangong_lca_spec.tidas.flow_property_registry import FlowPropertyRegistry, get_default_registry
 
 
