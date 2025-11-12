@@ -12,6 +12,7 @@ from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
+from tiangong_lca_spec.core.uris import build_portal_uri
 from tiangong_lca_spec.tidas.flow_property_registry import FlowPropertyRegistry, get_default_registry
 from tiangong_lca_spec.workflow.artifacts import flow_compliance_declarations
 
@@ -574,9 +575,10 @@ class FlowPublisher:
             "flowProperties": flow_property_block,
         }
 
+        uri = build_portal_uri("flow", uuid_value, version)
         exchange_ref = {
             "@type": "flow data set",
-            "@uri": existing_ref.get("@uri") if existing_ref else f"https://tiangong.earth/flows/{uuid_value}",
+            "@uri": uri,
             "@refObjectId": uuid_value,
             "@version": version,
             "common:shortDescription": _language_entry(exchange_name),
