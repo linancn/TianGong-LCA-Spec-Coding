@@ -29,17 +29,12 @@ def markdown_to_inline(md: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Convert a markdown prompt file into inline text."
-    )
+    parser = argparse.ArgumentParser(description="Convert a markdown prompt file into inline text.")
     parser.add_argument(
         "--prompt-path",
         type=Path,
         default=DEFAULT_PROMPT_PATH,
-        help=(
-            "Path to the markdown file to insert between the prefix and suffix. "
-            "Defaults to .github/prompts/extract-process-workflow.prompt.md."
-        ),
+        help=("Path to the markdown file to insert between the prefix and suffix. " "Defaults to .github/prompts/extract-process-workflow.prompt.md."),
     )
     parser.add_argument(
         "--source-json",
@@ -49,10 +44,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         default="inline_prompt.txt",
-        help=(
-            "Optional path for the generated inline text. Defaults to "
-            "inline_prompt.txt in the current working directory. Use '-' to write to stdout."
-        ),
+        help=("Optional path for the generated inline text. Defaults to " "inline_prompt.txt in the current working directory. Use '-' to write to stdout."),
     )
     args = parser.parse_args()
 

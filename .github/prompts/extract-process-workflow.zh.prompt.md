@@ -174,11 +174,17 @@ class WorkflowResult:
 - `Database_CRUD_Tool` 入参包含：
   - `operation`：`"select"`、`"insert"`、`"update"`、`"delete"`。
   - `table`：`"flows"`、`"processes"`、`"sources"`、`"contacts"`、`"lifecyclemodels"`。
-  - `jsonOrdered`：`insert` / `update` 必填，传入完整的 ILCD 文档（如 `{"processDataSet": {...}}`），保持命名空间、时间戳、引用字段。
+- `jsonOrdered`：`insert` / `update` 必填，传入完整的 ILCD 文档（如 `{"processDataSet": {...}}`），保持命名空间、时间戳、引用字段。
   - `id`：`insert` / `update` / `delete` 必填，取自数据集 `dataSetInformation` 的 UUID。
   - `version`：`update` / `delete` 必填，对应 Supabase `version` 列。
   - 可选 `filters`、`limit` 仅在 `select` 时使用。
 - 实际运行中如果 `insert` 因 UUID 冲突失败，发布器会自动改用 `update` 重试；请确保 `administrativeInformation.publicationAndOwnership.common:dataSetVersion` 与目标记录保持一致。
+- 流属性映射已经整理为 `src/tiangong_lca_spec/tidas/flow_property_registry.py`，可通过 `uv run python scripts/flow_property_cli.py list` 查看全部映射，`show`/`match-unit` 根据名称或单位定位，`emit-block` 直接输出可嵌入的 ILCD `flowProperties` 片段。该 CLI 直接读取 `flowproperty_unitgroup_mapping.json`，脚本/自动化会与映射保持同步。
+- Stage 3 与 Stage 4 发布策略更新：
+  - 若对齐命中了现有流但缺少 `flow_properties` 信息，Stage 4 会基于原 UUID 重建数据集，引入正确的流属性块，并将 `common:dataSetVersion` 的补丁位 `+1` 后以 `update` 提交，从而在库内就地升级。
+  - 若库中没有任何匹配流，则继续沿用原逻辑生成新流数据集（发布时分配新 UUID），同样会根据映射补齐参考单位组。
+  - 初级流仍然只能复用现有条目，若 Stage 3 仍输出 `unmatched:placeholder`，需先补充提示或人工映射后再发布。
+- Stage 4 额外暴露 `--default-flow-property <uuid>`（自定义找不到明确映射时的兜底属性，默认仍为质量属性 `93a60a56-a3c8-11da-a746-0800200b9a66`）与 `--flow-property-overrides overrides.json`（载入 `{"exchange": "...", "flow_property_uuid": "...", "process": "...", "mean_value": "..."}` 形式的覆盖项，可按交换名称或“流程+交换”精准指定属性及均值）。
 - 成功响应会回显 `id`、`version` 以及 `data` 数组；校验失败会抛出 `SpecCodingError`，直接根据错误中的 JSON 路径修正数据集再重试。
 - 入库自查清单：
   - 保留 ILCD 根级属性（`@xmlns`、`@xmlns:common`、`@xmlns:xsi`、schemaLocation）并写入 `administrativeInformation.dataEntryBy.common:timeStamp`、`common:referenceToDataSetFormat`、`common:referenceToPersonOrEntityEnteringTheData`。
@@ -186,4 +192,3 @@ class WorkflowResult:
   - 流数据需补齐 `flowProperties.flowProperty`（质量属性 UUID `93a60a56-a3c8-11da-a746-0800200b9a66`）、`quantitativeReference.referenceToReferenceFlowProperty` 以及合适的 `classificationInformation` 或 `elementaryFlowCategorization`。
   - 流程数据保留 Stage 3 的功能单位、交换量与 `modellingAndValidation`；来源数据保留文献元信息与发布时间。
 - 批量发布时优先按 `flows`→`processes`→`sources` 顺序提交，及时记录返回的 `id` / `version` 以备审计。
-- **Elementary flows**：排放/资源类初级流只能从现有数据库选择；若 Stage 3 仍返回 `unmatched:placeholder`，需要先修复提示或手工映射，Stage 4 不会为这类流生成新数据集。只有真实的产品/废物流在库中缺失时才允许按产品流的模板新建。

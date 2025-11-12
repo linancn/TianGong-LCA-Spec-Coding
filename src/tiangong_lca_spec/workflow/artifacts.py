@@ -605,9 +605,7 @@ def _merge_intended_applications(container: dict[str, Any]) -> None:
     preferred_order = [lang for lang in order if lang == "en"]
     if preferred_order:
         order = preferred_order
-    container[key] = [
-        {"@xml:lang": lang, "#text": "; ".join(merged[lang])} for lang in order if merged.get(lang)
-    ]
+    container[key] = [{"@xml:lang": lang, "#text": "; ".join(merged[lang])} for lang in order if merged.get(lang)]
 
 
 def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
@@ -650,15 +648,11 @@ def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     if isinstance(exchanges_container, dict):
         exchanges = exchanges_container.get("exchange")
         if isinstance(exchanges, list):
-            exchanges_container["exchange"] = [
-                _sanitize_exchange_language(item) for item in exchanges if isinstance(item, dict)
-            ]
+            exchanges_container["exchange"] = [_sanitize_exchange_language(item) for item in exchanges if isinstance(item, dict)]
         elif isinstance(exchanges, dict):
             exchanges_container["exchange"] = [_sanitize_exchange_language(exchanges)]
     elif isinstance(exchanges_container, list):
-        dataset["exchanges"] = [
-            _sanitize_exchange_language(item) for item in exchanges_container if isinstance(item, dict)
-        ]
+        dataset["exchanges"] = [_sanitize_exchange_language(item) for item in exchanges_container if isinstance(item, dict)]
 
     admin = dataset.get("administrativeInformation") or dataset.get("administrative_information")
     if isinstance(admin, dict):
@@ -696,9 +690,7 @@ def _sanitize_alignment_entry(entry: dict[str, Any]) -> dict[str, Any]:
         for name, exchanges in origin.items():
             sanitized_name = _sanitize_to_english(name) if isinstance(name, str) else name
             if isinstance(exchanges, list):
-                sanitized_origin[sanitized_name] = [
-                    _sanitize_exchange_language(exchange) for exchange in exchanges if isinstance(exchange, dict)
-                ]
+                sanitized_origin[sanitized_name] = [_sanitize_exchange_language(exchange) for exchange in exchanges if isinstance(exchange, dict)]
         sanitized["origin_exchanges"] = sanitized_origin
     return sanitized
 
@@ -988,13 +980,7 @@ def _build_flow_dataset(
     mix_text = _sanitize_to_english(mix_text)
 
     comment_entries = _normalise_language(exchange.get("generalComment") or f"Generated for {process_name}")
-    comment_entries = [
-        entry
-        for entry in comment_entries
-        if isinstance(entry, dict)
-        and (entry.get("@xml:lang") or "en").lower() == "en"
-        and _extract_text(entry.get("#text"))
-    ]
+    comment_entries = [entry for entry in comment_entries if isinstance(entry, dict) and (entry.get("@xml:lang") or "en").lower() == "en" and _extract_text(entry.get("#text"))]
     sanitized_comments: list[dict[str, str]] = []
     for entry in comment_entries:
         text = _sanitize_comment_text(entry.get("#text", ""))

@@ -88,17 +88,8 @@ def _merge_exchange_candidates(
     exchanges: list[dict[str, Any]],
     candidates: list[FlowCandidate],
 ) -> list[dict[str, Any]]:
-    candidate_map_by_uuid = {
-        candidate.uuid.lower(): candidate
-        for candidate in candidates
-        if getattr(candidate, "uuid", None)
-        and isinstance(candidate.uuid, str)
-    }
-    candidate_map_by_name = {
-        candidate.base_name.lower(): candidate
-        for candidate in candidates
-        if getattr(candidate, "base_name", None)
-    }
+    candidate_map_by_uuid = {candidate.uuid.lower(): candidate for candidate in candidates if getattr(candidate, "uuid", None) and isinstance(candidate.uuid, str)}
+    candidate_map_by_name = {candidate.base_name.lower(): candidate for candidate in candidates if getattr(candidate, "base_name", None)}
     merged: list[dict[str, Any]] = []
     for exchange in exchanges:
         enriched = dict(exchange)
@@ -195,11 +186,7 @@ def _normalise_candidate_component(value: str | None) -> str | None:
     if not value:
         return None
     cleaned = value.replace("；", ";").replace("，", ",")
-    segments = [
-        segment.strip(" ,;")
-        for segment in re.split(r"[;,]", cleaned)
-        if segment and segment.strip(" ,;")
-    ]
+    segments = [segment.strip(" ,;") for segment in re.split(r"[;,]", cleaned) if segment and segment.strip(" ,;")]
     if not segments:
         return None
     unique: list[str] = []

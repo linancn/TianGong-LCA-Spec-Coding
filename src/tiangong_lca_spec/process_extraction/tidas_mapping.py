@@ -44,6 +44,7 @@ TYPE_OF_DATA_SET_POINTER = "/properties/modellingAndValidation/properties/LCIMet
 LCI_METHOD_PRINCIPLE_POINTER = "/properties/modellingAndValidation/properties/LCIMethodAndAllocation/properties/LCIMethodPrinciple"
 LCI_METHOD_APPROACH_POINTER = "/properties/modellingAndValidation/properties/LCIMethodAndAllocation/properties/LCIMethodApproaches"
 
+
 @dataclass(frozen=True)
 class ProcessSchemaMetadata:
     enum_fields: dict[str, tuple[str, ...]]
@@ -160,10 +161,7 @@ def _normalise_dataset_information(
     name_block = _ensure_dict(info.get("name"))
     raw_general_comment = info.get("common:generalComment")
     general_comment_text = _extract_multilang_text(raw_general_comment).strip()
-    name_fields = {
-        field: name_block.get(field)
-        for field in ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes", "functionalUnitFlowProperties")
-    }
+    name_fields = {field: name_block.get(field) for field in ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes", "functionalUnitFlowProperties")}
     base_name_text = _extract_multilang_text(name_fields.get("baseName"))
     name_components = _derive_name_components(
         base_name_text,

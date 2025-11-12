@@ -17,6 +17,8 @@ from tiangong_lca_spec.core.models import FlowQuery
 LOGGER = get_logger(__name__)
 
 TIMEOUT_ERRORS = (httpx.TimeoutException, TimeoutError)
+
+
 class FlowSearchClient:
     """Thin wrapper around the MCP flow search tool."""
 
@@ -151,9 +153,7 @@ class FlowSearchClient:
         if not base_name:
             return None
         geography = _extract_geography(info.get("geography"))
-        flow_properties = _preferred_language_text(name_block.get("flowProperties")) or _preferred_language_text(
-            name_block.get("functionalUnitFlowProperties")
-        )
+        flow_properties = _preferred_language_text(name_block.get("flowProperties")) or _preferred_language_text(name_block.get("functionalUnitFlowProperties"))
         return {
             "uuid": data_info.get("common:UUID") or flow.get("@uuid"),
             "base_name": base_name,
