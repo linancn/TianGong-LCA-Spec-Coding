@@ -68,6 +68,7 @@ Stage 3 invokes the Stage 4 publisher automatically after validation to commit d
 
 - If `stage3_align_flows.py` detects OpenAI credentials in `.secrets/secrets.toml`, it automatically enables LLM scoring to evaluate the ten MCP candidates; otherwise it falls back to local similarity matching. Before alignment, the script verifies every exchange has both `exchangeName` and `FlowSearch hints` (field requirements are listed in §0). When hints are missing the script stops by default; use `--allow-missing-hints` only to bypass explicit warning handling. If `exchangeName` is absent, it first tries to auto-fill it from the multilingual synonyms in `FlowSearch hints`. The resulting `artifacts/<run_id>/cache/stage3_alignment.json` always includes `process_id`, `matched_flows`, `unmatched_flows`, and `origin_exchanges`, and the CLI prints match statistics for each process.
 - Stage 3 reuses the existing ILCD format source (`a97a0155-0234-4b87-b4ce-a45da52f2a40`); the exported process and flow files keep the `common:referenceToDataSetFormat` block, but no local `exports/sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.json` stub is generated.
+- Relative `@uri` pointers inside ILCD files now follow the pattern `../processes/{uuid}_{version}.xml`, `../flows/{uuid}_{version}.xml`, and `../sources/{uuid}_{version}.xml` so downstream loaders can resolve a specific dataset revision.
 
 ## 3. Core Data Structures
 ```python
