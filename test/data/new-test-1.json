@@ -1,0 +1,28 @@
+{
+    "result": [
+        {
+            "text": "3.1.1. Production of lithium iron phosphate cathode material",
+            "page_number": 3
+        },
+        {
+            "text": "The cathode material of lithium iron phosphate batteries is generally prepared with the raw materials, ferric phosphate, and lithium",
+            "page_number": 3
+        },
+        {
+            "text": "Table 3 List of substances in the production process of the lithium iron phosphate cathode material.\n<table><tr><td></td><td></td><td>Name of substance</td><td>Unit</td><td>Magnitude</td></tr><tr><td rowspan=\"5\">Input</td><td rowspan=\"5\">Materials and reagents</td><td>Ferric phosphate</td><td>kg</td><td>2.41E+00</td></tr><tr><td>Lithium carbonate</td><td>kg</td><td>6.02E-01</td></tr><tr><td>Glucose</td><td>kg</td><td>2.41E-01</td></tr><tr><td>Nitrogen</td><td>kg</td><td>2.24E-02</td></tr><tr><td>Water</td><td>kg</td><td>5.78E-01</td></tr><tr><td rowspan=\"5\">Output</td><td rowspan=\"2\">Air pollutants</td><td>Carbon dioxide</td><td>g</td><td>4.12E+00</td></tr><tr><td>Dust</td><td>g</td><td>2.31E-01</td></tr><tr><td rowspan=\"2\">Water pollutants</td><td>Suspended solids</td><td>g</td><td>1.64E-02</td></tr><tr><td>Total phosphorus</td><td>g</td><td>1.20E-04</td></tr><tr><td>Product</td><td>Cathode material</td><td>kg</td><td>2.41E+00</td></tr></table>",
+            "page_number": 4
+        },
+        {
+            "text": "carbonate by adding carbon source and water, stirring to disperse, grinding, spray drying, sintering in a roller hearth furnace with nitrogen, sieving, and demagnetising. The production process is shown in Fig. 2, and the inventory is shown in Table 3.",
+            "page_number": 4
+        },
+        {
+            "text": "The ferric phosphate is prepared by the reaction of ferrous sulphate with phosphoric acid, as demonstrated in Fig. 3; the inventory is shown in Table 4.",
+            "page_number": 4
+        },
+        {
+            "text": "The other battery materials required for producing lithium iron phosphate cells include lithium carbonate, anode material, electrolyte, copper foil, aluminium foil, separator, and a housing case. The lists of substances for the production of these materials are shown in Table 5.",
+            "page_number": 4
+        }
+    ]
+}
