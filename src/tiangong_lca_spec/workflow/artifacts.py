@@ -18,7 +18,7 @@ from tiangong_lca_spec.core.constants import (
 )
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
-from tiangong_lca_spec.core.uris import build_portal_uri
+from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
 from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
@@ -281,7 +281,7 @@ def _format_reference_block(format_source_uuid: str) -> dict[str, Any]:
         return {
             "@type": "source data set",
             "@refObjectId": canonical_uuid,
-            "@uri": f"../sources/{canonical_uuid}.xml",
+            "@uri": build_local_dataset_uri("source", canonical_uuid, ILCD_FORMAT_SOURCE_VERSION),
             "@version": ILCD_FORMAT_SOURCE_VERSION,
             "common:shortDescription": _language_entry("ILCD format"),
         }
@@ -1165,11 +1165,12 @@ def _ensure_directories(root: Path) -> None:
 
 
 def _build_source_reference(uuid_value: str, title: str) -> dict[str, Any]:
+    dataset_version = "01.01.000"
     return {
         "@type": "source data set",
         "@refObjectId": uuid_value,
-        "@uri": f"../sources/{uuid_value}.xml",
-        "@version": "01.01.000",
+        "@uri": build_local_dataset_uri("source", uuid_value, dataset_version),
+        "@version": dataset_version,
         "common:shortDescription": [_language_entry(title)],
     }
 
