@@ -1,6 +1,13 @@
 """Shared core utilities for the Tiangong LCA spec coding pipeline."""
 
 from .config import Settings, get_settings
+from .constants import (
+    ILCD_FORMAT_SOURCE_SHORT_DESCRIPTION,
+    ILCD_FORMAT_SOURCE_URI,
+    ILCD_FORMAT_SOURCE_UUID,
+    ILCD_FORMAT_SOURCE_VERSION,
+    build_dataset_format_reference,
+)
 from .exceptions import (
     FlowAlignmentError,
     FlowSearchError,
@@ -35,4 +42,9 @@ __all__ = [
     "TidasValidationError",
     "get_settings",
     "configure_logging",
+    "ILCD_FORMAT_SOURCE_UUID",
+    "ILCD_FORMAT_SOURCE_VERSION",
+    "ILCD_FORMAT_SOURCE_URI",
+    "ILCD_FORMAT_SOURCE_SHORT_DESCRIPTION",
+    "build_dataset_format_reference",
 ]

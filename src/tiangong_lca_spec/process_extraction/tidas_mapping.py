@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from tiangong_lca_spec.core.uris import build_portal_uri
+from tiangong_lca_spec.core.constants import build_dataset_format_reference
 from tiangong_lca_spec.tidas import get_schema_repository
 
 BASE_METADATA = {
@@ -1001,13 +1002,7 @@ def _build_commissioner_reference() -> dict[str, Any]:
 
 
 def _build_dataset_format_reference() -> dict[str, Any]:
-    return {
-        "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
-        "@type": "source data set",
-        "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.xml",
-        "@version": "03.00.003",
-        "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD format"},
-    }
+    return build_dataset_format_reference()
 
 
 def _build_compliance_reference() -> dict[str, Any] | None:

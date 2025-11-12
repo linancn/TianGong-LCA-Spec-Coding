@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from tiangong_lca_spec.core.config import Settings, get_settings
+from tiangong_lca_spec.core.constants import build_dataset_format_reference
 from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
@@ -723,13 +724,7 @@ class FlowPublisher:
         return {
             "dataEntryBy": {
                 "common:timeStamp": _utc_timestamp(),
-                "common:referenceToDataSetFormat": {
-                    "@type": "source data set",
-                    "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
-                    "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.xml",
-                    "@version": "03.00.003",
-                    "common:shortDescription": _language_entry("ILCD format"),
-                },
+                "common:referenceToDataSetFormat": build_dataset_format_reference(),
                 "common:referenceToPersonOrEntityEnteringTheData": {
                     "@type": "contact data set",
                     "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
