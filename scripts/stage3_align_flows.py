@@ -140,7 +140,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--format-source-uuid",
         default=DEFAULT_FORMAT_SOURCE_UUID,
-        help="UUID to use for the generated ILCD format source stub.",
+        help="UUID referenced by common:referenceToDataSetFormat (no local stub is exported).",
     )
     parser.add_argument(
         "--force-publish",

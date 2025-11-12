@@ -11,13 +11,18 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
+from tiangong_lca_spec.core.constants import (
+    ILCD_FORMAT_SOURCE_UUID,
+    ILCD_FORMAT_SOURCE_VERSION,
+    build_dataset_format_reference,
+)
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 from tiangong_lca_spec.core.uris import build_portal_uri
 from tiangong_lca_spec.process_extraction.merge import determine_functional_unit, merge_results
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
-DEFAULT_FORMAT_SOURCE_UUID = "00000000-0000-0000-0000-0000000000f0"
+DEFAULT_FORMAT_SOURCE_UUID = ILCD_FORMAT_SOURCE_UUID
 SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
     "images": ("0", "Images"),
     "data set formats": ("1", "Data set formats"),
@@ -179,11 +184,17 @@ def generate_artifacts(
         flow_count += 1
 
     written_sources = 0
+    format_uuid_lower = (format_source_uuid or "").strip().lower()
     for uuid_value, reference in source_references.items():
-        source_path = artifact_root / "sources" / f"{uuid_value}.json"
-        include_format = not (primary_source_uuid and uuid_value == primary_source_uuid)
+        candidate_uuid = (uuid_value or "").strip()
+        if not candidate_uuid:
+            continue
+        if candidate_uuid.lower() == format_uuid_lower:
+            continue
+        source_path = artifact_root / "sources" / f"{candidate_uuid}.json"
+        include_format = not (primary_source_uuid and candidate_uuid == primary_source_uuid)
         stub = _build_source_stub(
-            uuid_value,
+            candidate_uuid,
             reference,
             timestamp,
             format_source_uuid,
@@ -261,14 +272,20 @@ def _language_entry(text: str, lang: str = "en") -> dict[str, str]:
 
 
 def _dataset_format_reference() -> dict[str, Any]:
-    return {
-        "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
-        "@type": "source data set",
-        "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40.xml",
-        "@version": "03.00.003",
-        "common:shortDescription": _language_entry("ILCD format", "en"),
-    }
+    return build_dataset_format_reference()
 
+
+def _format_reference_block(format_source_uuid: str) -> dict[str, Any]:
+    canonical_uuid = (format_source_uuid or "").strip()
+    if canonical_uuid and canonical_uuid != ILCD_FORMAT_SOURCE_UUID:
+        return {
+            "@type": "source data set",
+            "@refObjectId": canonical_uuid,
+            "@uri": f"../sources/{canonical_uuid}.xml",
+            "@version": ILCD_FORMAT_SOURCE_VERSION,
+            "common:shortDescription": _language_entry("ILCD format"),
+        }
+    return build_dataset_format_reference()
 
 def _unique_join(entries: Iterable[str]) -> str:
     seen: list[str] = []
@@ -1028,13 +1045,7 @@ def _build_flow_dataset(
             "administrativeInformation": {
                 "dataEntryBy": {
                     "common:timeStamp": timestamp,
-                    "common:referenceToDataSetFormat": {
-                        "@type": "source data set",
-                        "@refObjectId": format_source_uuid,
-                        "@uri": f"../sources/{format_source_uuid}.xml",
-                        "@version": "01.01.000",
-                        "common:shortDescription": _language_entry("ILCD format"),
-                    },
+                    "common:referenceToDataSetFormat": _format_reference_block(format_source_uuid),
                     "common:referenceToPersonOrEntityEnteringTheData": _data_entry_reference(),
                 },
                 "publicationAndOwnership": {
@@ -1142,13 +1153,8 @@ def _build_source_stub(
             },
         }
     }
-    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToDataSetFormat"] = {
-        "@type": "source data set",
-        "@refObjectId": format_source_uuid,
-        "@uri": f"../sources/{format_source_uuid}.xml",
-        "@version": "03.00.003",
-        "common:shortDescription": _language_entry("ILCD format"),
-    }
+    if include_format_reference:
+        dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToDataSetFormat"] = _format_reference_block(format_source_uuid)
     dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToPersonOrEntityEnteringTheData"] = _data_entry_reference()
     return dataset
 
