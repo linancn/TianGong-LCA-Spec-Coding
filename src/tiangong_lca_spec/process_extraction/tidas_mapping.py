@@ -957,6 +957,22 @@ def _normalise_administrative_information(
                 publication.pop("common:copyright", None)
         publication["common:referenceToOwnershipOfDataSet"] = _build_commissioner_reference()
         publication.pop("common:other", None)
+        access_entries = _ensure_multilang_list(publication.get("common:accessRestrictions"))
+        filtered_access: list[dict[str, Any]] = []
+        for entry in access_entries:
+            if not isinstance(entry, dict):
+                continue
+            lang = _stringify(entry.get("@xml:lang") or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE
+            text = _stringify(entry.get("#text")).strip()
+            if not text:
+                continue
+            if text.lower() in {"none", "na", "n/a"}:
+                continue
+            filtered_access.append({"@xml:lang": lang, "#text": text})
+        if filtered_access:
+            publication["common:accessRestrictions"] = filtered_access
+        else:
+            publication.pop("common:accessRestrictions", None)
         cleaned_publication = {key: value for key, value in publication.items() if value not in (None, "", {}, [])}
         if cleaned_publication:
             admin["publicationAndOwnership"] = cleaned_publication

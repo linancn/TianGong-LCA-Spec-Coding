@@ -287,6 +287,7 @@ def _format_reference_block(format_source_uuid: str) -> dict[str, Any]:
         }
     return build_dataset_format_reference()
 
+
 def _unique_join(entries: Iterable[str]) -> str:
     seen: list[str] = []
     for entry in entries:
@@ -1153,8 +1154,9 @@ def _build_source_stub(
             },
         }
     }
-    if include_format_reference:
-        dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToDataSetFormat"] = _format_reference_block(format_source_uuid)
+    # Always attach the dataset-format reference so downstream validators receive
+    # a complete administrative block, regardless of whether the stub was auto-created.
+    dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToDataSetFormat"] = _format_reference_block(format_source_uuid)
     dataset["sourceDataSet"]["administrativeInformation"]["dataEntryBy"]["common:referenceToPersonOrEntityEnteringTheData"] = _data_entry_reference()
     return dataset
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,21 @@ from tiangong_lca_spec.flow_alignment import FlowAlignmentService
 from tiangong_lca_spec.workflow.artifacts import (
     DEFAULT_FORMAT_SOURCE_UUID,
     generate_artifacts,
+)
+
+FLOW_HINT_FIELDS: tuple[str, ...] = (
+    "en_synonyms",
+    "zh_synonyms",
+    "abbreviation",
+    "formula_or_CAS",
+    "state_purity",
+    "source_or_pathway",
+    "usage_context",
+)
+
+_PLACEHOLDER_PATTERN = re.compile(
+    r"(?P<field>[a-zA-Z_]+)\s*=\s*(?:N/?A|NA)\s*(?=\||$|[.;])",
+    re.IGNORECASE,
 )
 
 
@@ -318,6 +334,7 @@ def _validate_flow_hints(
     allow_missing: bool,
 ) -> None:
     missing_hints: list[str] = []
+    invalid_hints: list[str] = []
     process_label = _format_process_label(process_name, process_id)
     for index, exchange in enumerate(exchanges, start=1):
         name = _ensure_exchange_name(exchange, index, process_label)
@@ -325,13 +342,61 @@ def _validate_flow_hints(
         if not comment_text or not comment_text.lstrip().startswith("FlowSearch hints:"):
             descriptor = f"{name} (#{index})" if name else _describe_exchange(exchange, index)
             missing_hints.append(descriptor)
-    if not missing_hints:
+            continue
+        issues = _find_hint_issues(comment_text)
+        if issues:
+            issue_label = ", ".join(sorted(issues))
+            descriptor = f"{name} (#{index} -> {issue_label})" if name else f"{_describe_exchange(exchange, index)} ({issue_label})"
+            invalid_hints.append(descriptor)
+    if not missing_hints and not invalid_hints:
         return
-    message = f"{process_label} is missing FlowSearch hints for " f"{len(missing_hints)} exchange(s): {', '.join(missing_hints)}"
+    messages: list[str] = []
+    if missing_hints:
+        messages.append(f"missing FlowSearch hints for {len(missing_hints)} exchange(s): {', '.join(missing_hints)}")
+    if invalid_hints:
+        messages.append(f"placeholder or empty FlowSearch hint values for {len(invalid_hints)} exchange(s): {', '.join(invalid_hints)}")
+    message = f"{process_label} has " + "; ".join(messages)
     if allow_missing:
         print(f"Warning: {message}", file=sys.stderr)
         return
     raise SystemExit(message)
+
+
+def _find_hint_issues(comment_text: str) -> set[str]:
+    issues: set[str] = set()
+    for match in _PLACEHOLDER_PATTERN.finditer(comment_text):
+        field = match.group("field")
+        if field in FLOW_HINT_FIELDS:
+            issues.add(field)
+    for field in FLOW_HINT_FIELDS:
+        value = _extract_hint_field_value(comment_text, field)
+        if value is None:
+            issues.add(field)
+            continue
+        normalized = value.strip()
+        if not normalized:
+            issues.add(field)
+        elif normalized.lower() in {"na", "n/a"}:
+            issues.add(field)
+    return issues
+
+
+def _extract_hint_field_value(comment_text: str, field: str) -> str | None:
+    prefix = f"{field}="
+    start = comment_text.find(prefix)
+    if start == -1:
+        return None
+    start += len(prefix)
+    end = comment_text.find("|", start)
+    if end == -1:
+        end = len(comment_text)
+    raw_value = comment_text[start:end].strip()
+    for separator in (". ", "; ", "\n", "。", "；"):
+        split_index = raw_value.find(separator)
+        if split_index != -1:
+            raw_value = raw_value[:split_index].strip()
+            break
+    return raw_value
 
 
 def _extract_comment_text(exchange: dict[str, Any]) -> str:
