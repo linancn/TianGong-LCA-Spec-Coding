@@ -109,6 +109,39 @@ HINT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 
 CHINESE_CHAR_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 
+NOTE_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
+    "en_synonyms": (
+        re.compile(r"Synonyms\s*\(EN\)\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"English\s+synonyms\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+    ),
+    "zh_synonyms": (
+        re.compile(r"Synonyms\s*\((?:ZH|CN)\)\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"Chinese\s+synonyms\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+    ),
+    "abbreviation": (
+        re.compile(r"Abbreviation\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"Abbrev\.\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+    ),
+    "formula_or_CAS": (
+        re.compile(r"Formula/CAS\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"Formula\s*(?:or)?\s*CAS\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"CAS\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+    ),
+    "state_purity": (
+        re.compile(r"State\s*/?\s*purity\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"State\s*and\s*purity\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+    ),
+    "source_or_pathway": (
+        re.compile(r"Source\s*/?\s*pathway\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"Source\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"Pathway\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+    ),
+    "usage_context": (
+        re.compile(r"Usage\s*context\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+        re.compile(r"Context\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
+    ),
+}
+
 
 def _flow_hint_catalog() -> dict[str, dict[str, list[str] | str]]:
     return _load_flow_hint_catalog()
@@ -226,6 +259,10 @@ def enrich_exchange_hints(
     if catalog_entry:
         for field, values in catalog_entry.items():
             hints[field] = _format_field(values)
+
+    note_fields = _extract_note_fields(existing_text)
+    for field, value in note_fields.items():
+        hints[field] = _merge_field_values(hints.get(field), value, prefer_new_if_na=True)
 
     heuristic = _heuristic_hint_candidates(exchange, base_name, geography)
     for field, values in heuristic.items():
@@ -545,6 +582,23 @@ def _strip_hint_prefix(text: str | None) -> str:
         return stripped
     _, remainder = _separate_notes(stripped[len("FlowSearch hints:") :].strip())
     return remainder
+
+
+def _extract_note_fields(text: str | None) -> dict[str, str]:
+    if not text:
+        return {}
+    notes: dict[str, str] = {}
+    for field, patterns in NOTE_FIELD_PATTERNS.items():
+        collected: list[str] = []
+        for pattern in patterns:
+            for match in pattern.findall(text):
+                cleaned = match.strip().rstrip("。.;")
+                if cleaned:
+                    collected.append(cleaned)
+        if collected:
+            merged = _merge_field_values(notes.get(field), "; ".join(_deduplicate(collected)), prefer_new_if_na=True)
+            notes[field] = merged
+    return notes
 
 
 def _extract_text(value: Any) -> str:
