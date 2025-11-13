@@ -10,6 +10,7 @@ This guide focuses on general conventions for engineering collaboration, helping
   - `.github/prompts/`: Prompt specifications for Codex, with `extract-process-workflow.prompt.md` dedicated to the process extraction task.
 - **Collaboration interfaces**: The standard workflow depends on `.secrets/secrets.toml` where OpenAI, Tiangong LCA Remote, and TIDAS validation services are configured. Validate credentials before running Stage 3 or later in batch during your first integration.
 - **Further references**: Requirements, alignment strategies, and exception handling for each stage are documented in `.github/prompts/extract-process-workflow.prompt.md`. For supplemental classification or geographic information, use the helper CLIs provided by `scripts/list_*_children.py`.
+- **Stage 4 flow publishing**: When filling in missing flow definitions, the publisher now leans on the configured LLM to infer both the flow type and the most specific product classification. Follow the credential setup above so the scripts can call `scripts/list_product_flow_category_children.py` via the LLM-assisted selector.
 
 ## 2. Development Environment and Dependencies
 - **Python version**: ≥ 3.12. Manage it with `uv toolchain`; the default virtual environment lives in `.venv/`.

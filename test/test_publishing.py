@@ -33,6 +33,25 @@ class DummyCrudClient:
         pass
 
 
+class StubLLM:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, input_data):
+        self.calls += 1
+        context = input_data.get("context") or {}
+        if isinstance(context, dict) and "options" in context:
+            options = context.get("options") or []
+            for option in options:
+                description = (option.get("description") or "").lower()
+                if "electric" in description:
+                    return {"choice": option.get("code"), "reason": "stub"}
+            if options:
+                return {"choice": options[0].get("code"), "reason": "stub default"}
+            return {"choice": "STOP", "reason": "no options"}
+        return {"flow_type": "Product flow", "reason": "stub"}
+
+
 def _build_alignment_payload():
     return [
         {
@@ -53,7 +72,8 @@ def _build_alignment_payload():
 
 
 def test_flow_publisher_builds_plan_without_network():
-    publisher = FlowPublisher(crud_client=DummyCrudClient(), dry_run=True)
+    stub_llm = StubLLM()
+    publisher = FlowPublisher(crud_client=DummyCrudClient(), dry_run=True, llm=stub_llm)
     plans = publisher.prepare_from_alignment(_build_alignment_payload())
     assert len(plans) == 1
     plan = plans[0]
@@ -62,6 +82,10 @@ def test_flow_publisher_builds_plan_without_network():
     assert dataset["flowInformation"]["dataSetInformation"]["common:UUID"] == plan.uuid
     assert dataset["modellingAndValidation"]["LCIMethod"]["typeOfDataSet"] == "Product flow"
     assert dataset["modellingAndValidation"]["complianceDeclarations"] == EXPECTED_COMPLIANCE_DECLARATIONS
+    classes = dataset["flowInformation"]["dataSetInformation"]["classificationInformation"]["common:classification"]["common:class"]
+    codes = [entry.get("@classId") for entry in classes]
+    assert "1710" in codes
+    assert stub_llm.calls >= 2
     publisher.close()
 
 
