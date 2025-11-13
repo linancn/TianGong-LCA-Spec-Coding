@@ -66,7 +66,7 @@ uv run python scripts/stage4_publish.py --run-id "$RUN_ID" \
 Stage 3 校验通过后会自动调用上述发布脚本完成入库（全流程无干跑）。若 `artifacts/<run_id>/cache/published.json` 已存在，将默认跳过自动发布；确认需要重新提交时，删除该文件或在 Stage 3 指定 `--force-publish`。
 
 - `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`（字段要求见 §0），缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `artifacts/<run_id>/cache/stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
-- Stage 3 继续复用已有的 ILCD format 数据源（UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`），仅在流程与流数据集中写入 `common:referenceToDataSetFormat`，不会在 `exports/sources/` 目录重新生成固定数据源的本地文件。
+- Stage 3 继续复用已有的 ILCD format 数据源（UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`）以及共享的 ILCD entry-level 合规体系 UUID (`d92a1a12-2545-49e2-a585-55c259997756`)，仅在流程与流数据集中写入这些引用块，不会在 `exports/sources/` 目录重新生成这些共享数据集的本地文件。
 - 所有导出的 ILCD 文件在相对 `@uri` 引用中统一采用带版本号的命名方式：`../processes/{uuid}_{version}.xml`、`../flows/{uuid}_{version}.xml`、`../sources/{uuid}_{version}.xml`，便于下游系统直接定位到具体版本。
 
 ## 3. 核心数据结构

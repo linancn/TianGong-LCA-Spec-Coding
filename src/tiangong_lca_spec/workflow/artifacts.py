@@ -20,6 +20,7 @@ from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
 from tiangong_lca_spec.process_extraction.merge import merge_results
+from tiangong_lca_spec.process_extraction.tidas_mapping import ILCD_ENTRY_LEVEL_REFERENCE_ID
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = ILCD_FORMAT_SOURCE_UUID
@@ -220,11 +221,15 @@ def generate_artifacts(
 
     written_sources = 0
     format_uuid_lower = (format_source_uuid or "").strip().lower()
+    compliance_uuid_lower = (ILCD_ENTRY_LEVEL_REFERENCE_ID or "").strip().lower()
     for uuid_value, reference in source_references.items():
         candidate_uuid = (uuid_value or "").strip()
         if not candidate_uuid:
             continue
-        if candidate_uuid.lower() == format_uuid_lower:
+        candidate_lower = candidate_uuid.lower()
+        if candidate_lower == format_uuid_lower:
+            continue
+        if compliance_uuid_lower and candidate_lower == compliance_uuid_lower:
             continue
         include_format = not (primary_source_uuid and candidate_uuid == primary_source_uuid)
         stub = _build_source_stub(
@@ -989,11 +994,12 @@ def _flow_property_reference() -> dict[str, Any]:
 def flow_compliance_declarations() -> dict[str, Any]:
     """Return the default compliance declaration block for generated datasets.
 
-    The compliance system reference is emitted as a local ILCD-relative URI so the
-    generated archive can include the corresponding source stub.
+    The compliance system reference reuses the shared Tiangong ILCD Entry-level UUID.
+    Stage 3 does not export a local source stub for this reference; downstream systems
+    resolve it during publication using the stored UUID.
     """
 
-    compliance_uuid = "d92a1a12-2545-49e2-a585-55c259997756"
+    compliance_uuid = ILCD_ENTRY_LEVEL_REFERENCE_ID
     compliance_version = "20.20.002"
     return {
         "compliance": {
