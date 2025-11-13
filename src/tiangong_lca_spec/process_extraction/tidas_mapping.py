@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from tiangong_lca_spec.core.constants import build_dataset_format_reference
-from tiangong_lca_spec.core.uris import build_portal_uri
+from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
 from tiangong_lca_spec.tidas import get_schema_repository
 
 BASE_METADATA = {
@@ -997,11 +997,13 @@ def _build_reference(ref_type: str, description: str) -> dict[str, Any]:
 
 
 def _build_commissioner_reference() -> dict[str, Any]:
+    ref_object_id = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
+    version = "01.00.000"
     return {
-        "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
+        "@refObjectId": ref_object_id,
         "@type": "contact data set",
-        "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-        "@version": "01.00.000",
+        "@uri": build_local_dataset_uri("contact data set", ref_object_id, version),
+        "@version": version,
         "common:shortDescription": [
             {"@xml:lang": "en", "#text": "Tiangong LCA Data Working Group"},
             {"@xml:lang": "zh", "#text": "天工LCA数据团队"},

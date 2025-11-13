@@ -16,7 +16,7 @@ from tiangong_lca_spec.core.constants import build_dataset_format_reference
 from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
-from tiangong_lca_spec.core.uris import build_portal_uri
+from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.workflow.artifacts import flow_compliance_declarations
 from tiangong_lca_spec.tidas.flow_property_registry import FlowPropertyRegistry, get_default_registry
@@ -1190,27 +1190,26 @@ class FlowPublisher:
 
     @staticmethod
     def _build_administrative_section(version: str) -> dict[str, Any]:
+        def _default_contact_reference() -> dict[str, Any]:
+            contact_uuid = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
+            contact_version = "01.00.000"
+            return {
+                "@type": "contact data set",
+                "@refObjectId": contact_uuid,
+                "@uri": build_local_dataset_uri("contact data set", contact_uuid, contact_version),
+                "@version": contact_version,
+                "common:shortDescription": [_language_entry("Tiangong LCA Data Working Group")],
+            }
+
         return {
             "dataEntryBy": {
                 "common:timeStamp": _utc_timestamp(),
                 "common:referenceToDataSetFormat": build_dataset_format_reference(),
-                "common:referenceToPersonOrEntityEnteringTheData": {
-                    "@type": "contact data set",
-                    "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
-                    "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-                    "@version": "01.00.000",
-                    "common:shortDescription": [_language_entry("Tiangong LCA Data Working Group")],
-                },
+                "common:referenceToPersonOrEntityEnteringTheData": _default_contact_reference(),
             },
             "publicationAndOwnership": {
                 "common:dataSetVersion": version,
-                "common:referenceToOwnershipOfDataSet": {
-                    "@type": "contact data set",
-                    "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
-                    "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-                    "@version": "01.00.000",
-                    "common:shortDescription": [_language_entry("Tiangong LCA Data Working Group")],
-                },
+                "common:referenceToOwnershipOfDataSet": _default_contact_reference(),
             },
         }
 

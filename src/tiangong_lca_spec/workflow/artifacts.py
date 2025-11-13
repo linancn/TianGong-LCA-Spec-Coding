@@ -1020,11 +1020,13 @@ def _data_entry_reference() -> dict[str, Any]:
 
 
 def _ownership_reference() -> dict[str, Any]:
+    ref_object_id = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
+    version = "01.00.000"
     return {
-        "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
+        "@refObjectId": ref_object_id,
         "@type": "contact data set",
-        "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8.xml",
-        "@version": "01.00.000",
+        "@uri": build_local_dataset_uri("contact data set", ref_object_id, version),
+        "@version": version,
         "common:shortDescription": [
             _language_entry("Tiangong LCA Data Working Group", "en"),
             _language_entry("天工LCA数据团队", "zh"),

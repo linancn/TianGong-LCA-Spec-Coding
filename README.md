@@ -70,6 +70,10 @@
 
 完成 `uv sync` 后即可进行模块开发与单元测试，确保在符合 Python 3.12 及以上版本的环境中运行。
 
+### 导出数据约定
+
+- 生成的流程数据集中，行政信息里的 `common:referenceToCommissioner`、`common:referenceToPersonOrEntityEnteringTheData` 与 `common:referenceToOwnershipOfDataSet` 均指向默认联系人，并使用 `../contacts/<uuid>_<version>.xml` 形式的 `@uri`，即在联系人文件名后附加 `_@version` 以匹配对应的版本号。
+
 ### MCP 服务配置与校验
 
 `tiangong_lca_spec.core.config.Settings` 默认提供 `tiangong_lca_remote` MCP 端点，用于流程数据检索并需要 Bearer Token。配置信息统一保存在 `.secrets/secrets.toml` 中（已在 `.gitignore` 中排除），初始模板示例如下：
