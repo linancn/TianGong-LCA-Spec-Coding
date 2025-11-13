@@ -19,6 +19,8 @@ _FOLDER_MAP: Final[dict[str, str]] = {
     "flow data set": "flows",
     "source": "sources",
     "source data set": "sources",
+    "contact": "contacts",
+    "contact data set": "contacts",
 }
 
 
