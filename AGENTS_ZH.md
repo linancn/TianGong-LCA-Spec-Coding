@@ -10,6 +10,7 @@
   - `.github/prompts/`：对 Codex 的提示词说明，其中 `extract-process-workflow.prompt.md` 专门描述流程抽取任务。
 - **协作接口**：标准工作流依赖 `.secrets/secrets.toml` 中配置的 OpenAI、tiangong LCA Remote 与 TIDAS 验证服务。首次接入时请先完成凭据校验，再批量运行 Stage 3+。
 - **更多参考**：各阶段产物要求、对齐策略和异常处理见 `.github/prompts/extract-process-workflow.prompt.md`；若需补充分类或地理信息，可查看 `scripts/list_*_children.py` 提供的辅助 CLI。
+- **Stage 4 流发布**：当需要补齐缺失的 Flow 时，发布器会调用配置好的 LLM 自动推断流类型，并借助 `scripts/list_product_flow_category_children.py` 逐级细化产品分类，确保最终落到最具体的类别。请确认凭据就绪，避免发布阶段因无法访问 LLM 而退回默认分类。
 
 ## 2. 开发环境与依赖
 - **Python 版本**：≥ 3.12，推荐通过 `uv toolchain` 管理，默认虚拟环境位于 `.venv/`。

@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 from tiangong_lca_spec.core.constants import (
@@ -42,6 +42,36 @@ FLOW_HINT_FIELDS: tuple[str, ...] = (
     "source_or_pathway",
     "usage_context",
 )
+
+DEFAULT_DATA_SET_VERSION = "01.01.000"
+
+
+def resolve_dataset_version(ilcd_dataset: Mapping[str, Any] | None) -> str:
+    """Extract the dataset version from an ILCD node, falling back to the default."""
+    if isinstance(ilcd_dataset, Mapping):
+        admin = ilcd_dataset.get("administrativeInformation")
+        if isinstance(admin, Mapping):
+            publication = admin.get("publicationAndOwnership")
+            if isinstance(publication, Mapping):
+                version = publication.get("common:dataSetVersion")
+                if isinstance(version, str):
+                    version = version.strip()
+                    if version:
+                        return version
+    return DEFAULT_DATA_SET_VERSION
+
+
+def build_export_filename(uuid_value: str, dataset_version: str) -> str:
+    """Return the canonical export filename <uuid>_<version>.json."""
+    safe_uuid = (uuid_value or "").strip()
+    if not safe_uuid:
+        raise ValueError("UUID required to build export filename.")
+    version = (dataset_version or "").strip() or DEFAULT_DATA_SET_VERSION
+    safe_version = re.sub(r"[^0-9A-Za-z._-]", "_", version)
+    if not safe_version:
+        safe_version = DEFAULT_DATA_SET_VERSION
+    return f"{safe_uuid}_{safe_version}.json"
+
 
 CJK_CHAR_PATTERN = re.compile(r"[\u2e80-\u2eff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ua000-\ua4cf\uac00-\ud7af\uff00-\uffef]+")
 CHINESE_PUNCT_REPLACEMENTS: dict[str, str] = {
@@ -162,7 +192,9 @@ def generate_artifacts(
         uuid_value = ilcd_dataset.get("processInformation", {}).get("dataSetInformation", {}).get("common:UUID")
         if not uuid_value:
             raise ValueError("Process dataset missing common:UUID.")
-        process_path = artifact_root / "processes" / f"{uuid_value}.json"
+        dataset_version = resolve_dataset_version(ilcd_dataset)
+        process_filename = build_export_filename(uuid_value, dataset_version)
+        process_path = artifact_root / "processes" / process_filename
         _dump_json({"processDataSet": ilcd_dataset}, process_path)
 
         source_references |= _collect_source_references(ilcd_dataset)
@@ -179,7 +211,10 @@ def generate_artifacts(
         if not flow_dataset:
             continue
         uuid_value, dataset = flow_dataset
-        flow_path = artifact_root / "flows" / f"{uuid_value}.json"
+        flow_ilcd = dataset.get("flowDataSet", {})
+        dataset_version = resolve_dataset_version(flow_ilcd)
+        flow_filename = build_export_filename(uuid_value, dataset_version)
+        flow_path = artifact_root / "flows" / flow_filename
         _dump_json(dataset, flow_path)
         flow_count += 1
 
@@ -191,7 +226,6 @@ def generate_artifacts(
             continue
         if candidate_uuid.lower() == format_uuid_lower:
             continue
-        source_path = artifact_root / "sources" / f"{candidate_uuid}.json"
         include_format = not (primary_source_uuid and candidate_uuid == primary_source_uuid)
         stub = _build_source_stub(
             candidate_uuid,
@@ -200,6 +234,10 @@ def generate_artifacts(
             format_source_uuid,
             include_format_reference=include_format,
         )
+        source_ilcd = stub.get("sourceDataSet", {})
+        dataset_version = resolve_dataset_version(source_ilcd)
+        source_filename = build_export_filename(candidate_uuid, dataset_version)
+        source_path = artifact_root / "sources" / source_filename
         _dump_json(stub, source_path)
         written_sources += 1
 
@@ -490,7 +528,7 @@ def _localize_reference_uri(node: dict[str, Any]) -> None:
     uuid_value = str(node.get("@refObjectId") or "").strip()
     if not uuid_value:
         return
-    version = str(node.get("@version") or "").strip() or "01.01.000"
+    version = str(node.get("@version") or "").strip() or DEFAULT_DATA_SET_VERSION
     ref_type = str(node.get("@type") or "").strip().lower()
     uri_text = str(node.get("@uri") or "")
 
@@ -1062,7 +1100,7 @@ def _build_flow_dataset(
         "mixAndLocationTypes": [_language_entry(mix_text, "en")],
     }
 
-    dataset_version = "01.01.000"
+    dataset_version = DEFAULT_DATA_SET_VERSION
     compliance_block = flow_compliance_declarations()
     modelling_section: dict[str, Any] = {
         "LCIMethod": {
@@ -1178,7 +1216,7 @@ def _build_source_stub(
     short_desc = reference_node.get("common:shortDescription")
     description_entries = _normalise_language(short_desc or "Source reference")
     classification = _build_source_classification(reference_node, uuid_value, format_source_uuid)
-    dataset_version = "01.01.000"
+    dataset_version = DEFAULT_DATA_SET_VERSION
     dataset = {
         "sourceDataSet": {
             "@xmlns": "http://lca.jrc.it/ILCD/Source",
@@ -1218,7 +1256,7 @@ def _ensure_directories(root: Path) -> None:
 
 
 def _build_source_reference(uuid_value: str, title: str) -> dict[str, Any]:
-    dataset_version = "01.01.000"
+    dataset_version = DEFAULT_DATA_SET_VERSION
     return {
         "@type": "source data set",
         "@refObjectId": uuid_value,

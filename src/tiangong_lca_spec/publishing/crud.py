@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Optional, Sequence, Protocol
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.constants import build_dataset_format_reference
@@ -14,12 +17,15 @@ from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
 from tiangong_lca_spec.core.uris import build_portal_uri
-from tiangong_lca_spec.tidas.flow_property_registry import FlowPropertyRegistry, get_default_registry
+from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.workflow.artifacts import flow_compliance_declarations
+from tiangong_lca_spec.tidas.flow_property_registry import FlowPropertyRegistry, get_default_registry
 
 LOGGER = get_logger(__name__)
 
 DATABASE_TOOL_NAME = "Database_CRUD_Tool"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PRODUCT_CATEGORY_SCRIPT = PROJECT_ROOT / "scripts" / "list_product_flow_category_children.py"
 
 
 def _utc_timestamp() -> str:
@@ -61,6 +67,485 @@ def _parse_flowsearch_hints(comment: str | None) -> dict[str, list[str] | str]:
         parts = [item.strip() for item in value.split(";") if item.strip()]
         output[key] = parts or [value]
     return output
+
+
+def _normalize_hint_values(hints: Mapping[str, list[str] | str]) -> dict[str, list[str]]:
+    normalized: dict[str, list[str]] = {}
+    for key, value in hints.items():
+        if isinstance(value, str):
+            text = _coerce_text(value)
+            if text:
+                normalized[key] = [text]
+            continue
+        if isinstance(value, Iterable):
+            entries = [_coerce_text(item) for item in value if _coerce_text(item)]
+            if entries:
+                normalized[key] = entries
+    return normalized
+
+
+def _collect_classification_entries(exchange: Mapping[str, Any]) -> list[str]:
+    results: list[str] = []
+    classification = exchange.get("classificationInformation") or exchange.get("classification")
+    if isinstance(classification, Mapping):
+        carrier = classification.get("common:classification") or classification.get("classification")
+        if isinstance(carrier, Mapping):
+            classes = carrier.get("common:class") or carrier.get("class")
+        else:
+            classes = carrier
+    else:
+        classes = classification
+    if isinstance(classes, list):
+        for entry in classes:
+            if isinstance(entry, Mapping):
+                label = _coerce_text(entry.get("#text") or entry.get("text"))
+                level = _coerce_text(entry.get("@level"))
+                if label and level:
+                    results.append(f"{level}:{label}")
+                elif label:
+                    results.append(label)
+            else:
+                text = _coerce_text(entry)
+                if text:
+                    results.append(text)
+    return results
+
+
+def _collect_tag_entries(exchange: Mapping[str, Any]) -> list[str]:
+    tags: list[str] = []
+    for key in ("synonyms", "synonym", "CASNumber", "chemFormula", "formula", "additionalInformation"):
+        value = exchange.get(key)
+        if isinstance(value, str):
+            candidate = _coerce_text(value)
+            if candidate:
+                tags.append(candidate)
+        elif isinstance(value, Mapping):
+            candidate = _coerce_text(value.get("#text") or value.get("text"))
+            if candidate:
+                tags.append(candidate)
+        elif isinstance(value, Iterable):
+            for item in value:
+                candidate = _coerce_text(item)
+                if candidate:
+                    tags.append(candidate)
+    return tags
+
+
+def _collect_reference_summary(exchange: Mapping[str, Any]) -> dict[str, Any] | None:
+    reference = exchange.get("referenceToFlowDataSet")
+    if not isinstance(reference, Mapping):
+        return None
+    summary: dict[str, Any] = {}
+    for key in ("@refObjectId", "@version", "@uri"):
+        text = _coerce_text(reference.get(key))
+        if text:
+            summary[key] = text
+    if reference.get("unmatched:placeholder"):
+        summary["placeholder"] = True
+    return summary or None
+
+
+def _collect_candidate_summary(exchange: Mapping[str, Any]) -> dict[str, Any] | None:
+    detail = exchange.get("matchingDetail")
+    if not isinstance(detail, Mapping):
+        return None
+    candidate = detail.get("selectedCandidate")
+    if not isinstance(candidate, Mapping):
+        return None
+    summary: dict[str, Any] = {}
+    for key in ("uuid", "base_name", "flow_properties", "geography", "classification", "general_comment", "selector", "evaluation_reason"):
+        value = candidate.get(key)
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            text = _coerce_text(value)
+            if text:
+                summary[key] = text
+        elif isinstance(value, Mapping):
+            sanitized = {k: _coerce_text(v) for k, v in value.items() if isinstance(k, str) and _coerce_text(v)}
+            if sanitized:
+                summary[key] = sanitized
+        elif isinstance(value, Iterable):
+            collected = [_coerce_text(item) for item in value if _coerce_text(item)]
+            if collected:
+                summary[key] = collected
+    return summary or None
+
+
+def _assign_if_value(target: dict[str, Any], key: str, value: str) -> None:
+    if value:
+        target[key] = value
+
+
+def _compose_flow_context(exchange: Mapping[str, Any], hints: Mapping[str, list[str] | str]) -> dict[str, Any]:
+    normalized_hints = _normalize_hint_values(hints)
+    summary: dict[str, Any] = {}
+    _assign_if_value(summary, "name", _coerce_text(exchange.get("exchangeName")))
+    _assign_if_value(summary, "direction", _coerce_text(exchange.get("exchangeDirection")))
+    _assign_if_value(summary, "unit", _resolve_unit(exchange))
+    _assign_if_value(
+        summary,
+        "amount",
+        _coerce_text(exchange.get("meanAmount") or exchange.get("resultingAmount") or exchange.get("amount")),
+    )
+    _assign_if_value(summary, "general_comment", _extract_general_comment(exchange))
+    _assign_if_value(summary, "input_group", _coerce_text(exchange.get("inputGroup")))
+    _assign_if_value(summary, "output_group", _coerce_text(exchange.get("outputGroup")))
+    _assign_if_value(summary, "location", _coerce_text(exchange.get("location")))
+    _assign_if_value(summary, "cas_number", _coerce_text(exchange.get("CASNumber")))
+    _assign_if_value(summary, "formula", _coerce_text(exchange.get("chemFormula") or exchange.get("formula")))
+    summary["classification_path"] = _collect_classification_entries(exchange)
+    summary["tags"] = _collect_tag_entries(exchange)
+    reference = _collect_reference_summary(exchange)
+    if reference:
+        summary["reference"] = reference
+    candidate = _collect_candidate_summary(exchange)
+    if candidate:
+        summary["selected_candidate"] = candidate
+    return {
+        "exchange": summary,
+        "flow_search_hints": normalized_hints,
+    }
+
+
+def _ensure_mapping_response(response: Any) -> Mapping[str, Any]:
+    payload = getattr(response, "content", response)
+    if isinstance(payload, str):
+        parsed = parse_json_response(payload)
+    else:
+        parsed = payload
+    if isinstance(parsed, Mapping):
+        return parsed
+    raise ValueError("Language model returned non-dict payload")
+
+
+class LanguageModelProtocol(Protocol):
+    """Minimal protocol for language models used during publishing."""
+
+    def invoke(self, input_data: dict[str, Any]) -> Any: ...
+
+
+class FlowTypeClassifier:
+    """Infer flow types using an optional language model with heuristic fallback."""
+
+    ALLOWED_TYPES = {"Product flow", "Elementary flow", "Waste flow"}
+    ELEMENTARY_KEYWORDS = ("emission", "to air", "to water", "wastewater", "effluent", "flue gas", "to soil", "released")
+    WASTE_KEYWORDS = ("waste", "slag", "scrap", "residue", "ash", "sludge")
+    PROMPT = (
+        "You classify life cycle assessment exchanges into one of three flow types.\n"
+        "- Product flow: exchanges that represent technical products, services, materials, or energy "
+        "circulating within the technosphere and available for downstream use or with economic value.\n"
+        "- Elementary flow: exchanges that connect the technosphere with the natural environment "
+        "(emissions to air/water/soil or extractions of natural resources).\n"
+        "- Waste flow: outputs that leave the technosphere as wastes or by-products requiring waste "
+        "management or treatment by another activity.\n"
+        "Use the provided data (exchange metadata, hints, candidate details) to pick the best match. "
+        "Return strict JSON with keys `flow_type` (one of Product flow, Elementary flow, Waste flow) "
+        "and `reason` summarising the evidence. Do not invent new categories."
+    )
+
+    def __init__(self, llm: LanguageModelProtocol | None = None) -> None:
+        self._llm = llm
+
+    def infer(self, exchange: Mapping[str, Any], hints: Mapping[str, list[str] | str]) -> str:
+        context = self._build_context(exchange, hints)
+        if self._llm is not None:
+            try:
+                response = self._llm.invoke(
+                    {
+                        "prompt": self.PROMPT,
+                        "context": context,
+                        "response_format": {"type": "json_object"},
+                    }
+                )
+                payload = _ensure_mapping_response(response)
+                flow_type = self._normalise_flow_type(payload.get("flow_type"))
+                if flow_type:
+                    return flow_type
+                LOGGER.warning(
+                    "flow_publish.flow_type_invalid_response",
+                    response=payload,
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                LOGGER.warning("flow_publish.flow_type_llm_failed", error=str(exc))
+        fallback = self._heuristic_infer(context)
+        LOGGER.debug("flow_publish.flow_type_fallback", selected=fallback)
+        return fallback
+
+    def _build_context(self, exchange: Mapping[str, Any], hints: Mapping[str, list[str] | str]) -> dict[str, Any]:
+        return _compose_flow_context(exchange, hints)
+
+    def _normalise_flow_type(self, raw: Any) -> str | None:
+        if not isinstance(raw, str):
+            return None
+        candidate = raw.strip().lower()
+        for allowed in self.ALLOWED_TYPES:
+            if candidate == allowed.lower():
+                return allowed
+        if candidate in {"product", "productflow"}:
+            return "Product flow"
+        if candidate in {"elementary", "elementaryflow"}:
+            return "Elementary flow"
+        if candidate in {"waste", "wasteflow"}:
+            return "Waste flow"
+        return None
+
+    def _heuristic_infer(self, context: Mapping[str, Any]) -> str:
+        exchange = context.get("exchange", {})
+        hints = context.get("flow_search_hints", {})
+        direction = _coerce_text(exchange.get("direction")).lower()
+        text_parts = [
+            _coerce_text(exchange.get("name")),
+            _coerce_text(exchange.get("general_comment")),
+            " ".join(exchange.get("classification_path", [])),
+            " ".join(exchange.get("tags", [])),
+        ]
+        hint_fragments: list[str] = []
+        if isinstance(hints, Mapping):
+            for values in hints.values():
+                if isinstance(values, list):
+                    hint_fragments.extend([_coerce_text(value) for value in values])
+        text_parts.append(" ".join(fragment for fragment in hint_fragments if fragment))
+        combined = " ".join(part for part in text_parts if part).lower()
+
+        if any(keyword in combined for keyword in self.ELEMENTARY_KEYWORDS):
+            return "Elementary flow"
+        if "waste" in combined or any(keyword in combined for keyword in self.WASTE_KEYWORDS):
+            return "Waste flow"
+        if direction == "input" and any(term in combined for term in (" ambient air", "air", "water extraction", "surface water", "groundwater", "raw water", "ore", "crude")):
+            return "Elementary flow"
+        if direction == "output" and "slag" in combined:
+            return "Waste flow"
+        return "Product flow"
+
+
+class FlowProductCategorySelector:
+    """Select the most specific product category path using LLM-guided traversal."""
+
+    STOP_CHOICES = {"stop", "none", "n/a", "na", "null", "skip"}
+    PROMPT = (
+        "You are helping to classify a life cycle assessment product flow into Tiangong's "
+        "product category hierarchy. Each step provides the exchange context, any categories "
+        "selected so far, and the direct children available at the current level.\n\n"
+        "Return strict JSON with keys:\n"
+        "- `choice`: the code of the selected option (must match one of the provided `options.code`) "
+        "or `STOP` if none fit.\n"
+        "- `reason`: short explanation of the selection.\n\n"
+        "Prefer the most specific child that aligns with the exchange name, hints, and candidate data. "
+        'If no option is appropriate, respond with `choice: "STOP"`.'
+    )
+
+    def __init__(
+        self,
+        llm: LanguageModelProtocol | None = None,
+        *,
+        script_path: Path | None = None,
+        max_depth: int = 6,
+    ) -> None:
+        self._llm = llm
+        self._script_path = Path(script_path) if script_path else PRODUCT_CATEGORY_SCRIPT
+        self._max_depth = max(1, max_depth)
+        self._cache: dict[str, list[tuple[str, str]]] = {}
+        self._script_available = self._script_path.exists()
+        if not self._script_available:
+            LOGGER.warning("flow_publish.product_category_script_missing", path=str(self._script_path))
+
+    def select_path(
+        self,
+        exchange: Mapping[str, Any],
+        hints: Mapping[str, list[str] | str],
+    ) -> list[tuple[str, str]]:
+        context = _compose_flow_context(exchange, hints)
+        path: list[tuple[str, str]] = []
+        current_code: str | None = None
+        for depth in range(self._max_depth):
+            options = self._list_children(current_code)
+            if not options:
+                break
+            choice = self._choose_option(context, path, options)
+            if not choice:
+                break
+            match = next((item for item in options if item[0].lower() == choice.lower()), None)
+            if not match:
+                LOGGER.warning(
+                    "flow_publish.product_category_invalid_choice",
+                    choice=choice,
+                    options=[code for code, _ in options],
+                )
+                break
+            path.append(match)
+            current_code = match[0]
+        return path
+
+    def _list_children(self, code: str | None) -> list[tuple[str, str]]:
+        key = code or "__root__"
+        if key in self._cache:
+            return self._cache[key]
+        if not self._script_available:
+            self._cache[key] = []
+            return []
+
+        args = [sys.executable, str(self._script_path)]
+        if code:
+            args.append(code)
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, check=False)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning("flow_publish.product_category_call_failed", code=code, error=str(exc))
+            children: list[tuple[str, str]] = []
+        else:
+            if result.returncode != 0:
+                LOGGER.warning(
+                    "flow_publish.product_category_script_error",
+                    code=code,
+                    stderr=result.stderr.strip(),
+                )
+                children = []
+            else:
+                children = []
+                for raw_line in result.stdout.splitlines():
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if "\t" in line:
+                        cat_code, desc = line.split("\t", 1)
+                    else:
+                        parts = line.split(None, 1)
+                        cat_code = parts[0]
+                        desc = parts[1] if len(parts) > 1 else ""
+                    cat_code = cat_code.strip()
+                    desc = desc.strip()
+                    if cat_code:
+                        children.append((cat_code, desc))
+        self._cache[key] = children
+        return children
+
+    def _choose_option(
+        self,
+        context: Mapping[str, Any],
+        path: list[tuple[str, str]],
+        options: list[tuple[str, str]],
+    ) -> str | None:
+        if self._llm is not None:
+            try:
+                response = self._llm.invoke(
+                    {
+                        "prompt": self.PROMPT,
+                        "context": {
+                            "exchange_context": context,
+                            "selected_path": self._path_payload(path),
+                            "options": self._options_payload(options),
+                        },
+                        "response_format": {"type": "json_object"},
+                    }
+                )
+                data = _ensure_mapping_response(response)
+                choice = self._extract_choice(data, options)
+                if choice:
+                    return choice
+            except Exception as exc:  # pylint: disable=broad-except
+                LOGGER.warning("flow_publish.product_category_llm_failed", error=str(exc))
+        return self._heuristic_option(context, options)
+
+    def _extract_choice(self, data: Mapping[str, Any], options: list[tuple[str, str]]) -> str | None:
+        raw_choice = _coerce_text(data.get("choice") or data.get("code") or data.get("class_id"))
+        if not raw_choice:
+            return None
+        candidate = raw_choice.split()[0].strip()
+        cleaned = candidate.rstrip(".")
+        normalized = cleaned.lower()
+        if normalized in self.STOP_CHOICES:
+            return None
+        for code, _ in options:
+            if normalized == code.lower():
+                return code
+        for code, description in options:
+            if normalized and normalized in description.lower():
+                return code
+        return None
+
+    def _heuristic_option(self, context: Mapping[str, Any], options: list[tuple[str, str]]) -> str | None:
+        if not options:
+            return None
+        exchange = context.get("exchange", {})
+        hints = context.get("flow_search_hints", {})
+        fragments: list[str] = [
+            _coerce_text(exchange.get("name")),
+            _coerce_text(exchange.get("general_comment")),
+        ]
+        fragments.extend(exchange.get("tags", []))
+        if isinstance(hints, Mapping):
+            for values in hints.values():
+                if isinstance(values, list):
+                    fragments.extend(values)
+        haystack = " ".join(fragment for fragment in fragments if fragment).lower()
+        if not haystack:
+            return None
+
+        best_code: str | None = None
+        best_score = 0.0
+        for code, desc in options:
+            desc_lower = desc.lower()
+            score = 0.0
+            if desc_lower and desc_lower in haystack:
+                score += 3.0
+            if "electric" in desc_lower and "electric" in haystack:
+                score += 2.5
+            if code.lower() in haystack:
+                score += 1.0
+            if "transport" in desc_lower and "transport" in haystack:
+                score += 1.5
+            if score > best_score:
+                best_score = score
+                best_code = code
+        return best_code
+
+    @staticmethod
+    def _options_payload(options: list[tuple[str, str]]) -> list[dict[str, str]]:
+        return [{"code": code, "description": desc} for code, desc in options]
+
+    @staticmethod
+    def _path_payload(path: list[tuple[str, str]]) -> list[dict[str, str]]:
+        return [{"code": code, "description": desc} for code, desc in path]
+
+
+def _infer_flow_type(
+    exchange: Mapping[str, Any],
+    hints: Mapping[str, list[str] | str],
+    *,
+    classifier: FlowTypeClassifier | None = None,
+    llm: LanguageModelProtocol | None = None,
+) -> str:
+    engine = classifier or FlowTypeClassifier(llm)
+    return engine.infer(exchange, hints)
+
+
+def _classification_from_path(path: Sequence[tuple[str, str]]) -> dict[str, Any]:
+    classes = [
+        {
+            "@level": str(index),
+            "@classId": code,
+            "#text": description,
+        }
+        for index, (code, description) in enumerate(path)
+    ]
+    if not classes:
+        return _default_product_classification()
+    return {"common:classification": {"common:class": classes}}
+
+
+def _default_product_classification() -> dict[str, Any]:
+    return {
+        "common:classification": {
+            "common:class": [
+                {
+                    "@level": "0",
+                    "@classId": "1",
+                    "#text": "Ores and minerals; electricity, gas and water",
+                }
+            ]
+        }
+    }
 
 
 def _derive_language_pairs(hints: Mapping[str, list[str] | str], fallback: str) -> tuple[str, str]:
@@ -107,23 +592,6 @@ def _require_uuid(value: Any, dataset_kind: str) -> str:
     return uuid_value
 
 
-def _infer_flow_type(exchange: Mapping[str, Any], hints: Mapping[str, list[str] | str]) -> str:
-    name = _coerce_text(exchange.get("exchangeName"))
-    direction = _coerce_text(exchange.get("exchangeDirection")).lower()
-    text_parts = [
-        _coerce_text(exchange.get("generalComment")),
-        _coerce_text(hints.get("usage_context")),
-        _coerce_text(hints.get("state_purity")),
-        name.lower(),
-    ]
-    text = " ".join(text_parts).lower()
-    if any(keyword in text for keyword in ("emission", "flue gas", "to air", "to water", "wastewater", "effluent")):
-        return "Elementary flow"
-    if "waste" in text or direction == "output" and "slag" in text:
-        return "Waste flow"
-    return "Product flow"
-
-
 def _build_elementary_classification(hints: Mapping[str, list[str] | str]) -> dict[str, Any]:
     usage = _coerce_text(hints.get("usage_context"))
     usage_lower = usage.lower()
@@ -139,20 +607,6 @@ def _build_elementary_classification(hints: Mapping[str, list[str] | str]) -> di
     for level, label in enumerate(path):
         categories.append({"@level": str(level), "#text": label})
     return {"common:elementaryFlowCategorization": {"common:category": categories}}
-
-
-def _build_product_classification() -> dict[str, Any]:
-    return {
-        "common:classification": {
-            "common:class": [
-                {
-                    "@level": "0",
-                    "@classId": "1",
-                    "#text": "Ores and minerals; electricity, gas and water",
-                }
-            ]
-        }
-    }
 
 
 def _extract_general_comment(exchange: Mapping[str, Any]) -> str:
@@ -329,6 +783,9 @@ class FlowPublisher:
         flow_property_registry: FlowPropertyRegistry | None = None,
         default_flow_property_uuid: str | None = None,
         flow_property_overrides: Mapping[tuple[str | None, str], FlowPropertyOverride] | None = None,
+        llm: LanguageModelProtocol | None = None,
+        flow_type_classifier: FlowTypeClassifier | None = None,
+        product_category_selector: FlowProductCategorySelector | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._crud = crud_client or DatabaseCrudClient(self._settings)
@@ -336,6 +793,8 @@ class FlowPublisher:
         self._registry = flow_property_registry or get_default_registry()
         self._default_flow_property_uuid = self._resolve_default_property(default_flow_property_uuid)
         self._overrides = dict(flow_property_overrides or {})
+        self._flow_type_classifier = flow_type_classifier or FlowTypeClassifier(llm)
+        self._product_category_selector = product_category_selector or FlowProductCategorySelector(llm)
         self._prepared: list[FlowPublishPlan] = []
 
     def _resolve_default_property(self, requested: str | None) -> str:
@@ -524,7 +983,7 @@ class FlowPublisher:
         exchange_name = _coerce_text(exchange.get("exchangeName")) or "Unnamed exchange"
         comment = _extract_general_comment(exchange)
         hints = _parse_flowsearch_hints(comment)
-        flow_type = _infer_flow_type(exchange, hints)
+        flow_type = _infer_flow_type(exchange, hints, classifier=self._flow_type_classifier)
         if flow_type == "Elementary flow":
             LOGGER.warning(
                 "flow_publish.skip_elementary",
@@ -537,7 +996,7 @@ class FlowPublisher:
         uuid_value = self._resolve_flow_uuid(candidate, existing_ref)
         version = self._resolve_flow_version(candidate, existing_ref, mode)
         en_name, zh_name = self._resolve_language_pairs(candidate, hints, exchange_name)
-        classification = self._resolve_classification(flow_type, hints, candidate)
+        classification = self._resolve_classification(flow_type, hints, candidate, exchange)
         comment_entries = self._resolve_comments(comment, candidate, exchange_name)
         flow_property_block = self._registry.build_flow_property_block(
             property_uuid,
@@ -626,11 +1085,12 @@ class FlowPublisher:
         en_name, zh_name = _derive_language_pairs(hints, base)
         return en_name, zh_name
 
-    @staticmethod
     def _resolve_classification(
+        self,
         flow_type: str,
         hints: Mapping[str, list[str] | str],
         candidate: Mapping[str, Any] | None,
+        exchange: Mapping[str, Any],
     ) -> dict[str, Any]:
         if flow_type == "Elementary flow":
             return _build_elementary_classification(hints)
@@ -651,9 +1111,18 @@ class FlowPublisher:
                 classes.append(class_entry)
             if classes:
                 return {"common:classification": {"common:class": classes}}
-        if flow_type == "Waste flow":
-            return _build_product_classification()
-        return _build_product_classification()
+        if flow_type != "Product flow":
+            return _default_product_classification()
+        path: list[tuple[str, str]] = []
+        try:
+            path = self._product_category_selector.select_path(exchange, hints)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning("flow_publish.product_category_select_failed", error=str(exc))
+            path = []
+        if path:
+            return _classification_from_path(path)
+        LOGGER.debug("flow_publish.product_category_fallback", reason="no_path_selected")
+        return _default_product_classification()
 
     @staticmethod
     def _resolve_comments(comment: str, candidate: Mapping[str, Any] | None, exchange_name: str) -> list[dict[str, Any]]:

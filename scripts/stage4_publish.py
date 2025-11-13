@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - executed when run as CLI
 
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.publishing import FlowPropertyOverride, FlowPublisher, ProcessPublisher
+from tiangong_lca_spec.workflow.artifacts import build_export_filename, resolve_dataset_version
 
 LOGGER = get_logger(__name__)
 
@@ -365,7 +366,9 @@ def main() -> None:
                 continue
             uuid_value = _coerce_text(ilcd.get("processInformation", {}).get("dataSetInformation", {}).get("common:UUID"))
             if uuid_value:
-                export_path = exports_root / f"{uuid_value}.json"
+                dataset_version = resolve_dataset_version(ilcd)
+                export_filename = build_export_filename(uuid_value, dataset_version)
+                export_path = exports_root / export_filename
                 if export_path.exists():
                     export_payload = _load_json(export_path)
                     export_dataset = export_payload.get("processDataSet")
