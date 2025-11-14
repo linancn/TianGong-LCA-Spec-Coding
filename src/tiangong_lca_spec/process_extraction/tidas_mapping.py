@@ -102,7 +102,7 @@ def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, An
 def _apply_root_metadata(process_dataset: dict[str, Any]) -> dict[str, Any]:
     dataset = deepcopy(process_dataset if isinstance(process_dataset, dict) else {})
     for key, value in BASE_METADATA.items():
-        dataset.setdefault(key, value)
+        dataset[key] = value
     return dataset
 
 
