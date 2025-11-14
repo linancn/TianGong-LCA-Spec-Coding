@@ -23,6 +23,9 @@ from _workflow_common import (
 )
 
 from tiangong_lca_spec.flow_alignment import FlowAlignmentService
+from tiangong_lca_spec.tidas.process_classification_registry import (
+    ensure_valid_classification_path,
+)
 from tiangong_lca_spec.workflow.artifacts import (
     DEFAULT_FORMAT_SOURCE_UUID,
     generate_artifacts,
@@ -56,13 +59,17 @@ def _read_process_blocks(path: Path) -> list[dict[str, Any]]:
             raise SystemExit(f"Process block #{index} must be an object: {path}")
         if "processDataSet" not in block:
             raise SystemExit(
-                "Each process block must contain 'processDataSet'. Stage 2 now writes " "normalised exchanges directly inside the dataset; legacy 'exchange_list' " "is no longer emitted."
+                "Each process block must contain 'processDataSet'. Stage 2 now writes "
+                "normalised exchanges directly inside the dataset; legacy 'exchange_list' "
+                "is no longer emitted."
             )
         if "exchange_list" in block and block["exchange_list"]:
             print(
-                "stage3_align_flows: ignoring legacy 'exchange_list' data; use " "'processDataSet.exchanges' instead.",
+                "stage3_align_flows: ignoring legacy 'exchange_list' data; use "
+                "'processDataSet.exchanges' instead.",
                 file=sys.stderr,
             )
+        _validate_classification(block["processDataSet"], index, path)
     return blocks
 
 
@@ -78,6 +85,41 @@ def _read_clean_text(path: Path) -> str:
             raise SystemExit(f"'clean_text' must be a string in {path}")
         return value
     raise SystemExit((f"Unexpected clean text format in {path}; expected plain markdown or JSON " "with 'clean_text'."))
+
+
+def _validate_classification(dataset: dict[str, Any], index: int, source_path: Path) -> None:
+    process_info = dataset.get("processInformation")
+    if not isinstance(process_info, dict):
+        raise SystemExit(
+            f"Process block #{index} in {source_path} is missing 'processInformation', unable to validate classification."
+        )
+    data_info = process_info.get("dataSetInformation")
+    if not isinstance(data_info, dict):
+        raise SystemExit(
+            f"Process block #{index} in {source_path} is missing 'dataSetInformation', unable to validate classification."
+        )
+    classification_info = data_info.get("classificationInformation")
+    if not isinstance(classification_info, dict):
+        raise SystemExit(
+            f"Process block #{index} in {source_path} is missing 'classificationInformation', unable to validate classification."
+        )
+    classification_container = classification_info.get("common:classification")
+    if not isinstance(classification_container, dict):
+        raise SystemExit(
+            f"Process block #{index} in {source_path} must include 'common:classification'."
+        )
+    classes = classification_container.get("common:class")
+    if not isinstance(classes, list) or not classes:
+        raise SystemExit(
+            f"Process block #{index} in {source_path} must include a non-empty classification path."
+        )
+    try:
+        normalised = ensure_valid_classification_path(tuple(classes))
+    except ValueError as exc:
+        raise SystemExit(
+            f"Process block #{index} in {source_path} has invalid classification data: {exc}"
+        ) from exc
+    classification_container["common:class"] = normalised
 
 
 def _maybe_create_llm(path: Path | None) -> OpenAIResponsesLLM | None:

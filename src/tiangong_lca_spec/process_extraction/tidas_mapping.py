@@ -11,8 +11,12 @@ from typing import Any
 from uuid import uuid4
 
 from tiangong_lca_spec.core.constants import build_dataset_format_reference
+from tiangong_lca_spec.core.exceptions import ProcessExtractionError
 from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
 from tiangong_lca_spec.tidas import get_schema_repository
+from tiangong_lca_spec.tidas.process_classification_registry import (
+    ensure_valid_classification_path,
+)
 
 BASE_METADATA = {
     "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
@@ -211,26 +215,33 @@ def _normalise_dataset_information(
 
     classes = classification_info.get("common:classification", {}).get("common:class")
     if isinstance(classes, list):
-        normalised_classes: list[dict[str, Any]] = []
+        collected_entries: list[dict[str, Any]] = []
         for index, entry in enumerate(classes):
             if index >= 4:
                 break
             if not isinstance(entry, dict):
                 continue
-            class_id = entry.get("@classId") or entry.get("classId") or f"UNSPEC-{index}"
-            level = entry.get("@level") or entry.get("level") or index
-            text_value = entry.get("#text") or entry.get("text") or entry.get("@text") or class_id
-            text_value = _strip_class_code_prefix(_stringify(text_value))
-            normalised_classes.append(
+            class_id = entry.get("@classId") or entry.get("classId") or entry.get("id") or ""
+            level = entry.get("@level") or entry.get("level") or entry.get("lvl") or ""
+            text_value = (
+                entry.get("#text")
+                or entry.get("text")
+                or entry.get("@text")
+                or entry.get("label")
+                or entry.get("name")
+                or class_id
+            )
+            collected_entries.append(
                 {
-                    "@level": str(level),
-                    "@classId": str(class_id),
-                    "#text": _stringify(text_value),
+                    "@level": str(level).strip(),
+                    "@classId": str(class_id).strip(),
+                    "#text": _strip_class_code_prefix(_stringify(text_value)),
                 }
             )
-        for entry in normalised_classes:
-            entry.pop("text", None)
-            entry.pop("@text", None)
+        try:
+            normalised_classes = ensure_valid_classification_path(tuple(collected_entries))
+        except ValueError as exc:
+            raise ProcessExtractionError(f"Invalid process classification path: {exc}") from exc
         classification_info.setdefault("common:classification", {})["common:class"] = normalised_classes
     if specification_text:
         classification_info.setdefault("common:classification", {}).setdefault("common:other", specification_text)
