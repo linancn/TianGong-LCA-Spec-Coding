@@ -143,6 +143,7 @@ class WorkflowResult:
   - 若 LLM 未返回 `processDataSets` / `processDataSet`，抛出 `ProcessExtractionError`。
   - 表格字段需统一换算到易于对齐的基础单位（例如 t→kg、Nm³ 保持立方米、体积按密度说明假设），并在 `generalComment` 中标注换算逻辑。
   - `finalize` 通过 `build_tidas_process_dataset` 补齐 ILCD/TIDAS 必填字段，产出仅含 `processDataSet`（附 `process_id` 等元数据）的流程块；Stage 2 不再返回旧版 `exchange_list` 缓存。
+  - **禁止** 在 Stage 2 输出中写入 ILCD 根级元数据（`@xmlns`、`@xmlns:common`、`@xmlns:xsi`、`@xsi:schemaLocation`、`@version`、`@locations` 等）；这些字段由 Stage 3/TIDAS 归一化器统一注入，任何上游自带值都会被覆盖。
 - LLM 输出校验清单：
   1. 顶层必须是 `processDataSets` 数组；
   2. 每个流程需包含 `processInformation.dataSetInformation.name` 中的四个子字段：`baseName`、`treatmentStandardsRoutes`、`mixAndLocationTypes`、`functionalUnitFlowProperties`；

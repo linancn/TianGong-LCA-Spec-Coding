@@ -144,6 +144,7 @@ class WorkflowResult:
   - If the LLM does not return `processDataSets`/`processDataSet`, raise `ProcessExtractionError`.
   - Normalize table fields to alignment-friendly base units (e.g., convert t→kg, keep Nm³ as cubic meters, and describe density-based assumptions for volume) and document the conversion logic in `generalComment`.
   - `finalize` calls `build_tidas_process_dataset` to populate required ILCD/TIDAS fields, producing process blocks that contain only `processDataSet` (with meta fields such as `process_id`); Stage 2 no longer returns the legacy `exchange_list` cache.
+  - Do **not** emit ILCD root metadata (`@xmlns`, `@xmlns:common`, `@xmlns:xsi`, `@xsi:schemaLocation`, `@version`, `@locations`, etc.) in Stage 2 outputs; the Stage 3/TIDAS normaliser injects the canonical values and will overwrite any upstream attempts.
 - LLM output validation checklist:
   1. The top level must be a `processDataSets` array.
   2. Each process needs the four subfields under `processInformation.dataSetInformation.name`: `baseName`, `treatmentStandardsRoutes`, `mixAndLocationTypes`, `functionalUnitFlowProperties`.
