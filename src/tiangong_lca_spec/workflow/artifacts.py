@@ -19,6 +19,7 @@ from tiangong_lca_spec.core.constants import (
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.models import FlowCandidate, ProcessDataset
 from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
+from tiangong_lca_spec.flow_alignment.selector import LanguageModelProtocol
 from tiangong_lca_spec.process_extraction.merge import merge_results
 from tiangong_lca_spec.process_extraction.tidas_mapping import ILCD_ENTRY_LEVEL_REFERENCE_ID
 from tiangong_lca_spec.tidas_validation import TidasValidationService
@@ -50,6 +51,19 @@ REQUIRED_FLOW_HINT_FIELDS: tuple[str, ...] = (
 OPTIONAL_FLOW_HINT_FIELDS: tuple[str, ...] = ("formula_or_CAS",)
 
 FLOW_HINT_FIELDS: tuple[str, ...] = REQUIRED_FLOW_HINT_FIELDS + OPTIONAL_FLOW_HINT_FIELDS
+
+FLOW_COMMENT_SYSTEM_PROMPT = (
+    "You are producing an FTMultiLang entry for ILCD `common:generalComment`.\n"
+    "Input JSON contains only baseName, treatmentStandardsRoutes, mixAndLocationTypes, "
+    "flowProperties, synonyms_en, and synonyms_zh.\n"
+    "Return a single English paragraph following this structure: (1) flow definition and identity, "
+    "(2) typical application context in LCA/LCI, (3) differentiation from similar flows, "
+    "(4) key properties or classification notes, (5) usage considerations or warnings.\n"
+    "Write in third person, present tense, objective and factual tone. No bullet lists, no field=value recitations, no Markdown.\n"
+    "Do not copy the JSON literally or restate the FlowSearch hints template. Mention Chinese aliases only if needed, placing them in parentheses after the English term.\n"
+    "If information is missing, acknowledge it briefly instead of inventing data.\n"
+    "Return only the paragraph text."
+)
 
 DEFAULT_DATA_SET_VERSION = "01.01.000"
 
@@ -168,6 +182,7 @@ def generate_artifacts(
     format_source_uuid: str = DEFAULT_FORMAT_SOURCE_UUID,
     run_validation: bool = True,
     primary_source_title: str | None = None,
+    comment_llm: LanguageModelProtocol | None = None,
 ) -> ArtifactBuildSummary:
     """Merge aligned results and materialise ILCD artifacts required by downstream tools."""
 
@@ -215,6 +230,7 @@ def generate_artifacts(
             process_name,
             timestamp,
             format_source_uuid,
+            comment_llm,
         )
         if not flow_dataset:
             continue
@@ -389,6 +405,118 @@ def _sanitize_to_english(text: str) -> str:
     sanitized = CJK_CHAR_PATTERN.sub("", sanitized)
     sanitized = re.sub(r"\s+", " ", sanitized)
     return sanitized.strip()
+
+
+def _generate_flow_comment_entries(
+    *,
+    base_name: str | None,
+    treatment: str | None,
+    mix: str | None,
+    flow_properties: str | list[str] | None,
+    en_synonyms: str | list[str] | None,
+    zh_synonyms: str | list[str] | None,
+    fallback_comment: Any,
+    process_name: str,
+    llm: LanguageModelProtocol | None,
+) -> list[dict[str, str]]:
+    payload = {
+        "baseName": _sanitize_to_english(base_name or ""),
+        "treatmentStandardsRoutes": _sanitize_to_english(treatment or ""),
+        "mixAndLocationTypes": _sanitize_to_english(mix or ""),
+        "flowProperties": _semicolon_join(flow_properties),
+        "synonyms_en": _synonym_list(en_synonyms),
+        "synonyms_zh": _synonym_list(zh_synonyms),
+    }
+
+    if llm:
+        generated = _invoke_flow_comment_llm(llm, payload)
+        if generated:
+            return [{"@xml:lang": "en", "#text": generated}]
+
+    return _build_fallback_comment_entries(fallback_comment, process_name)
+
+
+def _invoke_flow_comment_llm(llm: LanguageModelProtocol, payload: Mapping[str, Any]) -> str | None:
+    try:
+        response = llm.invoke({"prompt": FLOW_COMMENT_SYSTEM_PROMPT, "context": payload})
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning("artifact_builder.flow_comment_llm_failed", error=str(exc))
+        return None
+    text = _coerce_llm_text(response)
+    normalized = _normalise_ft_text(text)
+    if not normalized:
+        return None
+    return normalized
+
+
+def _coerce_llm_text(response: Any) -> str:
+    if isinstance(response, str):
+        return response.strip()
+    if isinstance(response, Mapping):
+        for key in ("text", "output", "message", "content"):
+            value = response.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if "choices" in response and isinstance(response["choices"], list):
+            for choice in response["choices"]:
+                if isinstance(choice, Mapping):
+                    message = choice.get("message")
+                    if isinstance(message, Mapping):
+                        content = message.get("content")
+                        if isinstance(content, str) and content.strip():
+                            return content.strip()
+    return str(response or "").strip()
+
+
+def _normalise_ft_text(text: str | None) -> str:
+    if not text:
+        return ""
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    if not collapsed:
+        return ""
+    if len(collapsed) > 600:
+        collapsed = collapsed[:600].rstrip()
+    return collapsed
+
+
+def _build_fallback_comment_entries(raw_comment: Any, process_name: str) -> list[dict[str, str]]:
+    comment_entries = _normalise_language(raw_comment or f"Generated for {process_name}")
+    comment_entries = [
+        entry
+        for entry in comment_entries
+        if isinstance(entry, dict)
+        and (entry.get("@xml:lang") or "en").lower() == "en"
+        and _extract_text(entry.get("#text"))
+    ]
+    sanitized_comments: list[dict[str, str]] = []
+    for entry in comment_entries:
+        text = _sanitize_comment_text(entry.get("#text", ""))
+        if text:
+            sanitized_comments.append(_language_entry(text, entry.get("@xml:lang", "en")))
+    if sanitized_comments:
+        return sanitized_comments
+    fallback_comment = _extract_text(raw_comment)
+    if not fallback_comment or not fallback_comment.isascii():
+        sanitized_name = "".join(ch for ch in process_name if ch.isascii()).strip()
+        fallback_comment = f"Generated for {sanitized_name}" if sanitized_name else "Generated placeholder comment"
+    return [_language_entry(fallback_comment, "en")]
+
+
+def _semicolon_join(value: str | list[str] | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        tokens = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        return "; ".join(tokens)
+    return str(value).strip()
+
+
+def _synonym_list(value: str | list[str] | None) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [token.strip() for token in value if isinstance(token, str) and token.strip()]
+    return [token.strip() for token in value.split(";") if token.strip()]
 
 
 def _normalize_flowsearch_hints(text: str) -> str:
@@ -1050,6 +1178,7 @@ def _build_flow_dataset(
     process_name: str,
     timestamp: str,
     format_source_uuid: str,
+    comment_llm: LanguageModelProtocol | None,
 ) -> tuple[str, dict[str, Any]] | None:
     exchange = _sanitize_exchange_language(exchange)
     ref = exchange.get("referenceToFlowDataSet") or {}
@@ -1094,21 +1223,17 @@ def _build_flow_dataset(
     mix_text = _unique_join(mix_candidates)
     mix_text = _sanitize_to_english(mix_text)
 
-    comment_entries = _normalise_language(exchange.get("generalComment") or f"Generated for {process_name}")
-    comment_entries = [entry for entry in comment_entries if isinstance(entry, dict) and (entry.get("@xml:lang") or "en").lower() == "en" and _extract_text(entry.get("#text"))]
-    sanitized_comments: list[dict[str, str]] = []
-    for entry in comment_entries:
-        text = _sanitize_comment_text(entry.get("#text", ""))
-        if text:
-            sanitized_comments.append(_language_entry(text, entry.get("@xml:lang", "en")))
-    if sanitized_comments:
-        comment_entries = sanitized_comments
-    if not comment_entries:
-        fallback_comment = _extract_text(exchange.get("generalComment"))
-        if not fallback_comment or not fallback_comment.isascii():
-            sanitized_name = "".join(ch for ch in process_name if ch.isascii()).strip()
-            fallback_comment = f"Generated for {sanitized_name}" if sanitized_name else "Generated placeholder comment"
-        comment_entries = [_language_entry(fallback_comment, "en")]
+    comment_entries = _generate_flow_comment_entries(
+        base_name=name,
+        treatment=treatment_text,
+        mix=mix_text,
+        flow_properties=hints.get("flow_properties"),
+        en_synonyms=hints.get("en_synonyms"),
+        zh_synonyms=hints.get("zh_synonyms"),
+        fallback_comment=exchange.get("generalComment"),
+        process_name=process_name,
+        llm=comment_llm,
+    )
     name_block = {
         "baseName": [_language_entry(name, "en")],
         "treatmentStandardsRoutes": [_language_entry(treatment_text or name, "en")],
