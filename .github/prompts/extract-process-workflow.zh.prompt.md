@@ -21,7 +21,20 @@
 - **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 3 制品校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
 - **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
 - **控制交换数量**：Stage 3 的流检索串行执行（`flow_search_max_parallel=1`），每个 `exchange` 都会独立调用 MCP。Stage 2 现要求逐行复刻文献表格——每条原始清单行都要生成独立的 `exchange`（不得合并、平均或省略）。如表格含情景或脚注信息，请完整写入 `generalComment`，以便 Stage 3 能按原始来源逐条对齐。
-- **补充检索线索**：为每个 `exchange` 的 `generalComment` 写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数，这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。高频基础流（`Electricity, medium voltage`、`Water, process`、`Steam, low pressure`、`Oxygen`、`Hydrogen`、`Natural gas, processed` 等）要求至少列出 2~3 个中英文别称或典型描述（如“grid electricity 10–30 kV”“中压电”“technological water”“饱和蒸汽 0.4 MPa”“O₂, CAS 7782-44-7”），并说明状态/纯度/来源。`generalComment` 必须以 `FlowSearch hints:` 开头，并按 `en_synonyms=... | zh_synonyms=... | abbreviation=... | formula_or_CAS=... | state_purity=... | source_or_pathway=... | usage_context=...` 的结构填写，所有字段都要填入可信的双语描述，禁止使用 “NA”/“N/A” 等占位符。若文献未明示，请结合上下文推断（如典型纯度、供应路径）或用严谨语言描述最佳可得信息，再在末尾补充表格引用或换算假设。缺少这些线索时 MCP 往往只返回中文短名或低相似度候选，Stage 3 会落回占位符。
+- **补充检索线索**：为每个 `exchange` 的 `generalComment` 写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数，这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。高频基础流（`Electricity, medium voltage`、`Water, process`、`Steam, low pressure`、`Oxygen`、`Hydrogen`、`Natural gas, processed` 等）必须列出至少 2~3 个中英文别称或典型描述（如 “grid electricity 10–30 kV”“中压电”“technological water”“饱和蒸汽 0.4 MPa”），并写明状态/纯度/来源。`generalComment` 必须以 `FlowSearch hints:` 开头，并严格按照以下顺序填写字段（除 `zh_synonyms` 外所有字段都要优先给出英文）：
+  - `basename=...`：使用行业技术语言准确描述该流的通用名称，先写全称，再根据需要补充常用缩写，在必要时说明形态或等级（例如 气态、颗粒、再生料），避免不必要的地理、时间或定量信息。同一字段内使用逗号分隔描述，不使用分号。优先采用通用俗名，仅当需要时使用复杂化学命名。对排放类流量通常仅需基础名称，除非需要补充定量属性；首次出现缩写需“全称 + 缩写”。示例： “Polypropylene, PP, granulate”“Sulfur dioxide, gaseous”“聚丙烯, PP, 颗粒料”。
+  - `treatment=...`：以逗号连接处理方式、标准、质量属性、用途及工艺路线等限定词。先写处理方式，再写标准或等级，随后补充质量与用途信息。根据需要注明原料来源或路线。写明处理方式（如 热轧、精制、灭菌等）。引用适用标准或等级（如 EN 10025 S355、ASTM D4806 等）。记录关键性能属性（如 抗紫外、食品级）。用途限定清晰表达（如 用于晶圆生产、医用包装）。注明原生或再生来源，以及具体路线（如 再生料、蒸汽裂解路线）。示例：“Hot rolled, EN 10025 S355, primary production route”“精制，符合 ASTM D4806，燃料级乙醇”。
+  - `mix_location=...`：以逗号标注混合类型与交付位置。区分生产混合、消费混合或特定技术。使用“在”表示交割点，“至”表示包含运输至该节点。说明是否为生产混合（多路线平均）或消费混合（包含进出口）。标出交付/可得位置（如 在工厂、在批发、在零售点、至终端消费者）。需要时补充至废物处理设施等描述。若两类信息均不适用，可留空；否则需提供。示例：“生产混合，在工厂”“消费混合，至终端消费者”“特定技术，至批发商”“生产混合，至废物焚烧厂”。用途限定应写在 treatmentStandardsRoutes 字段，避免混淆。
+  - `flow_properties=...`：以逗号列出定量属性，并明确计量基准。列出关键组分含量或能量密度。若计量基准不同于质量分数，需额外说明。量化核心属性（如 45 % Fe、9.6 MJ/kg 净热值）。注明体积分数、摩尔分数或干基等特殊基准。使用 SI 单位或行业惯用单位。按重要性排序。避免重复其他字段已有的信息。示例：“45 % Fe mass/mass”“9.6 MJ/kg net calorific value”“90.5 % methane by volume”。
+  - `en_synonyms=...`：英文同义词/商品名/别名（分号分隔），常见公用工程至少两个条目，避免与 `basename` 重复。
+  - `zh_synonyms=...`：中文同义词/别名（分号分隔），仅记录经过验证的称谓，可包含简体/繁体或常见别名。
+  - `abbreviation=...`：权威缩写或短标签（如 “MV electricity”“NCM622-SiGr”）。
+  - `state_purity=...`：写明物理形态、纯度/等级及关键压力、温度等条件（“AC 10–30 kV, 50 Hz”“Liquid, battery grade, 31–37 wt% HCl”）。
+  - `source_or_pathway=...`：供应/生产路线、原料来源或地理范围，先写英文（如 “Regional grid, CN; Secondary aluminium route”），若需中文解释可在括号中附注。
+  - `usage_context=...`：引用场景（表格编号、工序名称、功能角色），例如 “Input to cathode coating line, Table 3”。
+  - `formula_or_CAS=...`（可选）：填写可用的化学式或 CAS 号。若确无信息，请省略该字段而不是补占位符。
+
+所有必填字段必须写入真实内容，严禁空串或 “NA/N/A”，也不要只在自由备注中描述而让结构化字段留空。若文献未明示，请结合上下文推断（如典型纯度、供应路径）或用严谨语言描述最佳可得信息，再在末尾补充表格引用或换算假设。缺少这些线索时 MCP 往往只返回中文短名或低相似度候选，Stage 3 会落回占位符。
 - **Stage 2 产物自检**：在进入 Stage 3 前抽样查看 `artifacts/<run_id>/cache/stage2_process_blocks.json`，确保每个 `exchange.generalComment` 都包含上述 `FlowSearch hints` 结构、关键同义词与中英对照参数；若发现仍是“Table X”式的简短描述，必须回到 Stage 2 重新生成或手动补写上下文，否则 Stage 3 会因为缺少语义信号导致大量 `unmatched:placeholder`。
 - **规范流名称**：优先采用 Tiangong/ILCD 常用流名，不保留论文里的括号或工艺限定（如 `Electricity for electrolysis (PV)`）。规范名称能显著提高 Stage 3 命中率，减少重复检索与超时。
 - **长耗时命令提前调参**：Stage 2/3 可能超过 15 分钟；在受限环境下先提升命令超时（如外层 CLI 15min 限制）或增加 `.secrets` 中的 `timeout` 字段，避免半途被杀导致反复重跑。

@@ -34,15 +34,22 @@ SOURCE_CLASSIFICATIONS: dict[str, tuple[str, str]] = {
     "other source types": ("6", "Other source types"),
 }
 
-FLOW_HINT_FIELDS: tuple[str, ...] = (
+REQUIRED_FLOW_HINT_FIELDS: tuple[str, ...] = (
+    "basename",
+    "treatment",
+    "mix_location",
+    "flow_properties",
     "en_synonyms",
     "zh_synonyms",
     "abbreviation",
-    "formula_or_CAS",
     "state_purity",
     "source_or_pathway",
     "usage_context",
 )
+
+OPTIONAL_FLOW_HINT_FIELDS: tuple[str, ...] = ("formula_or_CAS",)
+
+FLOW_HINT_FIELDS: tuple[str, ...] = REQUIRED_FLOW_HINT_FIELDS + OPTIONAL_FLOW_HINT_FIELDS
 
 DEFAULT_DATA_SET_VERSION = "01.01.000"
 
