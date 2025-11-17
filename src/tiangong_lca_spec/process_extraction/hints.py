@@ -12,7 +12,11 @@ from typing import Any, Iterable
 from tiangong_lca_spec.core.config import get_settings
 from tiangong_lca_spec.core.logging import get_logger
 
-HINT_FIELDS = (
+REQUIRED_HINT_FIELDS: tuple[str, ...] = (
+    "basename",
+    "treatment",
+    "mix_location",
+    "flow_properties",
     "en_synonyms",
     "zh_synonyms",
     "abbreviation",
@@ -22,9 +26,51 @@ HINT_FIELDS = (
     "usage_context",
 )
 
+OPTIONAL_HINT_FIELDS: tuple[str, ...] = ("formula_or_CAS",)
+
+HINT_FIELDS: tuple[str, ...] = REQUIRED_HINT_FIELDS + OPTIONAL_HINT_FIELDS
+
 LOGGER = get_logger(__name__)
 
 HINT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "basename": (
+        "basename",
+        "baseName",
+        "flow_base_name",
+        "flowBaseName",
+        "flowName",
+        "name",
+    ),
+    "treatment": (
+        "treatment",
+        "treatmentStandardsRoutes",
+        "treatmentStandards",
+        "treatment_routes",
+        "treatmentRoute",
+        "quality",
+        "grade",
+        "intendedUse",
+        "productionRoute",
+    ),
+    "mix_location": (
+        "mix_location",
+        "mixAndLocationTypes",
+        "mixType",
+        "mix",
+        "locationType",
+        "locationDescriptor",
+        "deliveryPoint",
+        "delivery",
+    ),
+    "flow_properties": (
+        "flow_properties",
+        "flowProperties",
+        "properties",
+        "flowPropertyNotes",
+        "composition",
+        "specifications",
+        "attributes",
+    ),
     "en_synonyms": (
         "en_synonyms",
         "enSynonyms",
@@ -253,7 +299,10 @@ def enrich_exchange_hints(
     parsed_fields, notes = _parse_existing_fields(existing_text)
 
     base_name = _stringify(exchange.get("exchangeName"))
-    hints: dict[str, str] = {field: "NA" for field in HINT_FIELDS}
+    hints: dict[str, str] = {field: "" for field in HINT_FIELDS}
+
+    if base_name:
+        hints["basename"] = _merge_field_values(hints.get("basename"), base_name, prefer_new_if_na=True)
 
     catalog_entry = _lookup_catalog_entry(base_name)
     if catalog_entry:
@@ -303,6 +352,9 @@ def _heuristic_hint_candidates(
 ) -> dict[str, list[str] | str]:
     candidates: dict[str, list[str] | str] = {}
 
+    if base_name:
+        candidates["basename"] = [base_name]
+
     en_synonyms = _generate_en_synonyms(base_name)
     en_synonyms.extend(_collect_field_values(exchange, HINT_FIELD_ALIASES["en_synonyms"]))
     if en_synonyms:
@@ -325,8 +377,6 @@ def _heuristic_hint_candidates(
 
     state_purity = _collect_field_values(exchange, HINT_FIELD_ALIASES["state_purity"])
     state_purity.extend(_extract_state_tokens(base_name))
-    if state_purity:
-        candidates["state_purity"] = state_purity
 
     source_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["source_or_pathway"])
     if geography:
@@ -334,9 +384,34 @@ def _heuristic_hint_candidates(
     if source_terms:
         candidates["source_or_pathway"] = source_terms
 
+    if state_purity:
+        candidates["state_purity"] = state_purity
+
+    treatment_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["treatment"])
+    treatment_terms.extend(state_purity)
+    treatment_terms.extend(source_terms)
+    abbreviation_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["abbreviation"])
+    treatment_terms.extend(abbreviation_terms)
+    if treatment_terms:
+        candidates["treatment"] = treatment_terms
+
     usage_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["usage_context"])
     if usage_terms:
         candidates["usage_context"] = usage_terms
+
+    mix_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["mix_location"])
+    mix_terms.extend(usage_terms)
+    location_hint = _stringify(exchange.get("location"))
+    if location_hint:
+        mix_terms.append(location_hint)
+    if geography:
+        mix_terms.append(geography)
+    if mix_terms:
+        candidates["mix_location"] = mix_terms
+
+    flow_property_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["flow_properties"])
+    if flow_property_terms:
+        candidates["flow_properties"] = flow_property_terms
 
     return {field: _deduplicate(values) for field, values in candidates.items()}
 
@@ -449,7 +524,7 @@ def _deduplicate(values: list[str]) -> list[str]:
 
 
 def _format_hints(hints: dict[str, str]) -> str:
-    parts = [f"{field}={_safe_value(hints.get(field))}" for field in HINT_FIELDS]
+    parts = [f"{field}={_safe_value(hints.get(field))}" for field in REQUIRED_HINT_FIELDS]
     return "FlowSearch hints: " + " | ".join(parts)
 
 
@@ -510,7 +585,7 @@ def _merge_field_values(
     existing_items = _normalise_items(existing)
     incoming_items = _normalise_items(incoming)
 
-    if prefer_new_if_na and (not existing_items or existing_items == ["NA"]):
+    if prefer_new_if_na and not existing_items:
         base_items: list[str] = []
     else:
         base_items = existing_items
@@ -524,7 +599,7 @@ def _merge_field_values(
             merged.append(clean)
 
     if not merged:
-        return "NA"
+        return ""
     return "; ".join(merged)
 
 

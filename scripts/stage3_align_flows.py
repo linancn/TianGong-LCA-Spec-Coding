@@ -31,15 +31,22 @@ from tiangong_lca_spec.workflow.artifacts import (
     generate_artifacts,
 )
 
-FLOW_HINT_FIELDS: tuple[str, ...] = (
+REQUIRED_HINT_FIELDS: tuple[str, ...] = (
+    "basename",
+    "treatment",
+    "mix_location",
+    "flow_properties",
     "en_synonyms",
     "zh_synonyms",
     "abbreviation",
-    "formula_or_CAS",
     "state_purity",
     "source_or_pathway",
     "usage_context",
 )
+
+OPTIONAL_HINT_FIELDS: tuple[str, ...] = ("formula_or_CAS",)
+
+FLOW_HINT_FIELDS: tuple[str, ...] = REQUIRED_HINT_FIELDS + OPTIONAL_HINT_FIELDS
 
 _PLACEHOLDER_PATTERN = re.compile(
     r"(?P<field>[a-zA-Z_]+)\s*=\s*(?:N/?A|NA)\s*(?=\||$|[.;])",
@@ -410,10 +417,19 @@ def _find_hint_issues(comment_text: str) -> set[str]:
         field = match.group("field")
         if field in FLOW_HINT_FIELDS:
             issues.add(field)
-    for field in FLOW_HINT_FIELDS:
+    for field in REQUIRED_HINT_FIELDS:
         value = _extract_hint_field_value(comment_text, field)
         if value is None:
             issues.add(field)
+            continue
+        normalized = value.strip()
+        if not normalized:
+            issues.add(field)
+        elif normalized.lower() in {"na", "n/a"}:
+            issues.add(field)
+    for field in OPTIONAL_HINT_FIELDS:
+        value = _extract_hint_field_value(comment_text, field)
+        if value is None:
             continue
         normalized = value.strip()
         if not normalized:

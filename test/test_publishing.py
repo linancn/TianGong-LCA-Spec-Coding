@@ -62,7 +62,21 @@ def _build_alignment_payload():
                         "exchangeName": "Electric power",
                         "exchangeDirection": "Input",
                         "unit": "kWh",
-                        "generalComment": {"#text": ("FlowSearch hints: en_synonyms=Electric power; Grid electricity | " "zh_synonyms=电力 | usage_context=Electricity purchased from grid")},
+                        "generalComment": {
+                            "#text": (
+                                "FlowSearch hints: "
+                                "basename=Electric power supply "
+                                "| treatment=Utility-grade, medium voltage, purchased electricity "
+                                "| mix_location=Consumption mix, at plant "
+                                "| flow_properties=1 kWh reference flow "
+                                "| en_synonyms=Electric power; Grid electricity "
+                                "| zh_synonyms=电力; 电网供电 "
+                                "| abbreviation=MV electricity "
+                                "| state_purity=AC 10-30 kV, 50 Hz "
+                                "| source_or_pathway=Regional grid, CN "
+                                "| usage_context=Input to Sample process for energy supply"
+                            )
+                        },
                         "referenceToFlowDataSet": {"unmatched:placeholder": True},
                     }
                 ]
