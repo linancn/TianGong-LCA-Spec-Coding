@@ -317,6 +317,7 @@ def main() -> None:
         format_source_uuid=args.format_source_uuid,
         run_validation=not args.skip_artifact_validation,
         primary_source_title=_extract_primary_title(clean_text),
+        comment_llm=llm,
     )
 
     print(f"Artifacts exported to {artifact_root} " f"(processes={summary.process_count}, flows={summary.flow_count}, " f"sources={summary.source_count})")
