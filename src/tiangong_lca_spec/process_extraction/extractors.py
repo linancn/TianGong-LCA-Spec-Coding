@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Any, Protocol
 
+from tiangong_lca_spec.core.exceptions import ProcessExtractionError
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.tidas import FieldSummary, get_schema_repository
+from tiangong_lca_spec.tidas.level_hierarchy import HierarchyEntry, get_process_category_navigator
 
 LOGGER = get_logger(__name__)
 
@@ -138,6 +140,41 @@ def _render_schema_details(schema: dict[str, Any] | None, indent: int, seen: set
 
     seen.remove(schema_id)
     return lines
+
+
+def _normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        for key in ("#text", "text", "value"):
+            text = value.get(key)
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+        parts = [_normalize_text(item) for item in value.values() if isinstance(item, (dict, list, str))]
+        return "; ".join(part for part in parts if part)
+    if isinstance(value, list):
+        parts = [_normalize_text(item) for item in value]
+        return "; ".join(part for part in parts if part)
+    return str(value).strip()
+
+
+def _build_process_summary(process_info: dict[str, Any]) -> dict[str, str]:
+    data_info = process_info.get("dataSetInformation", {})
+    name_block = data_info.get("name", {}) if isinstance(data_info.get("name"), dict) else {}
+    summary: dict[str, str] = {}
+    summary["baseName"] = _normalize_text(name_block.get("baseName"))
+    summary["treatmentStandardsRoutes"] = _normalize_text(name_block.get("treatmentStandardsRoutes"))
+    summary["mixAndLocationTypes"] = _normalize_text(name_block.get("mixAndLocationTypes"))
+    summary["functionalUnit"] = _normalize_text(data_info.get("quantitativeReference", {}).get("functionalUnitOrOther"))
+    general_comment = _normalize_text(data_info.get("common:generalComment")) or _normalize_text(process_info.get("common:generalComment"))
+    if general_comment:
+        summary["generalComment"] = _truncate(general_comment, limit=800)
+    summary = {key: value for key, value in summary.items() if value}
+    if not summary:
+        uuid = data_info.get("common:UUID")
+        if isinstance(uuid, str) and uuid.strip():
+            summary["processUUID"] = uuid.strip()
+    return summary or {"note": "Insufficient named attributes; rely on LLM reasoning."}
 
 
 def _format_fields(
@@ -406,12 +443,15 @@ AGGREGATE_SYSTEM_PROMPT = (
     "an empty array. Ensure every qualifying parent mentioned in the document appears exactly once."
 )
 
-CLASSIFICATION_PROMPT = (
-    "Derive the ISIC classification path for the process. Return a JSON array to populate "
-    "`dataSetInformation.classificationInformation.common:classification.common:class`, "
-    "where each object contains '@level' (string), '@classId', and '#text'. Levels should "
-    "progress sequentially from '0'."
+CLASSIFICATION_LEVEL_PROMPT = (
+    "You are selecting level {level} of the Tiangong (ISIC-based) process classification. "
+    "Use `context.process` for the process summary and `context.candidates` for the allowed "
+    "options. Choose exactly one candidate and return JSON with '@level', '@classId', and "
+    "'#text'. The '@classId' MUST be one of the provided candidate codes, and '#text' must "
+    "copy the candidate description verbatim. Do not include explanations or extra fields."
 )
+
+CLASSIFICATION_RETRY_ATTEMPTS = 2
 
 LOCATION_PROMPT = (
     "Normalize the process geography for the schema field "
@@ -473,13 +513,97 @@ class SectionExtractor:
 class ProcessClassifier:
     llm: LanguageModelProtocol
 
+    def __post_init__(self) -> None:
+        self._navigator = get_process_category_navigator()
+        self._max_level = self._navigator.max_level
+
     def run(self, process_info: dict[str, Any]) -> list[dict[str, Any]]:
         LOGGER.info("process_extraction.classification")
-        response = self.llm.invoke({"prompt": CLASSIFICATION_PROMPT, "context": process_info})
-        data = _ensure(response)
-        if isinstance(data, dict):
-            return [data]
-        return list(data)
+        summary = _build_process_summary(process_info)
+        selections: list[dict[str, Any]] = []
+        parent_code: str | None = None
+
+        for level in range(0, self._max_level + 1):
+            candidates = self._navigator.children(parent_code)
+            if not candidates:
+                break
+            selection = self._select_level(level, candidates, summary)
+            if selection is None:
+                if level == 0:
+                    raise ProcessExtractionError("Unable to determine level-0 classification for process.")
+                LOGGER.warning(
+                    "process_extraction.classification_level_fallback",
+                    level=level,
+                    parent=parent_code,
+                )
+                break
+            selections.append(selection)
+            parent_code = selection["@classId"]
+        return selections
+
+    def _select_level(
+        self,
+        level: int,
+        candidates: list[HierarchyEntry],
+        summary: dict[str, str],
+    ) -> dict[str, Any] | None:
+        candidate_codes = {entry.code for entry in candidates}
+        code_to_description = {entry.code: entry.description for entry in candidates}
+        context = {
+            "process": summary,
+            "candidates": [
+                {
+                    "code": entry.code,
+                    "description": entry.description,
+                    "level": entry.level,
+                }
+                for entry in candidates
+            ],
+        }
+        payload = {
+            "prompt": CLASSIFICATION_LEVEL_PROMPT.format(level=level),
+            "context": context,
+            "response_format": {"type": "json_object"},
+        }
+        for attempt in range(CLASSIFICATION_RETRY_ATTEMPTS):
+            response = self.llm.invoke(payload)
+            selection = self._parse_selection(response, level, candidate_codes, code_to_description)
+            if selection:
+                return selection
+            LOGGER.warning(
+                "process_extraction.classification_retry",
+                level=level,
+                attempt=attempt + 1,
+            )
+        return None
+
+    def _parse_selection(
+        self,
+        response: Any,
+        level: int,
+        allowed_codes: set[str],
+        descriptions: dict[str, str],
+    ) -> dict[str, Any] | None:
+        try:
+            data = _ensure_dict(response)
+        except ValueError:
+            return None
+        raw_code = data.get("@classId") or data.get("classId") or data.get("code")
+        class_id = str(raw_code).strip() if raw_code is not None else ""
+        if class_id not in allowed_codes:
+            return None
+        description = (
+            data.get("#text")
+            or data.get("description")
+            or descriptions.get(class_id)
+            or ""
+        )
+        description = description.strip() or descriptions.get(class_id, "")
+        return {
+            "@level": str(level),
+            "@classId": class_id,
+            "#text": description,
+        }
 
 
 @dataclass
