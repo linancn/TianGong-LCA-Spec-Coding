@@ -4,7 +4,7 @@
 
 流程抽取工作流的角色划分如下：
 - **Stage 1（预处理）**：解析原始论文/资料，输出结构化 `clean_text` 供后续调用。
-- **Stage 2（流程生成）**：Codex 驱动 LLM 提取流程块，补充 `FlowSearch hints` 与换算假设，是后续对齐的基础资料。
+- **Stage 2（流程生成）**：Codex 驱动 LLM 提取流程块，并在 **每个 `exchanges.exchange` 中直接生成合规的 `flowHints` 结构**（含 basename、treatment、mix_location、source_or_pathway 等字段），不可依赖 Stage 3 的兜底修正。
 - **Stage 3（流对齐与制品导出）**：结合 MCP 检索结果与人工上下文，确认每个交换量的标准流，并进一步合并结果、生成 `artifacts/<run_id>/exports/` 下的 ILCD 制品、执行本地校验，最终汇总 `workflow_result.json`。
 
 每次运行都会在 `artifacts/<run_id>/` 下创建独立目录，`run_id` 为 UTC 时间戳（Stage 1 会打印并写入 `artifacts/.latest_run_id`）。目录结构包含：
@@ -21,7 +21,7 @@
 - **终态 JSON 要求**：最终交付的 `workflow_result.json` 必须基于已通过 Stage 3 制品校验的数据生成，去除调试字段、空结构或临时备注，确保各流程数据集严格符合 schema、内容“干干净净”可直接入库。
 - **MCP 预检一次**：随手写个 5 行 Python（导入 `FlowSearchService` + 构造 `FlowQuery`）测试单个交换量，确认凭据与网络正常，再启动 Stage 3，避免长时间超时才发现配置错误。
 - **控制交换数量**：Stage 3 的流检索串行执行（`flow_search_max_parallel=1`），每个 `exchange` 都会独立调用 MCP。Stage 2 现要求逐行复刻文献表格——每条原始清单行都要生成独立的 `exchange`（不得合并、平均或省略）。如表格含情景或脚注信息，请完整写入 `generalComment`，以便 Stage 3 能按原始来源逐条对齐。
-- **补充检索线索**：为每个 `exchange` 的 `generalComment` 写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数，这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。高频基础流（`Electricity, medium voltage`、`Water, process`、`Steam, low pressure`、`Oxygen`、`Hydrogen`、`Natural gas, processed` 等）必须列出至少 2~3 个中英文别称或典型描述（如 “grid electricity 10–30 kV”“中压电”“technological water”“饱和蒸汽 0.4 MPa”），并写明状态/纯度/来源。`generalComment` 必须以 `FlowSearch hints:` 开头，并严格按照以下顺序填写字段（除 `zh_synonyms` 外所有字段都要优先给出英文）：
+- **补充检索线索**：为每个 `exchange` 的 `flowHints` 对象（同时会序列化到 `generalComment` 中）写入常见同义词（语义近似描述，如“electric power supply”）、别名或缩写（如“COG”“DAC”）、化学式/CAS 号，以及中英文对照的关键参数，这样 FlowSearchService 的多语言同义词扩展能利用更丰富的上下文提升召回率。高频基础流（`Electricity, medium voltage`、`Water, process`、`Steam, low pressure`、`Oxygen`、`Hydrogen`、`Natural gas, processed` 等）必须列出至少 2~3 个中英文别称或典型描述（如 “grid electricity 10–30 kV”“中压电”“technological water”“饱和蒸汽 0.4 MPa”），并写明状态/纯度/来源。`flowHints` / `generalComment` 必须以 `FlowSearch hints:` 顺序输出下列字段（除 `zh_synonyms` 外所有字段都要优先给出英文）：
   - `basename=...`：使用行业技术语言准确描述该流的通用名称，先写全称，再根据需要补充常用缩写，在必要时说明形态或等级（例如 气态、颗粒、再生料），避免不必要的地理、时间或定量信息。同一字段内使用逗号分隔描述，不使用分号。优先采用通用俗名，仅当需要时使用复杂化学命名。对排放类流量通常仅需基础名称，除非需要补充定量属性；首次出现缩写需“全称 + 缩写”。示例： “Polypropylene, PP, granulate”“Sulfur dioxide, gaseous”“聚丙烯, PP, 颗粒料”。
   - `treatment=...`：以逗号连接处理方式、标准、质量属性、用途及工艺路线等限定词。先写处理方式，再写标准或等级，随后补充质量与用途信息。根据需要注明原料来源或路线。写明处理方式（如 热轧、精制、灭菌等）。引用适用标准或等级（如 EN 10025 S355、ASTM D4806 等）。记录关键性能属性（如 抗紫外、食品级）。用途限定清晰表达（如 用于晶圆生产、医用包装）。注明原生或再生来源，以及具体路线（如 再生料、蒸汽裂解路线）。示例：“Hot rolled, EN 10025 S355, primary production route”“精制，符合 ASTM D4806，燃料级乙醇”。
   - `mix_location=...`：以逗号标注混合类型与交付位置。区分生产混合、消费混合或特定技术。使用“在”表示交割点，“至”表示包含运输至该节点。说明是否为生产混合（多路线平均）或消费混合（包含进出口）。标出交付/可得位置（如 在工厂、在批发、在零售点、至终端消费者）。需要时补充至废物处理设施等描述。若两类信息均不适用，可留空；否则需提供。示例：“生产混合，在工厂”“消费混合，至终端消费者”“特定技术，至批发商”“生产混合，至废物焚烧厂”。用途限定应写在 treatmentStandardsRoutes 字段，避免混淆。
@@ -35,7 +35,7 @@
   - `formula_or_CAS=...`（可选）：填写可用的化学式或 CAS 号。若确无信息，请省略该字段而不是补占位符。
 
 所有必填字段必须写入真实内容，严禁空串或 “NA/N/A”，也不要只在自由备注中描述而让结构化字段留空。若文献未明示，请结合上下文推断（如典型纯度、供应路径）或用严谨语言描述最佳可得信息，再在末尾补充表格引用或换算假设。缺少这些线索时 MCP 往往只返回中文短名或低相似度候选，Stage 3 会落回占位符。
-- **Stage 2 产物自检**：在进入 Stage 3 前抽样查看 `artifacts/<run_id>/cache/stage2_process_blocks.json`，确保每个 `exchange.generalComment` 都包含上述 `FlowSearch hints` 结构、关键同义词与中英对照参数；若发现仍是“Table X”式的简短描述，必须回到 Stage 2 重新生成或手动补写上下文，否则 Stage 3 会因为缺少语义信号导致大量 `unmatched:placeholder`。
+- **Stage 2 产物自检**：在进入 Stage 3 前抽样查看 `artifacts/<run_id>/cache/stage2_process_blocks.json`，确保每个 `exchange` 同时具备 `exchangeName` 与 `flowHints` 对象，且字段全部为规范描述（不得是 “Table X”“GLO”“CN”“NA”“LN2” 等占位/缩写）。一旦发现占位符或缺失字段，必须在 Stage 2 直接重新生成或修正，禁止依赖后续阶段兜底。
 - **规范流名称**：优先采用 Tiangong/ILCD 常用流名，不保留论文里的括号或工艺限定（如 `Electricity for electrolysis (PV)`）。规范名称能显著提高 Stage 3 命中率，减少重复检索与超时。
 - **长耗时命令提前调参**：Stage 2/3 可能超过 15 分钟；在受限环境下先提升命令超时（如外层 CLI 15min 限制）或增加 `.secrets` 中的 `timeout` 字段，避免半途被杀导致反复重跑。
 - **限定重试次数**：对同一 LLM/MCP 调用的重试不超过 2 次，且每次调整 prompt 或上下文都要说明理由；若问题持续，转为人工分析并同步用户。
@@ -78,7 +78,7 @@ uv run python scripts/stage4_publish.py --run-id "$RUN_ID" \
 ```
 Stage 3 校验通过后会自动调用上述发布脚本完成入库（全流程无干跑）。若 `artifacts/<run_id>/cache/published.json` 已存在，将默认跳过自动发布；确认需要重新提交时，删除该文件或在 Stage 3 指定 `--force-publish`。
 
-- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与 `FlowSearch hints`（字段要求见 §0），缺项时默认中断（仅可用 `--allow-missing-hints` 放行提示缺失）。当缺少 `exchangeName` 时，会优先从 `FlowSearch hints` 的多语言同义词中自动补足。输出的 `artifacts/<run_id>/cache/stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
+- `stage3_align_flows.py` 若检测到 `.secrets/secrets.toml` 中的 OpenAI 凭据，会自动启用 LLM 评分评估 MCP 返回的 10 个候选；否则退回本地相似度匹配。脚本会在对齐前校验每个交换是否同时具备 `exchangeName` 与完整的 `FlowSearch hints`（字段要求见 §0），缺项即中断，已不再尝试自动补写或猜测。输出的 `artifacts/<run_id>/cache/stage3_alignment.json` 同步携带 `process_id`、`matched_flows`、`unmatched_flows` 与 `origin_exchanges`，并在 CLI 中打印各流程的命中统计。
 - Stage 3 继续复用已有的 ILCD format 数据源（UUID `a97a0155-0234-4b87-b4ce-a45da52f2a40`）以及共享的 ILCD entry-level 合规体系 UUID (`d92a1a12-2545-49e2-a585-55c259997756`)，仅在流程与流数据集中写入这些引用块，不会在 `exports/sources/` 目录重新生成这些共享数据集的本地文件。
 - 所有导出的 ILCD 文件在相对 `@uri` 引用中统一采用带版本号的命名方式：`../processes/{uuid}_{version}.xml`、`../flows/{uuid}_{version}.xml`、`../sources/{uuid}_{version}.xml`，便于下游系统直接定位到具体版本。
 

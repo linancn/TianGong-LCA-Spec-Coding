@@ -111,6 +111,7 @@ SAMPLE_PROCESS_DATASET = {
             {
                 "@dataSetInternalID": "1",
                 "exchangeDirection": "Input",
+                "exchangeName": "Electric energy, medium voltage",
                 "referenceToFlowDataSet": {
                     "@type": "flow data set",
                     "@refObjectId": "00000000-0000-0000-0000-000000000000",
@@ -124,6 +125,22 @@ SAMPLE_PROCESS_DATASET = {
                 "meanAmount": "1.0",
                 "resultingAmount": "1.0",
                 "dataDerivationTypeStatus": "Measured",
+                "flowHints": {
+                    "basename": "Electric energy, medium voltage",
+                    "treatment": "Grid supply, industrial consumer",
+                    "mix_location": "Consumption mix, at plant (CN)",
+                    "flow_properties": "Energy flow, kWh",
+                    "en_synonyms": [
+                        "Electric energy, medium voltage",
+                        "Grid electricity 10-30 kV",
+                    ],
+                    "zh_synonyms": ["中压电力"],
+                    "abbreviation": "EE MV",
+                    "state_purity": "AC 10-30 kV, 50 Hz",
+                    "source_or_pathway": "Regional grid, CN",
+                    "usage_context": "Input to hydrogen production process",
+                    "formula_or_CAS": "Not applicable",
+                },
             }
         ]
     },

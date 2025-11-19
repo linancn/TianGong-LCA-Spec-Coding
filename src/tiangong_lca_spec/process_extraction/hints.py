@@ -1,16 +1,8 @@
-"""Utilities to normalise and enrich FlowSearch hint strings."""
+"""Minimal helpers to serialise FlowSearch hints into ILCD-compatible comments."""
 
 from __future__ import annotations
 
-import json
-import re
-import tomllib
-from functools import lru_cache
-from pathlib import Path
-from typing import Any, Iterable
-
-from tiangong_lca_spec.core.config import get_settings
-from tiangong_lca_spec.core.logging import get_logger
+from typing import Any
 
 REQUIRED_HINT_FIELDS: tuple[str, ...] = (
     "basename",
@@ -20,7 +12,6 @@ REQUIRED_HINT_FIELDS: tuple[str, ...] = (
     "en_synonyms",
     "zh_synonyms",
     "abbreviation",
-    "formula_or_CAS",
     "state_purity",
     "source_or_pathway",
     "usage_context",
@@ -30,501 +21,41 @@ OPTIONAL_HINT_FIELDS: tuple[str, ...] = ("formula_or_CAS",)
 
 HINT_FIELDS: tuple[str, ...] = REQUIRED_HINT_FIELDS + OPTIONAL_HINT_FIELDS
 
-LOGGER = get_logger(__name__)
-
-HINT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    "basename": (
-        "basename",
-        "baseName",
-        "flow_base_name",
-        "flowBaseName",
-        "flowName",
-        "name",
-    ),
-    "treatment": (
-        "treatment",
-        "treatmentStandardsRoutes",
-        "treatmentStandards",
-        "treatment_routes",
-        "treatmentRoute",
-        "quality",
-        "grade",
-        "intendedUse",
-        "productionRoute",
-    ),
-    "mix_location": (
-        "mix_location",
-        "mixAndLocationTypes",
-        "mixType",
-        "mix",
-        "locationType",
-        "locationDescriptor",
-        "deliveryPoint",
-        "delivery",
-    ),
-    "flow_properties": (
-        "flow_properties",
-        "flowProperties",
-        "properties",
-        "flowPropertyNotes",
-        "composition",
-        "specifications",
-        "attributes",
-    ),
-    "en_synonyms": (
-        "en_synonyms",
-        "enSynonyms",
-        "synonyms_en",
-        "synonymsEn",
-        "synonyms",
-        "aliases",
-        "alias",
-        "alternateNames",
-        "alternateName",
-    ),
-    "zh_synonyms": (
-        "zh_synonyms",
-        "zhSynonyms",
-        "synonyms_zh",
-        "synonymsZh",
-        "chinese_synonyms",
-        "chineseSynonyms",
-        "name_zh",
-        "nameZh",
-        "zhName",
-        "nameCN",
-        "cnName",
-    ),
-    "abbreviation": (
-        "abbreviation",
-        "abbreviations",
-        "abbr",
-        "abbrs",
-        "short_name",
-        "shortName",
-        "shortLabel",
-        "alias",
-    ),
-    "formula_or_CAS": (
-        "formula_or_CAS",
-        "formulaOrCas",
-        "formula",
-        "chemicalFormula",
-        "molecularFormula",
-        "cas",
-        "casNumber",
-        "CAS",
-        "identifiers",
-    ),
-    "state_purity": (
-        "state_purity",
-        "statePurity",
-        "state",
-        "phase",
-        "purity",
-        "grade",
-        "quality",
-        "concentration",
-        "specification",
-        "temperature",
-        "pressure",
-    ),
-    "source_or_pathway": (
-        "source_or_pathway",
-        "sourceOrPathway",
-        "source",
-        "pathway",
-        "origin",
-        "supplier",
-        "provenance",
-        "location",
-        "geography",
-        "productionRoute",
-        "technology",
-    ),
-    "usage_context": (
-        "usage_context",
-        "usageContext",
-        "usage",
-        "context",
-        "application",
-        "scenario",
-        "notes",
-    ),
-}
-
-CHINESE_CHAR_PATTERN = re.compile(r"[\u4e00-\u9fff]")
-
-NOTE_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
-    "en_synonyms": (
-        re.compile(r"Synonyms\s*\(EN\)\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"English\s+synonyms\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-    ),
-    "zh_synonyms": (
-        re.compile(r"Synonyms\s*\((?:ZH|CN)\)\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"Chinese\s+synonyms\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-    ),
-    "abbreviation": (
-        re.compile(r"Abbreviation\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"Abbrev\.\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-    ),
-    "formula_or_CAS": (
-        re.compile(r"Formula/CAS\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"Formula\s*(?:or)?\s*CAS\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"CAS\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-    ),
-    "state_purity": (
-        re.compile(r"State\s*/?\s*purity\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"State\s*and\s*purity\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-    ),
-    "source_or_pathway": (
-        re.compile(r"Source\s*/?\s*pathway\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"Source\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"Pathway\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-    ),
-    "usage_context": (
-        re.compile(r"Usage\s*context\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-        re.compile(r"Context\s*:\s*([^.\n。；]+)", flags=re.IGNORECASE),
-    ),
-}
-
-
-def _flow_hint_catalog() -> dict[str, dict[str, list[str] | str]]:
-    return _load_flow_hint_catalog()
-
-
-@lru_cache(maxsize=1)
-def _load_flow_hint_catalog() -> dict[str, dict[str, list[str] | str]]:
-    settings = get_settings()
-    path = settings.flow_hint_catalog_path
-    if not path:
-        return {}
-    path_obj = Path(path)
-    if not path_obj.exists():
-        LOGGER.warning("Flow hint catalogue not found at %s", path_obj)
-        return {}
-    try:
-        raw = _read_catalog_file(path_obj)
-    except Exception as exc:  # noqa: BLE001 - surface parse issues in logs
-        LOGGER.warning("Failed to read flow hint catalogue %s: %s", path_obj, exc)
-        return {}
-    return _normalise_catalog(raw)
-
-
-def _read_catalog_file(path: Path) -> Any:
-    with path.open("rb") as handle:
-        suffix = path.suffix.lower()
-        if suffix in {".json"}:
-            return json.load(handle)
-        if suffix in {".toml"}:
-            return tomllib.load(handle)
-        raise ValueError(f"Unsupported catalogue format: {path.suffix}")
-
-
-def _normalise_catalog(raw: Any) -> dict[str, dict[str, list[str] | str]]:
-    catalogue: dict[str, dict[str, list[str] | str]] = {}
-    items: Iterable[tuple[str | None, Any]]
-    if isinstance(raw, dict):
-        items = raw.items()
-    elif isinstance(raw, list):
-        unpacked = []
-        for entry in raw:
-            if isinstance(entry, dict):
-                flow_name = _stringify(entry.get("flow_name") or entry.get("flowName") or entry.get("flow") or entry.get("name"))
-                unpacked.append((flow_name or None, entry))
-        items = unpacked
-    else:
-        return catalogue
-
-    for key, entry in items:
-        if not isinstance(entry, dict):
-            continue
-        flow_name = _stringify(key) or _stringify(entry.get("flow_name") or entry.get("flowName") or entry.get("flow"))
-        if not flow_name:
-            continue
-        canonical: dict[str, list[str] | str] = {}
-        for field in HINT_FIELDS:
-            values = _collect_field_values(entry, (field,) + HINT_FIELD_ALIASES.get(field, ()))
-            if values:
-                canonical[field] = values
-                continue
-            raw_value = entry.get(field)
-            if raw_value is not None:
-                canonical[field] = _format_field(raw_value)
-        catalogue[flow_name.lower()] = canonical
-    return catalogue
-
-
-def _collect_field_values(source: Any, keys: Iterable[str]) -> list[str]:
-    results: list[str] = []
-    if not isinstance(source, (dict, list)):
-        return results
-    key_set = {key.lower() for key in keys}
-    stack: list[Any] = [source]
-    while stack:
-        current = stack.pop()
-        if isinstance(current, dict):
-            for key, value in current.items():
-                if key.lower() in key_set:
-                    if isinstance(value, dict):
-                        stack.append(value)
-                        continue
-                    if isinstance(value, list):
-                        for item in value:
-                            if isinstance(item, (dict, list)):
-                                stack.append(item)
-                            else:
-                                results.extend(_normalise_items(item))
-                        continue
-                    results.extend(_normalise_items(value))
-                if isinstance(value, (dict, list)):
-                    stack.append(value)
-        elif isinstance(current, list):
-            stack.extend(current)
-    return results
-
 
 def enrich_exchange_hints(
     exchange: dict[str, Any],
     *,
-    process_name: str | None = None,
-    geography: str | None = None,
-) -> None:
-    """Ensure every exchange carries a structured FlowSearch hint block."""
-
-    if not isinstance(exchange, dict):
-        return
+    process_name: str | None = None,  # kept for backward compatibility
+    geography: str | None = None,  # kept for backward compatibility
+) -> dict[str, str]:
+    """Serialise FlowSearch hints into the legacy comment string."""
 
     existing_text = _extract_text(exchange.get("generalComment"))
-    parsed_fields, notes = _parse_existing_fields(existing_text)
-
-    base_name = _stringify(exchange.get("exchangeName"))
-    hints: dict[str, str] = {field: "" for field in HINT_FIELDS}
-
-    if base_name:
-        hints["basename"] = _merge_field_values(hints.get("basename"), base_name, prefer_new_if_na=True)
-
-    catalog_entry = _lookup_catalog_entry(base_name)
-    if catalog_entry:
-        for field, values in catalog_entry.items():
-            hints[field] = _format_field(values)
-
-    note_fields = _extract_note_fields(existing_text)
-    for field, value in note_fields.items():
-        hints[field] = _merge_field_values(hints.get(field), value, prefer_new_if_na=True)
-
-    heuristic = _heuristic_hint_candidates(exchange, base_name, geography)
-    for field, values in heuristic.items():
-        hints[field] = _merge_field_values(hints.get(field), values, prefer_new_if_na=True)
-
-    for field, value in parsed_fields.items():
-        if field in HINT_FIELDS:
-            hints[field] = _merge_field_values(hints.get(field), value)
-
-    if geography:
-        hints["source_or_pathway"] = _merge_field_values(hints.get("source_or_pathway"), geography)
-
-    default_usage = _default_usage_context(exchange, process_name)
-    usage_candidate = parsed_fields.get("usage_context") or default_usage
-    hints["usage_context"] = _merge_field_values(hints.get("usage_context"), usage_candidate, prefer_new_if_na=True)
-
+    hints = _extract_structured_hints(exchange, existing_text)
     formatted = _format_hints(hints)
-    remainder = notes or _strip_hint_prefix(existing_text)
-    if remainder:
-        formatted = f"{formatted}. {remainder}"
-
     exchange["generalComment"] = {"@xml:lang": "en", "#text": formatted}
+    return hints
 
 
-def _lookup_catalog_entry(flow_name: str | None) -> dict[str, list[str] | str] | None:
-    if not flow_name:
-        return None
-    entry = _flow_hint_catalog().get(flow_name.lower())
-    if not entry:
-        return None
-    return {field: value for field, value in entry.items() if field in HINT_FIELDS}
+def _extract_structured_hints(exchange: dict[str, Any], existing_text: str) -> dict[str, str]:
+    flow_hints = exchange.get("flowHints") or exchange.get("hints")
+    if isinstance(flow_hints, dict):
+        return {field: _stringify(flow_hints.get(field, "")) for field in HINT_FIELDS}
 
-
-def _heuristic_hint_candidates(
-    exchange: dict[str, Any],
-    base_name: str | None,
-    geography: str | None,
-) -> dict[str, list[str] | str]:
-    candidates: dict[str, list[str] | str] = {}
-
-    if base_name:
-        candidates["basename"] = [base_name]
-
-    en_synonyms = _generate_en_synonyms(base_name)
-    en_synonyms.extend(_collect_field_values(exchange, HINT_FIELD_ALIASES["en_synonyms"]))
-    if en_synonyms:
-        candidates["en_synonyms"] = en_synonyms
-
-    zh_synonyms = _generate_zh_synonyms(base_name)
-    zh_synonyms.extend(_collect_field_values(exchange, HINT_FIELD_ALIASES["zh_synonyms"]))
-    if zh_synonyms:
-        candidates["zh_synonyms"] = zh_synonyms
-
-    abbreviations = _collect_field_values(exchange, HINT_FIELD_ALIASES["abbreviation"])
-    abbreviations.extend(_derive_abbreviations(base_name))
-    if abbreviations:
-        candidates["abbreviation"] = abbreviations
-
-    formulas = _collect_field_values(exchange, HINT_FIELD_ALIASES["formula_or_CAS"])
-    formulas.extend(_extract_formula_tokens(base_name))
-    if formulas:
-        candidates["formula_or_CAS"] = formulas
-
-    state_purity = _collect_field_values(exchange, HINT_FIELD_ALIASES["state_purity"])
-    state_purity.extend(_extract_state_tokens(base_name))
-
-    source_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["source_or_pathway"])
-    if geography:
-        source_terms.append(geography)
-    if source_terms:
-        candidates["source_or_pathway"] = source_terms
-
-    if state_purity:
-        candidates["state_purity"] = state_purity
-
-    treatment_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["treatment"])
-    treatment_terms.extend(state_purity)
-    treatment_terms.extend(source_terms)
-    abbreviation_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["abbreviation"])
-    treatment_terms.extend(abbreviation_terms)
-    if treatment_terms:
-        candidates["treatment"] = treatment_terms
-
-    usage_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["usage_context"])
-    if usage_terms:
-        candidates["usage_context"] = usage_terms
-
-    mix_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["mix_location"])
-    mix_terms.extend(usage_terms)
-    location_hint = _stringify(exchange.get("location"))
-    if location_hint:
-        mix_terms.append(location_hint)
-    if geography:
-        mix_terms.append(geography)
-    if mix_terms:
-        candidates["mix_location"] = mix_terms
-
-    flow_property_terms = _collect_field_values(exchange, HINT_FIELD_ALIASES["flow_properties"])
-    if flow_property_terms:
-        candidates["flow_properties"] = flow_property_terms
-
-    return {field: _deduplicate(values) for field, values in candidates.items()}
-
-
-def _generate_en_synonyms(flow_name: str | None) -> list[str]:
-    if not flow_name:
-        return []
-    cleaned = flow_name.strip()
-    if not cleaned:
-        return []
-    variants = [cleaned]
-    lower = cleaned.lower()
-    title = cleaned.title()
-    if lower != cleaned:
-        variants.append(lower)
-    if title != cleaned and title != lower:
-        variants.append(title)
-    variants.extend(_split_variants(cleaned, delimiters=("/", "|", ";")))
-    variants.extend(_reorder_comma_phrase(cleaned))
-    variants.extend(_parenthetical_segments(cleaned))
-    return _deduplicate(variants)
-
-
-def _generate_zh_synonyms(flow_name: str | None) -> list[str]:
-    if not flow_name or not CHINESE_CHAR_PATTERN.search(flow_name):
-        return []
-    segments = re.split(r"[、，；;,/|]", flow_name)
-    variants = [segment.strip() for segment in segments if segment.strip()]
-    variants.extend(_parenthetical_segments(flow_name, chinese_only=True))
-    return _deduplicate(variants)
-
-
-def _derive_abbreviations(flow_name: str | None) -> list[str]:
-    if not flow_name:
-        return []
-    candidates = []
-    candidates.extend(_parenthetical_segments(flow_name, min_length=2))
-    uppercase_tokens = re.findall(r"\b[A-Z][A-Z0-9]{1,5}\b", flow_name)
-    candidates.extend(uppercase_tokens)
-    initials = "".join(token[0] for token in re.findall(r"[A-Za-z]+", flow_name))
-    if len(initials) >= 2 and initials.isupper():
-        candidates.append(initials)
-    return _deduplicate(candidates)
-
-
-def _extract_formula_tokens(flow_name: str | None) -> list[str]:
-    if not flow_name:
-        return []
-    candidates = re.findall(r"(?:CAS\s*\d{2,7}-\d{2}-\d)|(?:[A-Z][a-z]?\d{0,3})", flow_name)
-    return _deduplicate(candidates)
-
-
-def _extract_state_tokens(flow_name: str | None) -> list[str]:
-    if not flow_name:
-        return []
-    tokens = []
-    for match in re.findall(r"\b\d+(?:\.\d+)?\s?(?:kV|V|MPa|kPa|°C|K|ppm|%)\b", flow_name):
-        tokens.append(match)
-    qualifiers = re.findall(
-        r"\b(low|medium|high|liquid|gaseous|gas|solid|aqueous|cryogenic|saturated|superheated)\b",
-        flow_name,
-        flags=re.IGNORECASE,
-    )
-    tokens.extend(qualifiers)
-    return _deduplicate(tokens)
-
-
-def _split_variants(text: str, delimiters: tuple[str, ...]) -> list[str]:
-    pattern = "|".join(re.escape(delim) for delim in delimiters)
-    segments = re.split(pattern, text)
-    return [segment.strip() for segment in segments if segment.strip()]
-
-
-def _reorder_comma_phrase(text: str) -> list[str]:
-    parts = [part.strip() for part in text.split(",") if part.strip()]
-    if len(parts) < 2:
-        return []
-    reordered = [" ".join(parts)]
-    reversed_join = " ".join(parts[::-1])
-    if reversed_join not in reordered:
-        reordered.append(reversed_join)
-    return reordered
-
-
-def _parenthetical_segments(text: str, *, chinese_only: bool = False, min_length: int = 1) -> list[str]:
-    segments = []
-    for raw in re.findall(r"\(([^)]+)\)", text):
-        cleaned = raw.strip()
-        if len(cleaned) < min_length:
-            continue
-        if chinese_only and not CHINESE_CHAR_PATTERN.search(cleaned):
-            continue
-        segments.append(cleaned)
-    return segments
-
-
-def _deduplicate(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        item = value.strip()
-        if not item:
-            continue
-        key = item.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(item)
-    return result
+    parsed_fields, _ = _parse_existing_fields(existing_text)
+    if parsed_fields:
+        return {field: parsed_fields.get(field, "") for field in HINT_FIELDS}
+    return {field: "" for field in HINT_FIELDS}
 
 
 def _format_hints(hints: dict[str, str]) -> str:
-    parts = [f"{field}={_safe_value(hints.get(field))}" for field in REQUIRED_HINT_FIELDS]
+    parts: list[str] = []
+    for field in REQUIRED_HINT_FIELDS:
+        parts.append(f"{field}={_safe_value(hints.get(field))}")
+        if field == "abbreviation":
+            optional_value = _safe_value(hints.get("formula_or_CAS"))
+            if optional_value:
+                parts.append(f"formula_or_CAS={optional_value}")
     return "FlowSearch hints: " + " | ".join(parts)
 
 
@@ -576,104 +107,10 @@ def _separate_notes(value: str) -> tuple[str, str]:
     return value.strip(), ""
 
 
-def _merge_field_values(
-    existing: str | None,
-    incoming: str | list[str] | None,
-    *,
-    prefer_new_if_na: bool = False,
-) -> str:
-    existing_items = _normalise_items(existing)
-    incoming_items = _normalise_items(incoming)
-
-    if prefer_new_if_na and not existing_items:
-        base_items: list[str] = []
-    else:
-        base_items = existing_items
-
-    merged: list[str] = []
-    for item in base_items + incoming_items:
-        clean = item.strip()
-        if not clean or clean.lower() == "na":
-            continue
-        if clean not in merged:
-            merged.append(clean)
-
-    if not merged:
-        return ""
-    return "; ".join(merged)
-
-
-def _normalise_items(value: str | list[str] | None) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [item.strip() for item in value if item and str(item).strip()]
-    text = str(value)
-    stripped = text.strip()
-    if not stripped:
-        return []
-    if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
-        return []
-    cleaned = stripped.replace("|", " ")
-    parts = re.split(r"[;,]", cleaned)
-    return [part.strip() for part in parts if part.strip()]
-
-
-def _format_field(value: list[str] | str) -> str:
-    if isinstance(value, list):
-        return "; ".join(item for item in value if item)
-    return str(value)
-
-
-def _default_usage_context(exchange: dict[str, Any], process_name: str | None) -> str:
-    direction = _stringify(exchange.get("exchangeDirection")).lower()
-    flow_name = _stringify(exchange.get("exchangeName")) or "exchange"
-    unit = _stringify(exchange.get("unit"))
-    amount = _stringify(exchange.get("meanAmount"))
-
-    if direction == "input":
-        prefix = "Input to"
-    elif direction == "output":
-        prefix = "Output from"
-    else:
-        prefix = "Exchange in"
-
-    process_segment = f" {process_name}" if process_name else " the process"
-    quantity = f" {amount} {unit}" if amount and unit else ""
-    return f"{prefix}{process_segment} ({flow_name}{quantity})"
-
-
 def _safe_value(value: str | None) -> str:
     if value is None:
         return ""
     return value.strip()
-
-
-def _strip_hint_prefix(text: str | None) -> str:
-    if not text:
-        return ""
-    stripped = text.strip()
-    if not stripped.startswith("FlowSearch hints:"):
-        return stripped
-    _, remainder = _separate_notes(stripped[len("FlowSearch hints:") :].strip())
-    return remainder
-
-
-def _extract_note_fields(text: str | None) -> dict[str, str]:
-    if not text:
-        return {}
-    notes: dict[str, str] = {}
-    for field, patterns in NOTE_FIELD_PATTERNS.items():
-        collected: list[str] = []
-        for pattern in patterns:
-            for match in pattern.findall(text):
-                cleaned = match.strip().rstrip("。.;")
-                if cleaned:
-                    collected.append(cleaned)
-        if collected:
-            merged = _merge_field_values(notes.get(field), "; ".join(_deduplicate(collected)), prefer_new_if_na=True)
-            notes[field] = merged
-    return notes
 
 
 def _extract_text(value: Any) -> str:

@@ -29,6 +29,11 @@ class StaticLLM:
             return {"processDataSet": deepcopy(self._dataset)}
         if prompt.startswith("You are analysing a life cycle assessment document"):
             return {"parentProcesses": []}
+        if prompt.startswith("You are selecting level"):
+            candidates = (payload.get("context") or {}).get("candidates") or []
+            choice = candidates[0]
+            level = choice.get("level", 0)
+            return {"@level": str(level), "@classId": choice.get("code", "C"), "#text": choice.get("description", "")}
         if prompt.startswith("Derive the ISIC classification path"):
             return [
                 {"@level": "0", "@classId": "C", "#text": "Manufacturing"},

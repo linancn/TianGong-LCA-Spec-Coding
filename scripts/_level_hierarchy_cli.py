@@ -51,6 +51,6 @@ def run_cli(argv: List[str], default_schema: Path) -> int:
             print("No codes found.")
         return 0
 
-    for code, desc in children:
-        print(f"{code}\t{desc}")
+    for entry in children:
+        print(f"{entry.code}\t{entry.description}")
     return 0
