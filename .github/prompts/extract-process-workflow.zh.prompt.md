@@ -179,8 +179,9 @@ class WorkflowResult:
 - 集成验证：使用最小论文样例依次执行 `stage1`→`stage3`，核对产物 schema、命中统计与校验报告；如需复核发布负载，可额外手动运行 `stage4_publish`，当前工作流在校验通过后会自动入库。
 - 观测：启用 `configure_logging` JSON 输出并筛选 `flow_alignment.exchange_failed`、`process_extraction.parents_uncovered` 等关键事件，快速定位异常阶段。
 
-## 10. 分类与地理辅助资源
+## 10. 分类与地理辅助资源 
 - `tidas_processes_category.json` (`src/tidas/schemas/tidas_processes_category.json`) 是流程分类的权威来源，覆盖 ISIC 树的各级代码与描述。若 Codex 需要确认分类路径，先使用 `uv run python scripts/list_process_category_children.py <code>` 逐层展开（`<code>` 为空时输出顶层，例如 `uv run python scripts/list_process_category_children.py 01`）。必要时可通过 `tiangong_lca_spec.tidas.get_schema_repository().resolve_with_references("tidas_processes_category.json")` 读取局部节点，再将相关分支文本粘贴到对 Codex 的提问里，帮助其在有限上下文里挑选正确的 `@classId` / `#text`。
+- Stage 2 的分类器已经改为“逐级候选”模式：每一层都会将当前可选的 `code`/`description` 列表（来自上面的 JSON）放进 LLM `context.candidates` 中，并使用提示 `You are selecting level {level}...` 要求模型只返回一个 `{"@level": "...", "@classId": "...", "#text": "..."}`。若你需要手工协助或调试，务必按照同样的方式逐级提供候选，单次对话只决定一层，避免一次性输出整条路径。
 - 地理编码沿用 `tidas_locations_category.json` (`src/tidas/schemas/tidas_locations_category.json`)；用法与上面一致，命令为 `uv run python scripts/list_location_children.py <code>`（例如 `uv run python scripts/list_location_children.py CN` 查看中国内部层级）。在向 Codex 说明地理选项时，同样只摘录与当前流程相关的分支，避免传送整棵树。
 - 若流程涉及流分类，可调用 `uv run python scripts/list_product_flow_category_children.py <code>` 查看产品流分类（数据源 `tidas_flows_product_category.json`），或调用 `uv run python scripts/list_elementary_flow_category_children.py <code>` 查看初级流分类（数据源 `tidas_flows_elementary_category.json`）。
 
