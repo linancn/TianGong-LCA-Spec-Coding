@@ -257,8 +257,6 @@ class FlowAlignmentService:
         return FlowQuery(
             exchange_name=self._safe_exchange_name(exchange),
             description=self._stringify(exchange.get("generalComment") or exchange.get("comment")),
-            process_name=process_name,
-            paper_md=paper_md,
         )
 
     def _build_unmatched_flow(

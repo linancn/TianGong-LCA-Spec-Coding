@@ -11,8 +11,6 @@ from typing import Any, Literal, Mapping
 class FlowQuery:
     exchange_name: str
     description: str | None = None
-    process_name: str | None = None
-    paper_md: str | None = None
 
 
 @dataclass(slots=True)
