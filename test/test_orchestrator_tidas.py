@@ -139,6 +139,18 @@ class FakeLLM:
             return {"processDataSet": deepcopy(SAMPLE_PROCESS_DATASET)}
         if prompt.startswith("You are analysing a life cycle assessment document"):
             return {"parentProcesses": []}
+        if prompt.startswith("You are selecting level"):
+            context = input_data.get("context") or {}
+            candidates = context.get("candidates") or []
+            if not candidates:
+                raise AssertionError("Classification prompt missing candidates")
+            choice = candidates[0]
+            level = choice.get("level", context.get("level", 0))
+            return {
+                "@level": str(level),
+                "@classId": choice.get("code", "C"),
+                "#text": choice.get("description", "Manufacturing"),
+            }
         if "Derive the ISIC classification" in prompt:
             return [
                 {"@level": "0", "@classId": "C", "#text": "Manufacturing"},
