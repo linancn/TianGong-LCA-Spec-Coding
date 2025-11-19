@@ -627,6 +627,24 @@ def _sanitize_language_entry(entry: Any) -> dict[str, Any] | None:
     return None
 
 
+def _truncate_language_entry(entry: dict[str, Any], max_length: int) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        return entry
+    text = entry.get("#text")
+    if not isinstance(text, str):
+        return entry
+    if len(text) <= max_length:
+        return entry
+    truncated = text[:max_length].rstrip()
+    fallback = max(truncated.rfind(". "), truncated.rfind("; "), truncated.rfind(", "), truncated.rfind(" "))
+    if fallback > max_length * 0.6:
+        truncated = truncated[:fallback].rstrip()
+    if not truncated:
+        truncated = text[:max_length].rstrip()
+    entry["#text"] = truncated
+    return entry
+
+
 def _sanitize_matching_detail(detail: dict[str, Any]) -> None:
     for key, value in list(detail.items()):
         if isinstance(value, str):
@@ -783,7 +801,7 @@ def _sanitize_exchange_language(exchange: dict[str, Any]) -> dict[str, Any]:
     else:
         sanitized_comment = _sanitize_language_entry(comment)
     if sanitized_comment:
-        sanitized["generalComment"] = sanitized_comment
+        sanitized["generalComment"] = _truncate_language_entry(sanitized_comment, 500)
     else:
         sanitized.pop("generalComment", None)
     reference = sanitized.get("referenceToFlowDataSet")
@@ -889,6 +907,8 @@ def _sanitize_process_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
         data_entry = admin.get("dataEntryBy")
         if isinstance(data_entry, dict):
             data_entry["common:referenceToDataSetFormat"] = _dataset_format_reference()
+            data_entry.pop("common:referenceToDataSetUseApproval", None)
+            data_entry.pop("common:referenceToConvertedOriginalDataSetFrom", None)
 
     return dataset
 
@@ -1214,7 +1234,7 @@ def _build_flow_dataset(
     treatment_text = _unique_join(treatment_candidates)
     treatment_text = _sanitize_to_english(treatment_text)
 
-    mix_candidates = hints.get("usage_context") or hints.get("source_or_pathway") or []
+    mix_candidates = hints.get("mix_location") or hints.get("usage_context") or hints.get("source_or_pathway") or []
     location_hint = _extract_text(exchange.get("location"))
     if location_hint:
         mix_candidates = list(mix_candidates) + [location_hint]

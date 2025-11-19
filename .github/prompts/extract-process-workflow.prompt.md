@@ -92,8 +92,6 @@ from typing import Any, Mapping, Literal
 class FlowQuery:
     exchange_name: str
     description: str | None = None
-    process_name: str | None = None
-    paper_md: str | None = None
 
 @dataclass(slots=True)
 class FlowCandidate:
@@ -131,16 +129,16 @@ class WorkflowResult:
 ```
 
 ## 4. Flow Search
-- `FlowSearchClient` uses `MCPToolClient.invoke_json_tool` to access the remote `Search_flows_Tool` and automatically builds the search context from a `FlowQuery`.
+- `FlowSearchClient` uses `MCPToolClient.invoke_json_tool` to access the remote `Search_flows_Tool` and automatically builds the search context from a `FlowQuery` (now limited to `exchange_name` and `FlowSearch hints`).
 - `FlowQuery.description` comes directly from the Stage 2 `exchange.generalComment` `FlowSearch hints` string; keep the field order and separators intact so QueryFlow Service can extract multilingual synonyms and physical properties.
 - The remote `tiangong_lca_remote` tool already embeds an LLM, which expands synonyms from the full `generalComment` and performs hybrid full-text + semantic search, so Stage 3 does not need to craft extra prompts manually.
 - When `generalComment` is complete and concise, you can trust the candidates returned by `tiangong_lca_remote`; focus on selecting the best-fitting flow and writing any necessary notes.
 - `stage3_align_flows.py` is the only entry point: do not stitch `referenceToFlowDataSet` during Stage 2. Let Stage 3 read the Stage 2 `process_blocks` and trigger the lookup.
-- Before running Stage 3, sanity-check one or two exchanges by building a `FlowQuery` manually to confirm the service returns candidates (avoid an empty batch run).
+- Before running Stage 3, sanity-check one or two exchanges by building a `FlowQuery` manually to confirm the service returns candidates (avoid an empty batch run). If no candidates are returned, inspect the `FlowSearch hints` because Stage 3 now relies solely on `exchange_name` plus that string; process-level clean text is no longer used.
 - Issue at least one MCP lookup per exchange; only mark it as `UnmatchedFlow` and record the reason after up to three failures.
 - Use exponential backoff for retries; catch `httpx.HTTPStatusError` and `McpError`, and strip context when necessary to avoid 413/5xx errors.
 - `FlowSearchService` handles similarity filtering, cache hits, and `UnmatchedFlow` assembly. After Stage 3, review the logs to confirm hit rates and list exchanges that still did not match.
-- If the logs show many `flow_search.filtered_out` events without matches, start by checking (i) whether `exchangeName`/`unit` is missing or misspelled, (ii) whether `clean_text` includes overly long context that introduces noise, and (iii) whether `.secrets` sets a larger `timeout` to accommodate slow responses.
+- If the logs show many `flow_search.filtered_out` events without matches, start by checking (i) whether `exchangeName`/`unit` is missing or misspelled, and (ii) whether the `FlowSearch hints` string contains sufficient synonyms/usage context. (Stage 3 no longer injects clean-text context into flow search.)
 - `mcp_tool_client.close_failed` warnings typically occur when cleanup coroutines run after a request and are considered normal; if timeouts persist, lower `flow_search_max_parallel` or split Stage 3 into batches.
 
 ## 5. Flow Alignment

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from functools import lru_cache
 from typing import Iterable
 
@@ -24,44 +23,31 @@ class FlowSearchService:
         self._client = client or FlowSearchClient(self._settings)
 
     def lookup(self, query: FlowQuery) -> tuple[list[FlowCandidate], list[UnmatchedFlow]]:
-        LOGGER.info("flow_search.lookup", exchange=query.exchange_name, process=query.process_name)
-        raw_candidates = self._client.search(query)
+        LOGGER.info("flow_search.lookup", exchange=query.exchange_name)
+        primary_query = FlowQuery(
+            exchange_name=query.exchange_name,
+            description=query.description,
+        )
+        raw_candidates = self._client.search(primary_query)
         matches, filtered_out = self._normalize_candidates(query, raw_candidates)
         if not matches:
-            if query.paper_md:
-                fallback_query = replace(query, paper_md=None)
+            if query.exchange_name:
                 LOGGER.info(
-                    "flow_search.retry_without_context",
+                    "flow_search.retry_name_only",
                     exchange=query.exchange_name,
-                    process=query.process_name,
                 )
-                fallback_raw = self._client.search(fallback_query)
+                name_only_query = FlowQuery(exchange_name=query.exchange_name)
+                fallback_raw = self._client.search(name_only_query)
                 fallback_matches, fallback_filtered = self._normalize_candidates(query, fallback_raw)
                 if fallback_matches:
                     matches.extend(fallback_matches)
                 if fallback_filtered:
                     filtered_out.extend(fallback_filtered)
-            if not matches and (query.description or query.process_name):
-                stripped_query = FlowQuery(
-                    exchange_name=query.exchange_name,
-                )
-                LOGGER.info(
-                    "flow_search.retry_minimal",
-                    exchange=query.exchange_name,
-                    process=query.process_name,
-                )
-                minimal_raw = self._client.search(stripped_query)
-                minimal_matches, minimal_filtered = self._normalize_candidates(query, minimal_raw)
-                if minimal_matches:
-                    matches.extend(minimal_matches)
-                if minimal_filtered:
-                    filtered_out.extend(minimal_filtered)
         if matches:
             return matches, filtered_out
         unmatched = UnmatchedFlow(
             base_name=query.exchange_name,
             general_comment=query.description,
-            process_name=query.process_name,
         )
         return [], filtered_out + [unmatched]
 
@@ -75,7 +61,7 @@ class FlowSearchService:
                     UnmatchedFlow(
                         base_name=item.get("base_name") or query.exchange_name,
                         general_comment=item.get("general_comment"),
-                        process_name=query.process_name,
+                        process_name=None,
                     )
                 )
                 continue
