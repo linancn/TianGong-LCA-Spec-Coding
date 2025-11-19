@@ -8,11 +8,16 @@ from datetime import datetime
 from typing import Any, TypedDict
 
 from tiangong_lca_spec.core.config import Settings, get_settings
-from tiangong_lca_spec.core.exceptions import ProcessExtractionError, SpecCodingError
+from tiangong_lca_spec.core.exceptions import (
+    ExchangeValidationError,
+    ProcessExtractionError,
+    SpecCodingError,
+)
 from tiangong_lca_spec.core.logging import get_logger
 
 from .extractors import AggregateSystemExtractor, LanguageModelProtocol, LocationNormalizer, ProcessClassifier, SectionExtractor
 from .hints import enrich_exchange_hints
+from .validators import validate_exchanges_strict
 from .tidas_mapping import build_tidas_process_dataset
 
 LOGGER = get_logger(__name__)
@@ -39,6 +44,7 @@ class ExtractionState(TypedDict, total=False):
     process_blocks: list[dict[str, Any]]
     aggregate_systems: list[dict[str, Any]]
     fallback_reference_year: int
+    retry_feedback: str | None
 
 
 class ProcessExtractionService:
@@ -54,13 +60,33 @@ class ProcessExtractionService:
         self._aggregate_extractor = AggregateSystemExtractor(llm)
         self._classifier = ProcessClassifier(llm)
         self._location_normalizer = LocationNormalizer(llm)
+        self._exchange_retry_attempts = max(1, self._settings.stage2_exchange_retry_attempts)
 
     def extract(self, clean_text: str) -> list[dict[str, Any]]:
+        retry_feedback: str | None = None
+        for attempt in range(self._exchange_retry_attempts):
+            try:
+                return self._run_pipeline(clean_text, retry_feedback)
+            except ExchangeValidationError as exc:
+                retry_feedback = exc.retry_feedback()
+                if attempt == self._exchange_retry_attempts - 1:
+                    raise
+                LOGGER.warning(
+                    "process_extraction.exchange_retry",
+                    attempt=attempt + 1,
+                    max_attempts=self._exchange_retry_attempts,
+                    process=exc.process_name,
+                )
+        raise ProcessExtractionError("Failed to produce valid exchanges after retries.")
+
+    def _run_pipeline(self, clean_text: str, retry_feedback: str | None) -> list[dict[str, Any]]:
         state: ExtractionState = {"clean_text": clean_text}
+        if retry_feedback:
+            state["retry_feedback"] = retry_feedback
         fallback_year = _infer_reference_year_from_text(clean_text)
         if fallback_year is not None:
             state["fallback_reference_year"] = fallback_year
-        state = self._extract_sections(state)
+        state = self._extract_sections(state, retry_feedback=retry_feedback)
         state = self._classify_process(state)
         state = self._normalize_location(state)
         state = self._finalize(state)
@@ -69,7 +95,7 @@ class ProcessExtractionService:
             raise ProcessExtractionError("No process blocks generated")
         return blocks
 
-    def _extract_sections(self, state: ExtractionState) -> ExtractionState:
+    def _extract_sections(self, state: ExtractionState, *, retry_feedback: str | None = None) -> ExtractionState:
         clean_text = state.get("clean_text")
         if not clean_text:
             raise ProcessExtractionError("Clean text missing for extraction")
@@ -88,12 +114,14 @@ class ProcessExtractionService:
                     context,
                     focus_system=parent["name"],
                     system_aliases=parent.get("aliases"),
+                    retry_feedback=retry_feedback,
                 )
                 if not _has_process_datasets(section):
                     section = self._section_extractor.run(
                         clean_text,
                         focus_system=parent["name"],
                         system_aliases=parent.get("aliases"),
+                        retry_feedback=retry_feedback,
                     )
                 if not _has_process_datasets(section):
                     missing_parents.append(parent["name"])
@@ -105,13 +133,13 @@ class ProcessExtractionService:
                     missing_parents=missing_parents,
                 )
         else:
-            sections = self._section_extractor.run(clean_text)
+            sections = self._section_extractor.run(clean_text, retry_feedback=retry_feedback)
 
         state["sections"] = sections
 
         dataset_entries = _collect_datasets(sections)
         if not dataset_entries and systems:
-            sections = self._section_extractor.run(clean_text)
+            sections = self._section_extractor.run(clean_text, retry_feedback=retry_feedback)
             state["sections"] = sections
             dataset_entries = _collect_datasets(sections)
         if not dataset_entries:
@@ -206,11 +234,17 @@ class ProcessExtractionService:
             process_name = _extract_process_name(normalized_dataset)
             geography_hint = _extract_geography(normalized_dataset)
             exchanges_container = normalized_dataset.get("exchanges") or {}
+            exchange_items: list[dict[str, Any]] = []
             if isinstance(exchanges_container, dict):
-                exchange_items = exchanges_container.get("exchange", [])
-                if isinstance(exchange_items, list):
+                raw_items = exchanges_container.get("exchange", [])
+                if isinstance(raw_items, list):
+                    exchange_items = [item for item in raw_items if isinstance(item, dict)]
                     for exchange in exchange_items:
                         enrich_exchange_hints(exchange, process_name=process_name, geography=geography_hint)
+
+            issues = validate_exchanges_strict(exchange_items, geography=geography_hint)
+            if issues:
+                raise ExchangeValidationError(process_name, issues)
 
             final_block: dict[str, Any] = {
                 "processDataSet": normalized_dataset,

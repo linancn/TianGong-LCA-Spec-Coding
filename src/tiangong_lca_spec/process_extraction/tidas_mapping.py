@@ -615,7 +615,6 @@ def _normalise_exchanges(
             item.pop("referenceToFlowDataSet", None)
         if not _stringify(item.get("common:other")).strip():
             item.pop("common:other", None)
-        item.pop("exchangeName", None)
         item.pop("flowName", None)
         normalised.append(item)
         metadata.append(
