@@ -567,14 +567,53 @@ def _extract_geography(dataset: dict[str, Any]) -> str | None:
     if not isinstance(process_info, dict):
         return None
     geography = process_info.get("geography")
-    if isinstance(geography, dict):
-        for key in ("shortName", "#text", "description", "locationOfOperation", "region"):
-            if key in geography:
-                value = _stringify(geography[key])
-                if value:
-                    return value
+    location_text = _extract_geography_value(geography)
+    if location_text:
+        return location_text
     value = _stringify(geography)
     return value or None
+
+
+def _extract_geography_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, dict):
+        prioritized_keys = (
+            "shortName",
+            "#text",
+            "text",
+            "description",
+            "locationOfOperation",
+            "locationDescription",
+            "region",
+            "@location",
+            "location",
+            "code",
+        )
+        for key in prioritized_keys:
+            if key in value:
+                result = _extract_geography_value(value[key])
+                if result:
+                    return result
+        supply_block = value.get("locationOfOperationSupplyOrProduction")
+        if supply_block is not None:
+            result = _extract_geography_value(supply_block)
+            if result:
+                return result
+        for nested in value.values():
+            result = _extract_geography_value(nested)
+            if result:
+                return result
+        return None
+    if isinstance(value, list):
+        for item in value:
+            result = _extract_geography_value(item)
+            if result:
+                return result
+    return None
 
 
 def _extract_process_id(container: dict[str, Any]) -> str | None:
