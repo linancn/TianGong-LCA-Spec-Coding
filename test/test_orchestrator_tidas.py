@@ -152,6 +152,18 @@ class FakeLLM:
 
     def invoke(self, input_data: dict[str, object]) -> dict[str, object]:
         prompt = str(input_data.get("prompt", ""))
+        if prompt.startswith("You are enumerating"):
+            return {
+                "processes": [
+                    {
+                        "processId": "P001",
+                        "name": "Example hydrogen production",
+                        "aliases": [],
+                        "description": "Example hydrogen production",
+                        "evidence": ["test"],
+                    }
+                ]
+            }
         if prompt.startswith("You are an expert LCA analyst"):
             return {"processDataSet": deepcopy(SAMPLE_PROCESS_DATASET)}
         if prompt.startswith("You are analysing a life cycle assessment document"):

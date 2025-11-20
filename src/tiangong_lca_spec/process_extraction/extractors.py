@@ -487,6 +487,16 @@ def _build_section_prompt() -> str:
 
 
 SECTION_PROMPT = _build_section_prompt()
+PROCESS_LIST_PROMPT = (
+    "You are enumerating every process or unit operation described in the document. "
+    "Read the entire clean text and return JSON of the form {\"processes\": [...]}. Inclusion rules: (1) the process "
+    "must have at least one quantitative datum in this document (mass/energy flow, yield, emission factor, cost used "
+    "in LCI) and appear as a distinct table row or a clearly quantified step in text/footnotes; (2) merge duplicates "
+    "across sections/tables into a single entry and aggregate evidence; (3) exclude narrative mentions, "
+    "literature-only references without in-text quantification, and shared utilities or preparation steps lacking an "
+    "independent functional unit or LCI. Do not split one table row into multiple processes. Each item must include "
+    "processId, name, optional aliases, description, and evidence citing table numbers/section headings/quotes."
+)
 
 AGGREGATE_SYSTEM_PROMPT = (
     "You are analysing a life cycle assessment document. Identify every top-level or parent "
@@ -519,41 +529,16 @@ LOCATION_PROMPT = (
 
 
 @dataclass
-class SectionExtractor:
+class ProcessListExtractor:
     llm: LanguageModelProtocol
 
-    def run(
-        self,
-        clean_text: str,
-        *,
-        focus_system: str | None = None,
-        system_aliases: list[str] | None = None,
-        retry_feedback: str | None = None,
-    ) -> dict[str, Any]:
-        LOGGER.info("process_extraction.section_extraction")
-        prompt = SECTION_PROMPT
-        if focus_system:
-            alias_text = ""
-            if system_aliases:
-                filtered_aliases = [alias for alias in system_aliases if alias]
-                if filtered_aliases:
-                    alias_text = f" (aliases: {', '.join(filtered_aliases)})"
-            focus_directive = (
-                "Focus exclusively on the top-level system "
-                f"`{focus_system}`{alias_text}. Extract every subprocess or unit process that the document "
-                "explicitly assigns to this parent (headings, tables, or prose with a named "
-                "unit process). Do not split out generic raw-material staging or shared "
-                "utilities unless the text states they operate as distinct unit processes. "
-                "Capture supplemental materials or shared resources in `common:generalComment`."
-            )
-            prompt = f"{SECTION_PROMPT}\n\n{focus_directive}"
+    def run(self, clean_text: str, *, retry_feedback: str | None = None) -> list[dict[str, Any]]:
+        LOGGER.info("process_extraction.process_list")
+        prompt = PROCESS_LIST_PROMPT
         if retry_feedback:
             prompt = (
-                f"{prompt}\n\n"
-                "Previous attempt issues:\n"
-                f"{retry_feedback}\n"
-                "Regenerate the ENTIRE `processDataSets` JSON, fixing every issue above. "
-                "Do not omit any process or exchange, and obey all schema constraints."
+                f"{prompt}\n\nPrevious attempt issues (do NOT remove or merge processes; only add/fix entries):\n"
+                f"{retry_feedback}"
             )
         payload = {
             "prompt": prompt,
@@ -561,18 +546,55 @@ class SectionExtractor:
             "response_format": {"type": "json_object"},
         }
         response = self.llm.invoke(payload)
-        raw_content = getattr(response, "content", response)
-        truncated = False
-        if isinstance(raw_content, str):
-            stripped = raw_content.strip()
-            if stripped.endswith("...") or stripped.count("{") != stripped.count("}"):
-                truncated = True
         data = _ensure_dict(response)
-        if truncated:
-            LOGGER.warning(
-                "process_extraction.section_extraction_truncated",
-                focus_system=focus_system,
+        processes = data.get("processes")
+        if not isinstance(processes, list):
+            raise ProcessExtractionError("Process list extractor must return a 'processes' array.")
+        return processes
+
+
+@dataclass
+class SectionExtractor:
+    llm: LanguageModelProtocol
+
+    def run(
+        self,
+        clean_text: str,
+        *,
+        focus_process: dict[str, Any] | None = None,
+        retry_feedback: str | None = None,
+    ) -> dict[str, Any]:
+        LOGGER.info("process_extraction.section_extraction")
+        prompt = SECTION_PROMPT
+        if focus_process:
+            aliases = focus_process.get("aliases") or []
+            alias_text = f" (aliases: {', '.join(aliases)})" if aliases else ""
+            description = focus_process.get("description") or ""
+            evidence = focus_process.get("evidence") or []
+            evidence_text = "\n".join(f"- {item}" for item in evidence) if evidence else "- (no citations provided)"
+            focus_directive = (
+                "You must extract exactly ONE `processDataSet` matching this target. "
+                "Never drop, merge, or rename the process; keep the same `processId`.\n"
+                f"processId: {focus_process.get('processId')}\n"
+                f"name: {focus_process.get('name')}{alias_text}\n"
+                f"summary: {description}\n"
+                f"evidence:\n{evidence_text}\n"
+                "Return JSON shaped as {\"processDataSet\": {...}} containing only this process."
             )
+            prompt = f"{prompt}\n\n{focus_directive}"
+        if retry_feedback:
+            prompt = (
+                f"{prompt}\n\nPrevious attempt issues:\n"
+                f"{retry_feedback}\n"
+                "Regenerate the ENTIRE `processDataSet` for this process, fixing every issue above while preserving the same process identity."
+            )
+        payload = {
+            "prompt": prompt,
+            "context": clean_text,
+            "response_format": {"type": "json_object"},
+        }
+        response = self.llm.invoke(payload)
+        data = _ensure_dict(response)
         return data
 
 

@@ -25,6 +25,18 @@ class StaticLLM:
 
     def invoke(self, payload: dict[str, object]) -> dict[str, object]:
         prompt = str(payload.get("prompt", ""))
+        if prompt.startswith("You are enumerating"):
+            return {
+                "processes": [
+                    {
+                        "processId": "P001",
+                        "name": "Example hydrogen production",
+                        "aliases": [],
+                        "description": "Example hydrogen production",
+                        "evidence": ["test"],
+                    }
+                ]
+            }
         if prompt.startswith("You are an expert LCA analyst"):
             return {"processDataSet": deepcopy(self._dataset)}
         if prompt.startswith("You are analysing a life cycle assessment document"):
