@@ -4,7 +4,7 @@
 
 流程抽取工作流的角色划分如下：
 - **Stage 1（预处理）**：解析原始论文/资料，输出结构化 `clean_text` 供后续调用。
-- **Stage 2（流程生成）**：Codex 驱动 LLM 提取流程块，并在 **每个 `exchanges.exchange` 中直接生成合规的 `flowHints` 结构**（含 basename、treatment、mix_location、source_or_pathway 等字段），不可依赖 Stage 3 的兜底修正。
+- **Stage 2（流程生成）**：Codex 先运行 **流程清单阶段**（枚举所有表格行/单元操作，分配稳定 `processId`），再逐个流程生成完整的 `processDataSet`，并在 **每个 `exchanges.exchange` 中直接生成合规的 `flowHints` 结构**（含 basename、treatment、mix_location、source_or_pathway 等字段），不可依赖 Stage 3 的兜底修正。
 - **Stage 3（流对齐与制品导出）**：结合 MCP 检索结果与人工上下文，确认每个交换量的标准流，并进一步合并结果、生成 `artifacts/<run_id>/exports/` 下的 ILCD 制品、执行本地校验，最终汇总 `workflow_result.json`。
 
 每次运行都会在 `artifacts/<run_id>/` 下创建独立目录，`run_id` 为 UTC 时间戳（Stage 1 会打印并写入 `artifacts/.latest_run_id`）。目录结构包含：

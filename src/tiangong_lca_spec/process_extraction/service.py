@@ -15,7 +15,13 @@ from tiangong_lca_spec.core.exceptions import (
 )
 from tiangong_lca_spec.core.logging import get_logger
 
-from .extractors import AggregateSystemExtractor, LanguageModelProtocol, LocationNormalizer, ProcessClassifier, SectionExtractor
+from .extractors import (
+    LanguageModelProtocol,
+    LocationNormalizer,
+    ProcessClassifier,
+    ProcessListExtractor,
+    SectionExtractor,
+)
 from .hints import enrich_exchange_hints
 from .validators import validate_exchanges_strict
 from .tidas_mapping import build_tidas_process_dataset
@@ -40,9 +46,7 @@ PROCESS_ID_KEYS = (
 
 class ExtractionState(TypedDict, total=False):
     clean_text: str
-    sections: dict[str, Any]
     process_blocks: list[dict[str, Any]]
-    aggregate_systems: list[dict[str, Any]]
     fallback_reference_year: int
     retry_feedback: str | None
 
@@ -56,8 +60,8 @@ class ProcessExtractionService:
         settings: Settings | None = None,
     ) -> None:
         self._settings = settings or get_settings()
+        self._process_list_extractor = ProcessListExtractor(llm)
         self._section_extractor = SectionExtractor(llm)
-        self._aggregate_extractor = AggregateSystemExtractor(llm)
         self._classifier = ProcessClassifier(llm)
         self._location_normalizer = LocationNormalizer(llm)
         self._exchange_retry_attempts = max(1, self._settings.stage2_exchange_retry_attempts)
@@ -86,7 +90,9 @@ class ProcessExtractionService:
         fallback_year = _infer_reference_year_from_text(clean_text)
         if fallback_year is not None:
             state["fallback_reference_year"] = fallback_year
-        state = self._extract_sections(state, retry_feedback=retry_feedback)
+        process_candidates = self._list_process_candidates(clean_text, retry_feedback=retry_feedback)
+        state["process_candidates"] = process_candidates
+        state["process_blocks"] = self._generate_process_blocks(clean_text, process_candidates)
         state = self._classify_process(state)
         state = self._normalize_location(state)
         state = self._finalize(state)
@@ -95,74 +101,56 @@ class ProcessExtractionService:
             raise ProcessExtractionError("No process blocks generated")
         return blocks
 
-    def _extract_sections(self, state: ExtractionState, *, retry_feedback: str | None = None) -> ExtractionState:
-        clean_text = state.get("clean_text")
+    def _list_process_candidates(
+        self,
+        clean_text: str,
+        *,
+        retry_feedback: str | None = None,
+    ) -> list[dict[str, Any]]:
         if not clean_text:
             raise ProcessExtractionError("Clean text missing for extraction")
+        return self._process_list_extractor.run(clean_text, retry_feedback=retry_feedback)
 
-        aggregate_summary = self._aggregate_extractor.run(clean_text)
-        systems = _normalise_aggregate_systems(aggregate_summary)
-        state["aggregate_systems"] = systems
-
-        sections: dict[str, Any] | None = None
-        if systems:
-            parent_results: list[tuple[dict[str, Any], dict[str, Any]]] = []
-            missing_parents: list[str] = []
-            for parent in systems:
-                context = _slice_text_for_system(clean_text, parent)
-                section = self._section_extractor.run(
-                    context,
-                    focus_system=parent["name"],
-                    system_aliases=parent.get("aliases"),
-                    retry_feedback=retry_feedback,
-                )
-                if not _has_process_datasets(section):
-                    section = self._section_extractor.run(
-                        clean_text,
-                        focus_system=parent["name"],
-                        system_aliases=parent.get("aliases"),
-                        retry_feedback=retry_feedback,
-                    )
-                if not _has_process_datasets(section):
-                    missing_parents.append(parent["name"])
-                parent_results.append((parent, section))
-            sections = _combine_system_sections(parent_results, aggregate_summary)
-            if missing_parents:
-                LOGGER.warning(
-                    "process_extraction.aggregate_systems_uncovered",
-                    missing_parents=missing_parents,
-                )
-        else:
-            sections = self._section_extractor.run(clean_text, retry_feedback=retry_feedback)
-
-        state["sections"] = sections
-
-        dataset_entries = _collect_datasets(sections)
-        if not dataset_entries and systems:
-            sections = self._section_extractor.run(clean_text, retry_feedback=retry_feedback)
-            state["sections"] = sections
-            dataset_entries = _collect_datasets(sections)
-        if not dataset_entries:
-            raise ProcessExtractionError("Section extraction must return `processDataSets` or `processDataSet`")
-
+    def _generate_process_blocks(
+        self,
+        clean_text: str,
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not candidates:
+            raise ProcessExtractionError("Process list extractor returned no candidates")
         blocks: list[dict[str, Any]] = []
-        for process_id, dataset in dataset_entries:
-            process_information = dataset.setdefault("processInformation", {})
-            administrative = dataset.setdefault("administrativeInformation", {})
-            modelling = dataset.setdefault("modellingAndValidation", {})
-
+        for candidate in candidates:
+            dataset = self._generate_process_dataset(clean_text, candidate)
             block: dict[str, Any] = {
                 "processDataSet": dataset,
-                "process_information": process_information,
-                "administrative_information": administrative,
-                "modelling_and_validation": modelling,
+                "process_id": candidate.get("processId"),
+                "process_candidate": candidate,
             }
-            if process_id:
-                block["process_id"] = process_id
             blocks.append(block)
+        return blocks
 
-        state["process_blocks"] = blocks
-        return state
+    def _generate_process_dataset(
+        self,
+        clean_text: str,
+        candidate: dict[str, Any],
+    ) -> dict[str, Any]:
+        retry_feedback: str | None = None
+        process_label = candidate.get("name") or candidate.get("processId") or "Unnamed process"
+        for attempt in range(self._exchange_retry_attempts):
+            response = self._section_extractor.run(
+                clean_text,
+                focus_process=candidate,
+                retry_feedback=retry_feedback,
+            )
+            dataset = response.get("processDataSet")
+            if not isinstance(dataset, dict):
+                raise ProcessExtractionError("Process detail extractor must return `processDataSet`.")
+            exchanges = _extract_exchanges(dataset)
+            errors = validate_exchanges_strict(exchanges, geography=None)
+            if not errors:
+                return dataset
+            retry_feedback = _format_detail_retry_feedback(candidate, errors)
+        raise ExchangeValidationError(process_label, errors)
 
     def _classify_process(self, state: ExtractionState) -> ExtractionState:
         blocks = state.get("process_blocks") or []
@@ -336,250 +324,6 @@ def _coerce_year(value: Any) -> int | None:
     return None
 
 
-def _normalise_aggregate_systems(summary: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not summary:
-        return []
-    raw_parents = summary.get("parentProcesses") or summary.get("parent_processes") or []
-    normalised: list[dict[str, Any]] = []
-    for entry in _ensure_list(raw_parents):
-        if not isinstance(entry, dict):
-            continue
-        name = _stringify(entry.get("name") or entry.get("title"))
-        if not name:
-            continue
-        aliases_raw = entry.get("aliases") or entry.get("alias") or []
-        keywords_raw = entry.get("keywords") or entry.get("keyTerms") or []
-        hints_raw = entry.get("subprocessHints") or entry.get("subProcesses") or []
-        aliases = [_stringify(alias) for alias in _ensure_list(aliases_raw) if _stringify(alias)]
-        keywords = [_stringify(keyword) for keyword in _ensure_list(keywords_raw) if _stringify(keyword)]
-        hints = [_stringify(hint) for hint in _ensure_list(hints_raw) if _stringify(hint)]
-        normalised.append(
-            {
-                "name": name,
-                "aliases": aliases,
-                "keywords": keywords,
-                "subprocessHints": hints,
-                "summary": _stringify(entry.get("summary") or entry.get("description")),
-            }
-        )
-    return normalised
-
-
-def _slice_text_for_system(clean_text: str, parent: dict[str, Any]) -> str:
-    keywords = {parent.get("name", "")}
-    keywords.update(parent.get("aliases") or [])
-    keywords.update(parent.get("keywords") or [])
-    filtered_keywords = {kw.strip() for kw in keywords if kw and isinstance(kw, str)}
-    if not filtered_keywords:
-        return clean_text
-
-    paragraphs = [paragraph.strip() for paragraph in clean_text.split("\n\n") if paragraph.strip()]
-    matched_indices: list[int] = [index for index, paragraph in enumerate(paragraphs) if any(keyword.lower() in paragraph.lower() for keyword in filtered_keywords)]
-    if not matched_indices:
-        return clean_text
-    selected: list[str] = []
-    for index in matched_indices:
-        start = max(0, index - 1)
-        end = min(len(paragraphs), index + 2)
-        selected.extend(paragraphs[start:end])
-        selected.append("")
-    context = "\n\n".join(chunk for chunk in selected if chunk)
-    if len(context) < 400:
-        return clean_text
-    return context
-
-
-def _combine_system_sections(
-    parent_sections: list[tuple[dict[str, Any], dict[str, Any]]],
-    parent_summary: dict[str, Any] | None,
-) -> dict[str, Any]:
-    aggregated_datasets: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-
-    for parent, section in parent_sections:
-        dataset_list = section.get("processDataSets")
-        if not dataset_list:
-            dataset_list = section.get("processDataSet")
-        dataset_entries = _normalise_dataset_list(dataset_list)
-        if not dataset_entries:
-            continue
-        for dataset in dataset_entries:
-            identifier = _derive_dataset_identifier(dataset) or json.dumps(dataset, sort_keys=True, default=str)
-            if identifier in seen_keys:
-                continue
-            seen_keys.add(identifier)
-            aggregated_datasets.append(dataset)
-
-    combined: dict[str, Any] = {}
-    if parent_summary:
-        combined["parentProcesses"] = parent_summary.get("parentProcesses") or parent_summary
-    if aggregated_datasets:
-        combined["processDataSets"] = aggregated_datasets
-    if not combined:
-        combined = parent_sections[0][1] if parent_sections else {}
-    return combined
-
-
-def _has_process_datasets(section: dict[str, Any]) -> bool:
-    if not isinstance(section, dict):
-        return False
-    if _normalise_dataset_list(section.get("processDataSets")):
-        return True
-    if _normalise_dataset_list(section.get("processDataSet")):
-        return True
-    return False
-
-
-def _collect_datasets(
-    sections: dict[str, Any],
-) -> list[tuple[str | None, dict[str, Any]]]:
-    datasets = _normalise_dataset_list(sections.get("processDataSets"))
-    if not datasets:
-        datasets = _normalise_dataset_list(sections.get("processDataSet"))
-    if datasets:
-        return [(_derive_dataset_identifier(dataset), dataset) for dataset in datasets]
-
-    return _merge_modules_into_datasets(sections)
-
-
-def _normalise_dataset_list(value: Any) -> list[dict[str, Any]]:
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    if isinstance(value, dict):
-        return [value]
-    return []
-
-
-def _merge_modules_into_datasets(
-    sections: dict[str, Any],
-) -> list[tuple[str | None, dict[str, Any]]]:
-    module_keys = (
-        "processInformation",
-        "administrativeInformation",
-        "modellingAndValidation",
-        "exchanges",
-    )
-    module_entries = {key: _collect_module_entries(sections.get(key), key) for key in module_keys}
-    if not any(module_entries.values()):
-        return []
-
-    dataset_map: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-    fallback: dict[str, list[Any]] = {key: [] for key in module_keys}
-
-    for key in module_keys:
-        for process_id, payload in module_entries[key]:
-            if process_id:
-                dataset = dataset_map.setdefault(process_id, {})
-                dataset[key] = payload
-                if process_id not in order:
-                    order.append(process_id)
-            else:
-                fallback[key].append(payload)
-
-    if not dataset_map:
-        max_length = max((len(entries) for entries in module_entries.values()), default=0)
-        merged_entries: list[tuple[str | None, dict[str, Any]]] = []
-        for index in range(max_length):
-            dataset: dict[str, Any] = {}
-            for key in module_keys:
-                entries = module_entries[key]
-                if index < len(entries):
-                    _, payload = entries[index]
-                    dataset[key] = payload
-            merged_entries.append(_normalise_merged_dataset(None, dataset))
-        return merged_entries
-
-    for key in module_keys:
-        for payload in fallback[key]:
-            assigned = False
-            for process_id in order:
-                dataset = dataset_map.setdefault(process_id, {})
-                if key not in dataset:
-                    dataset[key] = payload
-                    assigned = True
-                    break
-            if not assigned:
-                new_id = f"auto_{len(dataset_map) + 1}"
-                dataset_map[new_id] = {key: payload}
-                order.append(new_id)
-
-    for process_id in dataset_map:
-        if process_id not in order:
-            order.append(process_id)
-
-    merged_entries: list[tuple[str | None, dict[str, Any]]] = []
-    for process_id in order:
-        dataset = dataset_map.get(process_id, {})
-        clean_id = process_id if isinstance(process_id, str) else None
-        if clean_id and clean_id.startswith("auto_"):
-            clean_id = None
-        merged_entries.append(_normalise_merged_dataset(clean_id, dataset))
-    return merged_entries
-
-
-def _collect_module_entries(
-    module_value: Any,
-    module_key: str,
-) -> list[tuple[str | None, Any]]:
-    if module_value is None:
-        return []
-
-    if isinstance(module_value, dict):
-        if module_key in module_value and isinstance(module_value[module_key], (dict, list)):
-            module_value = module_value[module_key]
-        elif "items" in module_value:
-            module_value = module_value["items"]
-        elif "processes" in module_value:
-            module_value = module_value["processes"]
-
-    entries: list[tuple[str | None, Any]] = []
-    for item in _ensure_list(module_value):
-        if not isinstance(item, dict):
-            continue
-        process_id = _extract_process_id(item)
-        payload = item.get(module_key)
-        if payload is None:
-            payload = {key: value for key, value in item.items() if key not in PROCESS_ID_KEYS}
-        entries.append((process_id, payload))
-    return entries
-
-
-def _normalise_merged_dataset(
-    process_id: str | None,
-    dataset: dict[str, Any],
-) -> tuple[str | None, dict[str, Any]]:
-    merged = dict(dataset)
-    merged["processInformation"] = _ensure_dict(merged.get("processInformation"))
-    merged["administrativeInformation"] = _ensure_dict(merged.get("administrativeInformation"))
-    merged["modellingAndValidation"] = _ensure_dict(merged.get("modellingAndValidation"))
-    merged["exchanges"] = _normalise_exchange_container(merged.get("exchanges"))
-    return process_id, merged
-
-
-def _normalise_exchange_container(exchanges: Any) -> dict[str, Any]:
-    if isinstance(exchanges, dict):
-        if "exchange" in exchanges:
-            exchange_value = exchanges["exchange"]
-        elif "exchanges" in exchanges:
-            exchange_value = exchanges["exchanges"]
-        else:
-            exchange_value = exchanges
-    elif isinstance(exchanges, list):
-        exchange_value = exchanges
-    elif exchanges is None:
-        exchange_value = []
-    else:
-        exchange_value = [exchanges]
-
-    if isinstance(exchange_value, list):
-        values = [item for item in exchange_value if isinstance(item, dict)]
-        return {"exchange": values}
-    if isinstance(exchange_value, dict):
-        return {"exchange": [exchange_value]}
-    return {"exchange": []}
-
-
 def _extract_process_name(dataset: dict[str, Any]) -> str | None:
     process_info = dataset.get("processInformation")
     if not isinstance(process_info, dict):
@@ -688,6 +432,29 @@ def _derive_dataset_identifier(dataset: dict[str, Any]) -> str | None:
                 if isinstance(value, str) and value.strip():
                     return value.strip()
     return None
+
+
+def _extract_exchanges(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+    exchanges_section = dataset.get("exchanges") or {}
+    if isinstance(exchanges_section, dict):
+        exchanges = exchanges_section.get("exchange")
+    else:
+        exchanges = None
+    if isinstance(exchanges, dict):
+        return [exchanges]
+    if isinstance(exchanges, list):
+        return [item for item in exchanges if isinstance(item, dict)]
+    return []
+
+
+def _format_detail_retry_feedback(candidate: dict[str, Any], errors: list[str]) -> str:
+    header = f"processId={candidate.get('processId')} name={candidate.get('name')}"
+    details = "\n".join(f"- {issue}" for issue in errors)
+    return (
+        f"{header}\nFix each issue without removing, renaming, or merging the process. "
+        "Keep the same exchanges and regenerate the full `processDataSet`.\n"
+        f"{details}"
+    )
 
 
 def _ensure_list(value: Any) -> list[Any]:

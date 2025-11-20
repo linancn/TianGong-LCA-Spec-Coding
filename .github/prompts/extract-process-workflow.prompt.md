@@ -6,7 +6,7 @@ This document focuses on data extraction and workflow orchestration: it outlines
 
 The process extraction workflow splits responsibilities as follows:
 - **Stage 1 (Preprocessing)**: Parse the source paper/material and output structured `clean_text` for downstream steps.
-- **Stage 2 (Process generation)**: Codex drives the LLM to extract process blocks, emit fully populated `flowHints` objects inside every `exchange`, and document conversion assumptions—the foundational input for alignment. Stage 2 is the single source of truth for exchange metadata; downstream stages will not auto-fill or repair missing hints.
+- **Stage 2 (Process generation)**: Codex drives the LLM in **two passes**. First, enumerate the complete process list (every table row / unit operation) with stable `processId`s. Second, loop over that list and generate each `processDataSet` individually, ensuring every `exchange` carries a complete `flowHints` object. Stage 2 is the single source of truth for exchange metadata; downstream stages will not auto-fill or repair missing hints.
 - **Stage 3 (Flow alignment & artifact export)**: Combine MCP search results and operator context to confirm the standard flow for each exchange, then merge the results, generate ILCD artifacts under `artifacts/<run_id>/exports/`, run local validation, and assemble `workflow_result.json` for downstream tasks.
 
 Every run stores its artifacts under `artifacts/<run_id>/`, where `run_id` is a UTC timestamp (Stage 1 prints the value and records it in `artifacts/.latest_run_id`). The directory layout is:

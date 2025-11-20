@@ -465,13 +465,10 @@ def _sanitize_general_comment(comment: Any) -> dict[str, Any] | str | None:
     lang = DEFAULT_LANGUAGE
     if isinstance(comment, dict):
         lang = comment.get("@xml:lang") or lang
-    if not text.startswith("FlowSearch hints:"):
+    if text.startswith("FlowSearch hints:"):
+        # Preserve the structured hint string so downstream consumers can recover the exact metadata.
         return {"@xml:lang": lang, "#text": text}
-    hints, notes = _parse_hint_segments(text[len("FlowSearch hints:") :])
-    comment_text = _compose_comment_from_hints(hints, notes)
-    if not comment_text:
-        return None
-    return {"@xml:lang": lang, "#text": comment_text}
+    return {"@xml:lang": lang, "#text": text}
 
 
 def _parse_hint_segments(text: str) -> tuple[dict[str, list[str]], list[str]]:
@@ -608,6 +605,9 @@ def _normalise_exchanges(
                 item.pop("generalComment", None)
         else:
             item.pop("generalComment", None)
+        # Remove intermediate hint structures to keep the final ILCD exchange schema-compliant.
+        item.pop("flowHints", None)
+        item.pop("hints", None)
         # Preserve genuine flow references (from alignment) but drop empty placeholders,
         # so Stage 3 can inject authoritative matches when available.
         reference = item.get("referenceToFlowDataSet")
@@ -1143,6 +1143,17 @@ def _to_multilang(value: Any) -> dict[str, Any]:
     return {"@xml:lang": DEFAULT_LANGUAGE, "#text": _stringify(value)}
 
 
+def _normalize_multilang_dict(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    lang = _stringify(value.get("@xml:lang") or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE
+    for key in ("#text", "_text", "text"):
+        if key in value and value[key] not in (None, ""):
+            text = _stringify(value[key]).strip()
+            return {"@xml:lang": lang, "#text": text}
+    return None
+
+
 def _ensure_multilang_list(value: Any) -> list[dict[str, Any]]:
     if value in (None, "", [], {}):
         return []
@@ -1211,16 +1222,18 @@ def _extract_multilang_text(value: Any) -> str:
                 parts.append(text)
         return "; ".join(parts)
     if isinstance(value, dict):
-        if "#text" in value:
-            return _stringify(value["#text"])
-        if "text" in value:
-            return _stringify(value["text"])
+        normalized = _normalize_multilang_dict(value)
+        if normalized:
+            return normalized["#text"]
+        return ""
     return _stringify(value)
 
 
 def _ensure_multilang(value: Any, *, fallback: str | None = None, separator: str = "; ") -> dict[str, Any]:
-    if isinstance(value, dict) and "@xml:lang" in value and "#text" in value:
-        return value
+    if isinstance(value, dict):
+        normalized = _normalize_multilang_dict(value)
+        if normalized:
+            return normalized
     if isinstance(value, list):
         segments = [segment for segment in (_extract_multilang_text(item).strip() for item in value) if segment]
         text = separator.join(segments)
