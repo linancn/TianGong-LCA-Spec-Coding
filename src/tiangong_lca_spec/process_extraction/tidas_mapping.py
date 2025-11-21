@@ -1094,7 +1094,11 @@ def _prune_invalid_reference_fields(dataset: dict[str, Any]) -> None:
                 continue
             field = path[-1]
             value = container.get(field)
-            if value is None:
+            if value in (None, "", [], {}):
+                container.pop(field, None)
+                continue
+            if isinstance(value, str) and not value.strip():
+                container.pop(field, None)
                 continue
             if not _contains_structured_reference(value):
                 container.pop(field, None)
@@ -1195,7 +1199,7 @@ def _normalize_multilang_dict(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     lang = _stringify(value.get("@xml:lang") or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE
-    for key in ("#text", "%23text", "_text", "text"):
+    for key in ("#text", "%23text", "_text", "text", "@text"):
         if key in value and value[key] not in (None, ""):
             text = _stringify(value[key]).strip()
             return {"@xml:lang": lang, "#text": text}
@@ -1373,7 +1377,7 @@ def _build_process_schema_metadata(schema: dict[str, Any]) -> ProcessSchemaMetad
         is_field_node = is_property_field or is_items_field or is_additional_field
 
         if isinstance(node, dict):
-            if is_field_node and _schema_has_multilang_signature(node):
+            if is_field_node and _schema_is_multilang(node):
                 multilang_fields.add(pointer)
 
             enum_values = node.get("enum")
@@ -1520,7 +1524,8 @@ def _coerce_schema_fields(
     pointer = _pointer_from_path(path)
 
     if pointer in metadata.multilang_fields:
-        return _coerce_value_to_multilang(value)
+        coerced_multilang = _coerce_value_to_multilang(value)
+        return coerced_multilang
 
     enum_values = metadata.enum_fields.get(pointer)
     if enum_values:
@@ -1545,12 +1550,25 @@ def _coerce_schema_fields(
         if isinstance(properties, dict):
             for key, child_schema in properties.items():
                 if key in value:
-                    value[key] = _coerce_schema_fields(
+                    coerced_child = _coerce_schema_fields(
                         value[key],
                         child_schema,
                         path + ("properties", key),
                         metadata,
                     )
+                    if coerced_child is None:
+                        value.pop(key, None)
+                        continue
+                    if isinstance(coerced_child, str) and not coerced_child.strip():
+                        value.pop(key, None)
+                        continue
+                    if isinstance(coerced_child, list) and not coerced_child:
+                        value.pop(key, None)
+                        continue
+                    if isinstance(coerced_child, dict) and not coerced_child:
+                        value.pop(key, None)
+                        continue
+                    value[key] = coerced_child
         additional = schema.get("additionalProperties")
         if isinstance(additional, dict):
             known = set(properties or {})
@@ -1607,12 +1625,31 @@ def _schema_has_multilang_signature(schema: dict[str, Any]) -> bool:
 
 
 def _coerce_value_to_multilang(value: Any) -> Any:
+    entries: list[dict[str, Any]] = []
     if isinstance(value, list):
-        entries = _ensure_multilang_list(value)
-        if len(entries) <= 1:
-            return entries[0] if entries else {"@xml:lang": DEFAULT_LANGUAGE, "#text": ""}
-        return entries
-    return _ensure_multilang(value)
+        for item in value:
+            if item in (None, "", [], {}):
+                continue
+            normalized = _ensure_multilang(item)
+            text = normalized.get("#text", "")
+            if isinstance(text, str):
+                text = text.strip()
+            if text:
+                normalized["#text"] = text
+                entries.append(normalized)
+    else:
+        normalized = _ensure_multilang(value)
+        text = normalized.get("#text", "")
+        if isinstance(text, str):
+            text = text.strip()
+        if text:
+            normalized["#text"] = text
+            entries.append(normalized)
+    if not entries:
+        return None
+    if len(entries) == 1:
+        return entries[0]
+    return entries
 
 
 def _coerce_enum_value(value: Any, options: list[Any]) -> Any:

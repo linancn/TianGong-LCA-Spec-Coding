@@ -507,13 +507,18 @@ def _build_section_prompt() -> str:
 SECTION_PROMPT = _build_section_prompt()
 PROCESS_LIST_PROMPT = (
     "You are enumerating every process or unit operation described in the document. "
-    "Read the entire clean text and return JSON of the form {\"processes\": [...]}. Inclusion rules: (1) the process "
-    "must have at least one quantitative datum in this document (mass/energy flow, yield, emission factor, cost used "
-    "in LCI) and appear as a distinct table row or a clearly quantified step in text/footnotes; (2) merge duplicates "
-    "across sections/tables into a single entry and aggregate evidence; (3) exclude narrative mentions, "
-    "literature-only references without in-text quantification, and shared utilities or preparation steps lacking an "
-    "independent functional unit or LCI. Do not split one table row into multiple processes. Each item must include "
-    "processId, name, optional aliases, description, and evidence citing table numbers/section headings/quotes."
+    "Read the entire clean text and return JSON of the form {\"processes\": [...]}. Inclusion rules: (1) keep only "
+    "processes whose evidence shows at least one physical LCI row (mass/volume/area/energy/count with explicit units "
+    "such as kg, g, t, m2, m3, pcs, kWh, MJ). Treat phrases like \"life cycle\", \"scenario\", \"system\" or "
+    "\"parent system\" as risk hints—not automatic exclusions. If the supporting table still lists ordinary LCI units "
+    "keep it; if the table contains only LCIA indicators (ADP/AP/GWP/EP/PED/RI, units such as \"kg CO2 eq.\", "
+    "\"kg SO2 eq.\", \"kg Sb eq.\", \"kg PO4 eq.\", \"kg PM2.5 eq.\", or MJ explicitly labelled as impacts/depletion) "
+    "then exclude it as LCIA-only. Likewise, if the text merely says \"inventory shown in Table 4\" but the numeric "
+    "rows are absent from the provided clean_text, treat it as lacking quantitative LCI. (2) Merge duplicates across "
+    "sections/tables into a single entry and aggregate evidence. (3) Exclude narrative mentions, literature-only "
+    "references without in-text quantification, and shared utilities or preparation steps lacking an independent "
+    "functional unit or LCI. Do not split one table row into multiple processes. Each item must include processId, "
+    "name, optional aliases, description, and evidence citing table numbers/section headings/quotes."
 )
 
 AGGREGATE_SYSTEM_PROMPT = (

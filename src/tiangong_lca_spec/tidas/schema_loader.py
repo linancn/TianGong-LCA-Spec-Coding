@@ -167,17 +167,19 @@ class TidasSchemaRepository:
             merged = {k: v for k, v in schema.items() if k != "$ref"}
             return merged, base_path, ref
         visited.add(cache_key)
-
-        target_node, target_path = self._resolve_ref(ref, base_path)
-        if isinstance(target_node, dict):
-            merged = copy.deepcopy(target_node)
-            for key, value in schema.items():
-                if key == "$ref":
-                    continue
-                merged[key] = value
-        else:
-            merged = {"const": target_node}
-        return merged, target_path, ref
+        try:
+            target_node, target_path = self._resolve_ref(ref, base_path)
+            if isinstance(target_node, dict):
+                merged = copy.deepcopy(target_node)
+                for key, value in schema.items():
+                    if key == "$ref":
+                        continue
+                    merged[key] = value
+            else:
+                merged = {"const": target_node}
+            return merged, target_path, ref
+        finally:
+            visited.remove(cache_key)
 
     def _resolve_ref(self, ref: str, base_path: Path) -> tuple[Any, Path]:
         path_part, _, fragment = ref.partition("#")
