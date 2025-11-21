@@ -96,6 +96,7 @@ def build_tidas_process_dataset(process_dataset: dict[str, Any]) -> dict[str, An
     else:
         dataset.pop("LCIAResults", None)
     _apply_schema_normalisation(dataset)
+    _prune_invalid_reference_fields(dataset)
     return _strip_common_other(dataset)
 
 
@@ -1069,6 +1070,53 @@ def _ensure_reference_field(
     container[key] = _ensure_global_reference(value, ref_type=ref_type, description=description)
 
 
+_OPTIONAL_REFERENCE_PATHS: tuple[tuple[str, ...], ...] = (
+    ("modellingAndValidation", "dataSourcesTreatmentAndRepresentativeness", "referenceToDataHandlingPrinciples"),
+    ("modellingAndValidation", "LCIMethodAndAllocation", "referenceToLCAMethodDetails"),
+    ("modellingAndValidation", "completeness", "referenceToSupportedImpactAssessmentMethods"),
+    ("administrativeInformation", "publicationAndOwnership", "common:referenceToPrecedingDataSetVersion"),
+    ("administrativeInformation", "publicationAndOwnership", "common:referenceToUnchangedRepublication"),
+    ("administrativeInformation", "publicationAndOwnership", "common:referenceToRegistrationAuthority"),
+    ("administrativeInformation", "publicationAndOwnership", "common:referenceToEntitiesWithExclusiveAccess"),
+    ("administrativeInformation", "common:commissionerAndGoal", "common:project"),
+)
+
+
+def _prune_invalid_reference_fields(dataset: dict[str, Any]) -> None:
+    for path in _OPTIONAL_REFERENCE_PATHS:
+        container: Any = dataset
+        for key in path[:-1]:
+            if not isinstance(container, dict):
+                break
+            container = container.get(key)
+        else:
+            if not isinstance(container, dict):
+                continue
+            field = path[-1]
+            value = container.get(field)
+            if value is None:
+                continue
+            if not _contains_structured_reference(value):
+                container.pop(field, None)
+
+
+def _contains_structured_reference(value: Any) -> bool:
+    if value in (None, "", [], {}):
+        return False
+    if _has_reference(value):
+        return True
+    if isinstance(value, dict):
+        for child in value.values():
+            if isinstance(child, str) and _is_valid_uuid(child.strip()):
+                return True
+            if isinstance(child, (dict, list)) and _contains_structured_reference(child):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_contains_structured_reference(item) for item in value)
+    return False
+
+
 def _normalise_derivation_status(value: Any) -> str:
     mapping = {
         "measured": "Measured",
@@ -1147,7 +1195,7 @@ def _normalize_multilang_dict(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     lang = _stringify(value.get("@xml:lang") or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE
-    for key in ("#text", "_text", "text"):
+    for key in ("#text", "%23text", "_text", "text"):
         if key in value and value[key] not in (None, ""):
             text = _stringify(value[key]).strip()
             return {"@xml:lang": lang, "#text": text}
