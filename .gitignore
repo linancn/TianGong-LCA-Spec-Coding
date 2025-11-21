@@ -160,3 +160,5 @@ test.md
 /temp/
 
 /inline_prompt.txt
+
+.secrets/secrets.toml.bak

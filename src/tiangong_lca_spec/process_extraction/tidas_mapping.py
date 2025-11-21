@@ -222,14 +222,7 @@ def _normalise_dataset_information(
                 continue
             class_id = entry.get("@classId") or entry.get("classId") or entry.get("id") or ""
             level = entry.get("@level") or entry.get("level") or entry.get("lvl") or ""
-            text_value = (
-                entry.get("#text")
-                or entry.get("text")
-                or entry.get("@text")
-                or entry.get("label")
-                or entry.get("name")
-                or class_id
-            )
+            text_value = entry.get("#text") or entry.get("text") or entry.get("@text") or entry.get("label") or entry.get("name") or class_id
             collected_entries.append(
                 {
                     "@level": str(level).strip(),

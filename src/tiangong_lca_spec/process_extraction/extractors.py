@@ -365,40 +365,40 @@ module_guidelines = (
     "to match normalisation defaults.\n"
     "  * `technology`: short description of included technology and system "
     "boundary.\n"
-"- administrativeInformation:\n"
-"  * `common:generalComment`: two to four sentences covering scope, "
-"boundary, and any cross-process notes. This is a required ILCD field—never "
-"leave it empty.\n"
-"  * `common:commissionerAndGoal.common:intendedApplications`: summarise the "
-"stated intended applications of the dataset. Required even if you must infer "
-"from the paper’s study goal (note assumptions).\n"
-"- modellingAndValidation:\n"
-"  * `LCIMethodAndAllocation.typeOfDataSet`, `LCIMethodAndAllocation."
-"LCIMethodPrinciple`, and allocation details. These subfields are mandatory—"
-"write explicit strings such as “Attributional, cradle-to-gate” or “Consequential, "
-"system expansion”.\n"
-"  * `validation.review`: always include a review block. Use "
-"`{\"review\": {\"@type\": \"Not reviewed\"}}` when no external review exists.\n"
-"  * `complianceDeclarations`: fill in the standard ILCD compliance block "
-"(nomenclature/methodological/documentation/quality). Never omit it.\n"
-"  * `dataSourcesTreatmentAndRepresentativeness."
-"dataCutOffAndCompletenessPrinciples`: document the rules applied when "
-"deciding which product, waste, and elementary flows to include (e.g., "
-"cutting infrastructure, cooling water, or auxiliaries below 1 % of impacts).\n"
-"  * `dataSourcesTreatmentAndRepresentativeness."
-"dataSelectionAndCombinationPrinciples`, "
-"`dataTreatmentAndExtrapolationsPrinciples`, and "
-"`referenceToDataHandlingPrinciples`: describe how foreground data were "
-"chosen/combined, how extrapolations were handled, and cite relevant "
-"guidelines or databases.\n"
-"  * `dataSourcesTreatmentAndRepresentativeness.referenceToDataSource`: cite "
-"literature references, reports, database records, or on-site "
-"documentation with author(s), publication year, and a persistent identifier "
-"(DOI, URL, accession). Do not use table titles or captions as standalone "
-"sources. Include original sources for converted datasets and note "
-"parameterisation references when mathematical models are used. For LCI "
-"results or partly terminated systems, list influential background data "
-"sources as well.\n"
+    "- administrativeInformation:\n"
+    "  * `common:generalComment`: two to four sentences covering scope, "
+    "boundary, and any cross-process notes. This is a required ILCD field—never "
+    "leave it empty.\n"
+    "  * `common:commissionerAndGoal.common:intendedApplications`: summarise the "
+    "stated intended applications of the dataset. Required even if you must infer "
+    "from the paper’s study goal (note assumptions).\n"
+    "- modellingAndValidation:\n"
+    "  * `LCIMethodAndAllocation.typeOfDataSet`, `LCIMethodAndAllocation."
+    "LCIMethodPrinciple`, and allocation details. These subfields are mandatory—"
+    "write explicit strings such as “Attributional, cradle-to-gate” or “Consequential, "
+    "system expansion”.\n"
+    "  * `validation.review`: always include a review block. Use "
+    '`{"review": {"@type": "Not reviewed"}}` when no external review exists.\n'
+    "  * `complianceDeclarations`: fill in the standard ILCD compliance block "
+    "(nomenclature/methodological/documentation/quality). Never omit it.\n"
+    "  * `dataSourcesTreatmentAndRepresentativeness."
+    "dataCutOffAndCompletenessPrinciples`: document the rules applied when "
+    "deciding which product, waste, and elementary flows to include (e.g., "
+    "cutting infrastructure, cooling water, or auxiliaries below 1 % of impacts).\n"
+    "  * `dataSourcesTreatmentAndRepresentativeness."
+    "dataSelectionAndCombinationPrinciples`, "
+    "`dataTreatmentAndExtrapolationsPrinciples`, and "
+    "`referenceToDataHandlingPrinciples`: describe how foreground data were "
+    "chosen/combined, how extrapolations were handled, and cite relevant "
+    "guidelines or databases.\n"
+    "  * `dataSourcesTreatmentAndRepresentativeness.referenceToDataSource`: cite "
+    "literature references, reports, database records, or on-site "
+    "documentation with author(s), publication year, and a persistent identifier "
+    "(DOI, URL, accession). Do not use table titles or captions as standalone "
+    "sources. Include original sources for converted datasets and note "
+    "parameterisation references when mathematical models are used. For LCI "
+    "results or partly terminated systems, list influential background data "
+    "sources as well.\n"
     "- exchanges.exchange (for each flow):\n"
     '  * `exchangeDirection`: "Input" or "Output".\n'
     "  * `meanAmount`, `unit`, and `resultingAmount`.\n"
@@ -427,10 +427,10 @@ exchange_requirements = (
     "object must provide: `basename`, `treatment`, `mix_location`, `source_or_pathway`, "
     "`en_synonyms` (array), `zh_synonyms` (array), `abbreviation`, `state_purity`, "
     "`flow_properties`, `usage_context`, and optionally `formula_or_CAS`. Every value "
-    "must be a descriptive technical phrase—placeholders such as \"\", `-`, `NA`, "
+    'must be a descriptive technical phrase—placeholders such as "", `-`, `NA`, '
     "`N/A`, `TBD`, `Unspecified`, `GLO`, `GLOBAL`, `CN`, or acronyms of ≤3 uppercase "
     "letters are forbidden.\n"
-    "Example (geography=CN, table row \"Liquid nitrogen\"):\n"
+    'Example (geography=CN, table row "Liquid nitrogen"):\n'
     "```\n"
     "{\n"
     '  "exchangeName": "Liquid nitrogen",\n'
@@ -507,13 +507,13 @@ def _build_section_prompt() -> str:
 SECTION_PROMPT = _build_section_prompt()
 PROCESS_LIST_PROMPT = (
     "You are enumerating every process or unit operation described in the document. "
-    "Read the entire clean text and return JSON of the form {\"processes\": [...]}. Inclusion rules: (1) keep only "
+    'Read the entire clean text and return JSON of the form {"processes": [...]}. Inclusion rules: (1) keep only '
     "processes whose evidence shows at least one physical LCI row (mass/volume/area/energy/count with explicit units "
-    "such as kg, g, t, m2, m3, pcs, kWh, MJ). Treat phrases like \"life cycle\", \"scenario\", \"system\" or "
-    "\"parent system\" as risk hints—not automatic exclusions. If the supporting table still lists ordinary LCI units "
-    "keep it; if the table contains only LCIA indicators (ADP/AP/GWP/EP/PED/RI, units such as \"kg CO2 eq.\", "
-    "\"kg SO2 eq.\", \"kg Sb eq.\", \"kg PO4 eq.\", \"kg PM2.5 eq.\", or MJ explicitly labelled as impacts/depletion) "
-    "then exclude it as LCIA-only. Likewise, if the text merely says \"inventory shown in Table 4\" but the numeric "
+    'such as kg, g, t, m2, m3, pcs, kWh, MJ). Treat phrases like "life cycle", "scenario", "system" or '
+    '"parent system" as risk hints—not automatic exclusions. If the supporting table still lists ordinary LCI units '
+    'keep it; if the table contains only LCIA indicators (ADP/AP/GWP/EP/PED/RI, units such as "kg CO2 eq.", '
+    '"kg SO2 eq.", "kg Sb eq.", "kg PO4 eq.", "kg PM2.5 eq.", or MJ explicitly labelled as impacts/depletion) '
+    'then exclude it as LCIA-only. Likewise, if the text merely says "inventory shown in Table 4" but the numeric '
     "rows are absent from the provided clean_text, treat it as lacking quantitative LCI. (2) Merge duplicates across "
     "sections/tables into a single entry and aggregate evidence. (3) Exclude narrative mentions, literature-only "
     "references without in-text quantification, and shared utilities or preparation steps lacking an independent "
@@ -559,10 +559,7 @@ class ProcessListExtractor:
         LOGGER.info("process_extraction.process_list")
         prompt = PROCESS_LIST_PROMPT
         if retry_feedback:
-            prompt = (
-                f"{prompt}\n\nPrevious attempt issues (do NOT remove or merge processes; only add/fix entries):\n"
-                f"{retry_feedback}"
-            )
+            prompt = f"{prompt}\n\nPrevious attempt issues (do NOT remove or merge processes; only add/fix entries):\n" f"{retry_feedback}"
         payload = {
             "prompt": prompt,
             "context": clean_text,
@@ -602,7 +599,7 @@ class SectionExtractor:
                 f"name: {focus_process.get('name')}{alias_text}\n"
                 f"summary: {description}\n"
                 f"evidence:\n{evidence_text}\n"
-                "Return JSON shaped as {\"processDataSet\": {...}} containing only this process."
+                'Return JSON shaped as {"processDataSet": {...}} containing only this process.'
             )
             prompt = f"{prompt}\n\n{focus_directive}"
         if retry_feedback:
@@ -704,12 +701,7 @@ class ProcessClassifier:
         class_id = str(raw_code).strip() if raw_code is not None else ""
         if class_id not in allowed_codes:
             return None
-        description = (
-            data.get("#text")
-            or data.get("description")
-            or descriptions.get(class_id)
-            or ""
-        )
+        description = data.get("#text") or data.get("description") or descriptions.get(class_id) or ""
         description = description.strip() or descriptions.get(class_id, "")
         return {
             "@level": str(level),

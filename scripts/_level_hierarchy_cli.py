@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from tiangong_lca_spec.tidas.level_hierarchy import HierarchyNavigator, load_level_entries
 

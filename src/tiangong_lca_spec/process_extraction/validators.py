@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 FORBIDDEN_VALUES = {
     "",
@@ -111,10 +111,7 @@ def validate_exchanges_strict(
             errors.append(f"{prefix}: `exchangeName` uses placeholder value '{name}'.")
         unit_text = _coerce_str(exchange.get("unit"))
         if _has_lcia_signature(name, unit_text):
-            errors.append(
-                f"{prefix} ({name}): LCIA indicator detected (unit '{unit_text}'). "
-                "Stage 2 must only emit physical LCI flows, not impact scores."
-            )
+            errors.append(f"{prefix} ({name}): LCIA indicator detected (unit '{unit_text}'). " "Stage 2 must only emit physical LCI flows, not impact scores.")
             continue
         hints = _extract_flow_hints(exchange)
         if hints is None:
@@ -125,9 +122,7 @@ def validate_exchanges_strict(
         if not basename or _is_placeholder(basename):
             errors.append(f"{prefix} ({name}): `basename` must spell out the full flow name (e.g., 'Liquid nitrogen').")
         elif not _names_consistent(name, basename):
-            errors.append(
-                f"{prefix} ({name}): `basename` ('{basename}') must match or be a more formal version of `exchangeName`."
-            )
+            errors.append(f"{prefix} ({name}): `basename` ('{basename}') must match or be a more formal version of `exchangeName`.")
 
         for field in REQUIRED_HINT_FIELDS:
             value = hints.get(field)
@@ -169,9 +164,7 @@ def _has_lcia_signature(name: str, unit: str) -> bool:
     if not has_hard:
         return False
 
-    if normalized_unit in {"mj", "mjperfunctionalunit", "mjperfu"} or (
-        normalized_unit.startswith("mjper") and "functionalunit" in normalized_unit
-    ):
+    if normalized_unit in {"mj", "mjperfunctionalunit", "mjperfu"} or (normalized_unit.startswith("mjper") and "functionalunit" in normalized_unit):
         return any(term in name_lower for term in ENERGY_IMPACT_TERMS)
 
     return False
@@ -213,9 +206,7 @@ def _validate_synonyms(
         errors.append(f"{prefix} ({name}): `en_synonyms` must list at least one synonym.")
         return
     if _is_placeholder(synonyms[0]) or (basename and not _names_consistent(basename, synonyms[0])):
-        errors.append(
-            f"{prefix} ({name}): first entry of `en_synonyms` must repeat the full flow name (e.g., '{basename}')."
-        )
+        errors.append(f"{prefix} ({name}): first entry of `en_synonyms` must repeat the full flow name (e.g., '{basename}').")
     for idx, synonym in enumerate(synonyms):
         if idx == 0:
             continue
@@ -231,9 +222,7 @@ def _validate_mix_location(
     geography_upper: str,
 ) -> None:
     if geography_upper and geography_upper not in {"", "GLO"} and geography_upper not in value.upper():
-        errors.append(
-            f"{prefix} ({name}): `mix_location` ('{value}') must reference the geography code ({geography_upper})."
-        )
+        errors.append(f"{prefix} ({name}): `mix_location` ('{value}') must reference the geography code ({geography_upper}).")
 
 
 def _validate_source(
@@ -244,9 +233,7 @@ def _validate_source(
     geography_upper: str,
 ) -> None:
     if geography_upper and geography_upper not in {"", "GLO"} and geography_upper not in value.upper():
-        errors.append(
-            f"{prefix} ({name}): `source_or_pathway` ('{value}') must mention the geography ({geography_upper})."
-        )
+        errors.append(f"{prefix} ({name}): `source_or_pathway` ('{value}') must mention the geography ({geography_upper}).")
 
 
 def _names_consistent(primary: str, secondary: str) -> bool:
