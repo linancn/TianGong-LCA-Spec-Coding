@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Iterable, Sequence
 
 FORBIDDEN_VALUES = {
@@ -29,6 +31,61 @@ REQUIRED_HINT_FIELDS: tuple[str, ...] = (
     "usage_context",
 )
 
+LCIA_HARD_NAME_KEYWORDS: tuple[str, ...] = (
+    "potential",
+    "impact",
+    "depletion",
+    "abiotic",
+    "photochemical",
+    "acidification",
+    "eutrophication",
+    "respiratory",
+    "primary energy",
+    "cumulative energy",
+    "energy demand",
+    "energy depletion",
+    "gwp",
+    "adp",
+    "ep ",
+    "ped",
+    "ri",
+    "cadp",
+)
+
+LCIA_RISK_NAME_KEYWORDS: tuple[str, ...] = (
+    "life cycle",
+    "scenario",
+    "system-level",
+    "system ",
+)
+
+LCIA_UNIT_TOKENS: tuple[str, ...] = (
+    "kgco2eq",
+    "kgco2e",
+    "kgco2equivalent",
+    "kgso2eq",
+    "kgso2e",
+    "kgso2equivalent",
+    "kgsbeq",
+    "kgantimonyeq",
+    "kgpo43eq",
+    "kgpo4eq",
+    "kgpm25eq",
+    "kgcoaleq",
+    "kgch4eq",
+    "kgnoxeq",
+    "kgno2eq",
+    "kgnh3eq",
+)
+
+ENERGY_IMPACT_TERMS: tuple[str, ...] = (
+    "primary energy",
+    "cumulative energy",
+    "energy depletion",
+    "energy demand",
+    "ped",
+)
+
 
 def validate_exchanges_strict(
     exchanges: Sequence[dict[str, Any]],
@@ -41,6 +98,9 @@ def validate_exchanges_strict(
     geography_code = (geography or "").strip()
     geography_upper = geography_code.upper()
 
+    if not exchanges:
+        return ["Process must define at least one `exchanges.exchange` entry with quantitative LCI data."]
+
     for index, exchange in enumerate(exchanges, start=1):
         prefix = f"exchange #{index}"
         name = _coerce_str(exchange.get("exchangeName"))
@@ -49,6 +109,13 @@ def validate_exchanges_strict(
             continue
         if _is_placeholder(name):
             errors.append(f"{prefix}: `exchangeName` uses placeholder value '{name}'.")
+        unit_text = _coerce_str(exchange.get("unit"))
+        if _has_lcia_signature(name, unit_text):
+            errors.append(
+                f"{prefix} ({name}): LCIA indicator detected (unit '{unit_text}'). "
+                "Stage 2 must only emit physical LCI flows, not impact scores."
+            )
+            continue
         hints = _extract_flow_hints(exchange)
         if hints is None:
             errors.append(f"{prefix} ({name}): missing `flowHints` object with required fields.")
@@ -81,6 +148,41 @@ def validate_exchanges_strict(
                 _validate_source(value_str, prefix, name, errors, geography_upper)
 
     return errors
+
+
+def _has_lcia_signature(name: str, unit: str) -> bool:
+    if not name or not unit:
+        return False
+    name_lower = name.lower()
+    has_hard = any(keyword in name_lower for keyword in LCIA_HARD_NAME_KEYWORDS)
+    has_risk = any(keyword in name_lower for keyword in LCIA_RISK_NAME_KEYWORDS)
+    if not (has_hard or has_risk):
+        return False
+    normalized_unit = _normalize_unit(unit)
+    if not normalized_unit:
+        return False
+
+    if any(normalized_unit.startswith(token) for token in LCIA_UNIT_TOKENS):
+        return True
+
+    # If only a soft/risk keyword is present, require an LCIA-like unit to proceed.
+    if not has_hard:
+        return False
+
+    if normalized_unit in {"mj", "mjperfunctionalunit", "mjperfu"} or (
+        normalized_unit.startswith("mjper") and "functionalunit" in normalized_unit
+    ):
+        return any(term in name_lower for term in ENERGY_IMPACT_TERMS)
+
+    return False
+
+
+def _normalize_unit(unit: str) -> str:
+    if not unit:
+        return ""
+    normalized = unicodedata.normalize("NFKD", unit)
+    lowered = normalized.lower()
+    return re.sub(r"[^a-z0-9]", "", lowered)
 
 
 def _extract_flow_hints(exchange: dict[str, Any]) -> dict[str, Any] | None:
