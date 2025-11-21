@@ -100,7 +100,11 @@ def _validate_synonyms(
     if isinstance(value, list):
         synonyms = [_coerce_str(item) for item in value if _coerce_str(item)]
     elif isinstance(value, str):
-        synonyms = [part.strip() for part in value.split(",") if part.strip()]
+        if ";" in value:
+            parts = value.split(";")
+        else:
+            parts = value.split(",")
+        synonyms = [part.strip() for part in parts if part.strip()]
     else:
         synonyms = []
     if not synonyms:
@@ -168,3 +172,11 @@ def _is_placeholder(text: str) -> bool:
     if len(token) <= SHORT_ACRONYM_LIMIT and token.upper() == token and token.isalnum():
         return True
     return False
+
+
+def is_placeholder_value(text: str) -> bool:
+    """Public helper exposing the placeholder check for reuse across stages."""
+
+    if not isinstance(text, str):
+        return True
+    return _is_placeholder(text)

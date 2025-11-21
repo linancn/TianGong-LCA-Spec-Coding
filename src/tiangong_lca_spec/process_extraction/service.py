@@ -22,8 +22,8 @@ from .extractors import (
     ProcessListExtractor,
     SectionExtractor,
 )
-from .hints import enrich_exchange_hints
-from .validators import validate_exchanges_strict
+from .hints import enrich_exchange_hints, ensure_flow_hints_dict
+from .validators import is_placeholder_value, validate_exchanges_strict
 from .tidas_mapping import build_tidas_process_dataset
 
 LOGGER = get_logger(__name__)
@@ -146,8 +146,10 @@ class ProcessExtractionService:
             if not isinstance(dataset, dict):
                 raise ProcessExtractionError("Process detail extractor must return `processDataSet`.")
             exchanges = _extract_exchanges(dataset)
+            _prepare_exchange_metadata(exchanges)
             errors = validate_exchanges_strict(exchanges, geography=None)
             if not errors:
+                _serialise_flow_hints(dataset, process_label)
                 return dataset
             retry_feedback = _format_detail_retry_feedback(candidate, errors)
         raise ExchangeValidationError(process_label, errors)
@@ -227,6 +229,7 @@ class ProcessExtractionService:
                 raw_items = exchanges_container.get("exchange", [])
                 if isinstance(raw_items, list):
                     exchange_items = [item for item in raw_items if isinstance(item, dict)]
+                    _prepare_exchange_metadata(exchange_items)
                     for exchange in exchange_items:
                         enrich_exchange_hints(exchange, process_name=process_name, geography=geography_hint)
 
@@ -445,6 +448,28 @@ def _extract_exchanges(dataset: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(exchanges, list):
         return [item for item in exchanges if isinstance(item, dict)]
     return []
+
+
+def _prepare_exchange_metadata(exchanges: list[dict[str, Any]]) -> None:
+    for exchange in exchanges:
+        hints = ensure_flow_hints_dict(exchange)
+        name = _stringify(exchange.get("exchangeName"))
+        if name and not is_placeholder_value(name):
+            continue
+        if not isinstance(hints, dict):
+            continue
+        candidate_name = _stringify(hints.get("basename"))
+        if candidate_name and not is_placeholder_value(candidate_name):
+            exchange["exchangeName"] = candidate_name
+
+
+def _serialise_flow_hints(dataset: dict[str, Any], process_name: str | None) -> None:
+    exchanges = _extract_exchanges(dataset)
+    for exchange in exchanges:
+        hints = ensure_flow_hints_dict(exchange)
+        if hints is None:
+            continue
+        enrich_exchange_hints(exchange, process_name=process_name)
 
 
 def _format_detail_retry_feedback(candidate: dict[str, Any], errors: list[str]) -> str:

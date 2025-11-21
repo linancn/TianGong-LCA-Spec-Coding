@@ -26,8 +26,8 @@
   - `treatment=...`：以逗号连接处理方式、标准、质量属性、用途及工艺路线等限定词。先写处理方式，再写标准或等级，随后补充质量与用途信息。根据需要注明原料来源或路线。写明处理方式（如 热轧、精制、灭菌等）。引用适用标准或等级（如 EN 10025 S355、ASTM D4806 等）。记录关键性能属性（如 抗紫外、食品级）。用途限定清晰表达（如 用于晶圆生产、医用包装）。注明原生或再生来源，以及具体路线（如 再生料、蒸汽裂解路线）。示例：“Hot rolled, EN 10025 S355, primary production route”“精制，符合 ASTM D4806，燃料级乙醇”。
   - `mix_location=...`：以逗号标注混合类型与交付位置。区分生产混合、消费混合或特定技术。使用“在”表示交割点，“至”表示包含运输至该节点。说明是否为生产混合（多路线平均）或消费混合（包含进出口）。标出交付/可得位置（如 在工厂、在批发、在零售点、至终端消费者）。需要时补充至废物处理设施等描述。若两类信息均不适用，可留空；否则需提供。示例：“生产混合，在工厂”“消费混合，至终端消费者”“特定技术，至批发商”“生产混合，至废物焚烧厂”。用途限定应写在 treatmentStandardsRoutes 字段，避免混淆。
   - `flow_properties=...`：以逗号列出定量属性，并明确计量基准。列出关键组分含量或能量密度。若计量基准不同于质量分数，需额外说明。量化核心属性（如 45 % Fe、9.6 MJ/kg 净热值）。注明体积分数、摩尔分数或干基等特殊基准。使用 SI 单位或行业惯用单位。按重要性排序。避免重复其他字段已有的信息。示例：“45 % Fe mass/mass”“9.6 MJ/kg net calorific value”“90.5 % methane by volume”。
-  - `en_synonyms=...`：英文同义词/商品名/别名（分号分隔），常见公用工程至少两个条目，避免与 `basename` 重复。
-  - `zh_synonyms=...`：中文同义词/别名（分号分隔），仅记录经过验证的称谓，可包含简体/繁体或常见别名。
+  - `en_synonyms=...`：英文同义词/商品名/别名（分号分隔），常见公用工程至少两个条目，避免与 `basename` 重复；严禁输出 `['Electricity', 'Electric power', ...]` 这类 Python 列表语法，必须写成 `Electricity; Electric power; ...`。
+  - `zh_synonyms=...`：中文同义词/别名（分号分隔），仅记录经过验证的称谓，可包含简体/繁体或常见别名，同样禁止使用方括号列表表示。
   - `abbreviation=...`：权威缩写或短标签（如 “MV electricity”“NCM622-SiGr”）。
   - `state_purity=...`：写明物理形态、纯度/等级及关键压力、温度等条件（“AC 10–30 kV, 50 Hz”“Liquid, battery grade, 31–37 wt% HCl”）。
   - `source_or_pathway=...`：供应/生产路线、原料来源或地理范围，先写英文（如 “Regional grid, CN; Secondary aluminium route”），若需中文解释可在括号中附注。
@@ -35,6 +35,36 @@
   - `formula_or_CAS=...`（可选）：填写可用的化学式或 CAS 号。若确无信息，请省略该字段而不是补占位符。
 
 所有必填字段必须写入真实内容，严禁空串或 “NA/N/A”，也不要只在自由备注中描述而让结构化字段留空。若文献未明示，请结合上下文推断（如典型纯度、供应路径）或用严谨语言描述最佳可得信息，再在末尾补充表格引用或换算假设。缺少这些线索时 MCP 往往只返回中文短名或低相似度候选，Stage 3 会落回占位符。
+
+**流程必填元数据清单（Stage 2 必须输出）：**
+
+- `processInformation.dataSetInformation.common:generalComment`：2~4 句交代系统边界、假设、来源。**注意**：所有叙述性文本（方法、假设、引用说明）必须写在此处或 `common:generalComment` 的多语言字段中，不得塞进 `functionalUnitFlowProperties`、`referenceTo*` 等结构字段。
+- `processInformation.dataSetInformation.identifierOfSubDataSet`：稳定 ID（如 “P001”“Production stage”）。
+- `processInformation.dataSetInformation.name.functionalUnitFlowProperties`：描述功能单位限定条件（例如 “per 1 kg cathode material, dry basis”）。
+- `processInformation.quantitativeReference.referenceToReferenceFlow` 与 `functionalUnitOrOther`：与参考流量/单位一致。
+- `processInformation.time`：填写 `referenceYear`，并在掌握数据时补充 `dataSetValidUntil`、`timeRepresentativeness`。
+- `processInformation.geography.locationOfOperationSupplyOrProduction`：设置 `@location`（ISO 代码）及必要注释。
+- `modellingAndValidation.LCIMethodAndAllocation`：写明 `typeOfDataSet`、`LCIMethodPrinciple`、分配/截断策略。
+- `modellingAndValidation.validation.review`：必须存在，缺省可写 “Not reviewed”。
+- `modellingAndValidation.complianceDeclarations`：填满 ILCD 合规性条目（命名法、方法论、文档、质量）。
+- `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness`：分别描述 `dataCutOffAndCompletenessPrinciples`、`dataSelectionAndCombinationPrinciples`、`dataTreatmentAndExtrapolationsPrinciples`、`referenceToDataHandlingPrinciples`，并列出 `referenceToDataSource`。
+- `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`：说明数据拟用于何种分析。
+- `administrativeInformation.dataEntryBy` / `publicationAndOwnership`：时间戳、数据格式引用、数据所有权、版本号及（若有）前一版本引用。
+- **不要伪造外部引用**：`common:referenceToPrecedingDataSetVersion`、`common:referenceToUnchangedRepublication`、`common:referenceToRegistrationAuthority`、`common:referenceToEntitiesWithExclusiveAccess`、`referenceToDataHandlingPrinciples`、`referenceToLCAMethodDetails`、`referenceToSupportedImpactAssessmentMethods` 等字段本身是**可选**，只有在原文或上游资料明确给出联系人、数据集 UUID 或官方文档编号时才输出。若缺少可验证的引用，请完全省略该字段（连同空字典/字符串也不要生成），更不能以自然语言段落占位。示例：
+  ```json
+  {
+    "modellingAndValidation": {
+      "dataSourcesTreatmentAndRepresentativeness": {
+        "referenceToDataHandlingPrinciples": {
+          "referenceToDocument": {
+            "common:UUID": "c1b2d3e4-f567-4890-9123-abcdef456789"
+          }
+        }
+      }
+    }
+  }
+  ```
+  若上述 UUID/联系人并不存在，则**直接省略整个 `referenceToDataHandlingPrinciples` 字段**。
 - **Stage 2 产物自检**：在进入 Stage 3 前抽样查看 `artifacts/<run_id>/cache/stage2_process_blocks.json`，确保每个 `exchange` 同时具备 `exchangeName` 与 `flowHints` 对象，且字段全部为规范描述（不得是 “Table X”“GLO”“CN”“NA”“LN2” 等占位/缩写）。一旦发现占位符或缺失字段，必须在 Stage 2 直接重新生成或修正，禁止依赖后续阶段兜底。
 - **规范流名称**：优先采用 Tiangong/ILCD 常用流名，不保留论文里的括号或工艺限定（如 `Electricity for electrolysis (PV)`）。规范名称能显著提高 Stage 3 命中率，减少重复检索与超时。
 - **长耗时命令提前调参**：Stage 2/3 可能超过 15 分钟；在受限环境下先提升命令超时（如外层 CLI 15min 限制）或增加 `.secrets` 中的 `timeout` 字段，避免半途被杀导致反复重跑。
