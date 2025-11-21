@@ -13,7 +13,29 @@ SAMPLE_DATASET = {
         "quantitativeReference": {"referenceToReferenceFlow": "1"},
         "geography": {"code": "CN"},
     },
-    "exchanges": {"exchange": []},
+    "exchanges": {
+        "exchange": [
+            {
+                "exchangeName": "Methanol",
+                "exchangeDirection": "Output",
+                "unit": "kg",
+                "meanAmount": "1",
+                "flowHints": {
+                    "basename": "Methanol",
+                    "treatment": "Production mix",
+                    "mix_location": "Plant average (China mainland)",
+                    "flow_properties": "1 kg",
+                    "en_synonyms": ["Methanol", "Methyl alcohol"],
+                    "zh_synonyms": "甲醇",
+                    "abbreviation": "MeOH",
+                    "state_purity": "Liquid, 99.9% purity",
+                    "source_or_pathway": "Derived from plant survey (China mainland)",
+                    "usage_context": "Reference product for methanol production",
+                    "formula_or_CAS": "CH3OH / 67-56-1",
+                },
+            }
+        ]
+    },
 }
 
 
