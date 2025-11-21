@@ -481,13 +481,7 @@ def _normalise_ft_text(text: str | None) -> str:
 
 def _build_fallback_comment_entries(raw_comment: Any, process_name: str) -> list[dict[str, str]]:
     comment_entries = _normalise_language(raw_comment or f"Generated for {process_name}")
-    comment_entries = [
-        entry
-        for entry in comment_entries
-        if isinstance(entry, dict)
-        and (entry.get("@xml:lang") or "en").lower() == "en"
-        and _extract_text(entry.get("#text"))
-    ]
+    comment_entries = [entry for entry in comment_entries if isinstance(entry, dict) and (entry.get("@xml:lang") or "en").lower() == "en" and _extract_text(entry.get("#text"))]
     sanitized_comments: list[dict[str, str]] = []
     for entry in comment_entries:
         text = _sanitize_comment_text(entry.get("#text", ""))

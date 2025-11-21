@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime
 from typing import Any, TypedDict
@@ -23,8 +22,8 @@ from .extractors import (
     SectionExtractor,
 )
 from .hints import enrich_exchange_hints, ensure_flow_hints_dict
-from .validators import is_placeholder_value, validate_exchanges_strict
 from .tidas_mapping import build_tidas_process_dataset
+from .validators import is_placeholder_value, validate_exchanges_strict
 
 LOGGER = get_logger(__name__)
 _YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
@@ -475,11 +474,7 @@ def _serialise_flow_hints(dataset: dict[str, Any], process_name: str | None) -> 
 def _format_detail_retry_feedback(candidate: dict[str, Any], errors: list[str]) -> str:
     header = f"processId={candidate.get('processId')} name={candidate.get('name')}"
     details = "\n".join(f"- {issue}" for issue in errors)
-    return (
-        f"{header}\nFix each issue without removing, renaming, or merging the process. "
-        "Keep the same exchanges and regenerate the full `processDataSet`.\n"
-        f"{details}"
-    )
+    return f"{header}\nFix each issue without removing, renaming, or merging the process. " "Keep the same exchanges and regenerate the full `processDataSet`.\n" f"{details}"
 
 
 def _ensure_list(value: Any) -> list[Any]:

@@ -29,10 +29,7 @@ class ExchangeValidationError(ProcessExtractionError):
     def __init__(self, process_name: str | None, errors: list[str]) -> None:
         self.process_name = process_name or "Unnamed process"
         self.errors = errors
-        message = (
-            f"{self.process_name} produced invalid exchanges:\n- "
-            + "\n- ".join(errors)
-        )
+        message = f"{self.process_name} produced invalid exchanges:\n- " + "\n- ".join(errors)
         super().__init__(message)
 
     def retry_feedback(self) -> str:

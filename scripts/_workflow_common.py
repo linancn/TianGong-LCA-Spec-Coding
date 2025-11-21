@@ -26,9 +26,14 @@ class OpenAIResponsesLLM:
         timeout: int = 2400,
         cache_dir: Path | None = Path("artifacts/cache/openai"),
         use_cache: bool = True,
+        base_url: str | None = None,
     ) -> None:
-        self._client = OpenAI(api_key=api_key, timeout=timeout)
+        client_kwargs: dict[str, Any] = {"api_key": api_key, "timeout": timeout}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self._client = OpenAI(**client_kwargs)
         self._model = model
+        self._base_url = base_url
         self._cache_dir = Path(cache_dir) if use_cache and cache_dir else None
         if self._cache_dir:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -81,6 +86,7 @@ class OpenAIResponsesLLM:
             return None
         cache_material = {
             "model": self._model,
+            "base_url": self._base_url,
             "payload": payload,
             "text_options": text_options,
         }
@@ -109,15 +115,16 @@ class OpenAIResponsesLLM:
         return "\n".join(parts)
 
 
-def load_secrets(path: Path) -> tuple[str, str]:
-    """Load OpenAI API credentials from the secrets file."""
+def load_secrets(path: Path) -> tuple[str, str, str | None]:
+    """Load OpenAI API credentials (and optional base URL) from the secrets file."""
     secrets = tomllib.loads(path.read_text(encoding="utf-8"))
     openai_cfg = secrets.get("openai", {})
     api_key = openai_cfg.get("api_key")
     model = openai_cfg.get("model") or "gpt-5"
+    base_url = openai_cfg.get("base_url") or None
     if not api_key:
         raise SystemExit(f"OpenAI API key missing in {path}")
-    return api_key, model
+    return api_key, model, base_url
 
 
 def load_paper(path: Path) -> str:

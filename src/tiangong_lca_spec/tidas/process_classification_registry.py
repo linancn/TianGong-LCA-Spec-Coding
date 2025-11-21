@@ -52,10 +52,7 @@ class ProcessClassificationRegistry:
             if record is None:
                 raise ValueError(f"Unknown TIDAS process classification id '{class_id}'.")
             if record.level != level:
-                raise ValueError(
-                    f"Classification id '{class_id}' declared at level '{level}' "
-                    f"but expected level '{record.level}'."
-                )
+                raise ValueError(f"Classification id '{class_id}' declared at level '{level}' " f"but expected level '{record.level}'.")
             if level in seen_levels:
                 raise ValueError(f"Duplicate classification level '{level}' detected.")
             seen_levels.add(level)
@@ -67,10 +64,7 @@ class ProcessClassificationRegistry:
         # Ensure strictly ascending level order (0 -> 3)
         level_order = [entry.level for entry in normalised]
         if level_order != sorted(level_order, key=_level_sort_key):
-            raise ValueError(
-                "Classification levels must be provided in ascending order "
-                f"(received order: {level_order})."
-            )
+            raise ValueError("Classification levels must be provided in ascending order " f"(received order: {level_order}).")
 
         return [entry.as_dict() for entry in normalised]
 
@@ -121,4 +115,3 @@ def ensure_valid_classification_path(
     """Convenience wrapper that uses the shared registry singleton."""
     registry = ProcessClassificationRegistry()
     return registry.normalise_path(list(entries))
-

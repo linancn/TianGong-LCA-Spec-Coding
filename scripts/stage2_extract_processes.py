@@ -98,7 +98,7 @@ def main() -> None:
         raise SystemExit(f"Clean text file not found: {clean_text_path}")
 
     clean_text = _read_clean_text(clean_text_path)
-    api_key, model = load_secrets(args.secrets)
+    api_key, model, base_url = load_secrets(args.secrets)
     if not args.disable_cache:
         openai_cache_dir.parent.mkdir(parents=True, exist_ok=True)
         openai_cache = openai_cache_dir
@@ -110,6 +110,7 @@ def main() -> None:
         model=model,
         cache_dir=openai_cache,
         use_cache=not args.disable_cache,
+        base_url=base_url,
     )
     service = ProcessExtractionService(llm)
     process_blocks = service.extract(clean_text)

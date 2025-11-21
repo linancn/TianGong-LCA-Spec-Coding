@@ -34,9 +34,9 @@ def _to_serializable(obj: Any) -> Any:
 
 
 def run_workflow(paper_path: Path, output_path: Path, skip_tidas: bool) -> None:
-    api_key, model = load_secrets(Path(".secrets/secrets.toml"))
+    api_key, model, base_url = load_secrets(Path(".secrets/secrets.toml"))
     paper_md_json = load_paper(paper_path)
-    llm = OpenAIResponsesLLM(api_key=api_key, model=model)
+    llm = OpenAIResponsesLLM(api_key=api_key, model=model, base_url=base_url)
 
     orchestrator = WorkflowOrchestrator(llm)
     if skip_tidas:
