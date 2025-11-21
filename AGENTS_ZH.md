@@ -18,6 +18,7 @@
 - **依赖安装**：
   ```bash
   uv sync                # 安装运行依赖
+  uv sync --upgrade  # 升级所有依赖到最新允许版本
   uv sync --group dev    # 安装含 black/ruff 的开发依赖
   ```
   如需镜像可临时设置 `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。

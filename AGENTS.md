@@ -18,6 +18,7 @@ This guide focuses on general conventions for engineering collaboration, helping
 - **Dependency installation**:
   ```bash
   uv sync                # Install runtime dependencies
+  uv sync --upgrade  # Upgrade all dependencies to the latest allowed versions
   uv sync --group dev    # Install development dependencies including black/ruff
   ```
   Set `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple` temporarily if you need a mirror.
