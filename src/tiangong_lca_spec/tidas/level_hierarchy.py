@@ -116,10 +116,18 @@ def get_process_category_navigator() -> HierarchyNavigator:
     return build_navigator_from_schema(schema_path)
 
 
+@lru_cache(maxsize=1)
+def get_product_flow_category_navigator() -> HierarchyNavigator:
+    """Return a cached navigator for product flow classifications."""
+    schema_path = SCHEMA_DIR / "tidas_flows_product_category.json"
+    return build_navigator_from_schema(schema_path)
+
+
 __all__ = [
     "HierarchyEntry",
     "HierarchyNavigator",
     "build_navigator_from_schema",
     "load_level_entries",
     "get_process_category_navigator",
+    "get_product_flow_category_navigator",
 ]

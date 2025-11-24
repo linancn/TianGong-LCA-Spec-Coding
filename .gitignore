@@ -162,3 +162,7 @@ test.md
 /inline_prompt.txt
 
 .secrets/secrets.toml.bak
+
+test/data/json_ld
+
+inline_prompt_jsonld.txt
