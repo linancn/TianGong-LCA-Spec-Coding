@@ -1369,6 +1369,7 @@ def _build_source_stub(
 ) -> dict[str, Any]:
     short_desc = reference_node.get("common:shortDescription")
     description_entries = _normalise_language(short_desc or "Source reference")
+    citation_text = description_entries[0]["#text"] if description_entries else "Source reference"
     classification = _build_source_classification(reference_node, uuid_value, format_source_uuid)
     dataset_version = DEFAULT_DATA_SET_VERSION
     dataset = {
@@ -1383,6 +1384,10 @@ def _build_source_stub(
                     "common:UUID": uuid_value,
                     "common:shortName": description_entries,
                     "classificationInformation": classification,
+                    "sourceCitation": citation_text,
+                    "publicationType": "Other unpublished and grey literature",
+                    "sourceDescriptionOrComment": description_entries,
+                    "referenceToContact": _ownership_reference(),
                 }
             },
             "administrativeInformation": {

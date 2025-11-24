@@ -1018,9 +1018,9 @@ def _build_dataset_format_reference() -> dict[str, Any]:
 
 
 def _current_timestamp() -> str:
-    """Return an ISO 8601 timestamp with timezone information."""
+    """Return an ISO 8601 timestamp ending with 'Z' (UTC)."""
 
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _build_compliance_reference() -> dict[str, Any] | None:
