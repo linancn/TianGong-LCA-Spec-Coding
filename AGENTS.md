@@ -9,6 +9,7 @@ This guide focuses on general conventions for engineering collaboration, helping
   - `scripts/md/`: Staged CLIs from `stage1_preprocess.py` through `stage4_publish.py`, plus the regression entry point `run_test_workflow.py`.
   - `scripts/jsonld/`: JSON-LD extraction, validation, and publishing helpers.
   - `.github/prompts/`: Prompt specifications for Codex, with `extract-process-workflow.prompt.md` dedicated to the process extraction task.
+  - `scripts/kb/`: Knowledge base tooling (e.g., `import_ris.py`) for pushing bibliographic PDFs into Tiangong datasets.
 - **Collaboration interfaces**: The standard workflow depends on `.secrets/secrets.toml` where OpenAI, Tiangong LCA Remote, and TIDAS validation services are configured. Validate credentials before running Stage 3 or later in batch during your first integration.
 - **Further references**: Requirements, alignment strategies, and exception handling for each stage are documented in `.github/prompts/extract-process-workflow.prompt.md`. For supplemental classification or geographic information, use the helper CLIs provided by `scripts/md/list_*_children.py`.
 - **Stage 4 flow publishing**: When filling in missing flow definitions, the publisher now leans on the configured LLM to infer both the flow type and the most specific product classification. Follow the credential setup above so the scripts can call `scripts/md/list_product_flow_category_children.py` via the LLM-assisted selector.
@@ -31,11 +32,17 @@ This guide focuses on general conventions for engineering collaboration, helping
 2. Edit `.secrets/secrets.toml`:
    - `[openai]`: `api_key`, `model` (default `gpt-5`, override as needed).
    - `[tiangong_lca_remote]`: `url`, `service_name`, `tool_name`, `api_key`.
+   - `[kb]`: `base_url`, `dataset_id`, `api_key`, optional `timeout`, and `metadata_fields` (defaults already set to the single `meta` field).
 3. Write plaintext tokens directly into `api_key`; the framework automatically prepends `Bearer`.
 4. Before running Stage 3, call `FlowSearchService` with one or two sample exchanges to perform a connectivity self-test (see the workflow prompt document for Python snippets).
 - If operations has already provisioned `.secrets/secrets.toml`, Codex uses it as-is. Only revisit the local configuration when scripts raise missing-credential errors or connection failures.
 
 Local TIDAS validation now relies on the CLI command `uv run tidas-validate -i artifacts`, which Stage 3 executes automatically. No additional MCP credentials are required for this step.
+
+**Knowledge base ingestion**
+- Populate the `[kb]` section in `.secrets/secrets.toml` with the real host (e.g., `https://<kb-host>/v1`), dataset ID, and API key.
+- Only the `meta` metadata field is required. Citation details (authors/year/journal/DOI/URL) are concatenated automatically before upload.
+- Use `uv run python scripts/kb/import_ris.py --ris-dir input_data/<dir>` to ingest RIS files (dry-run via `--dry-run`). Attachments must live under the same `input_data/<dir>` root.
 
 ## 4. Quality Assurance and Self-Checks
 - After modifying Python source code, run:

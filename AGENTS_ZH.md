@@ -9,6 +9,7 @@
   - `scripts/md/`：`stage1_preprocess.py` ~ `stage4_publish.py` 等阶段化 CLI，以及回归入口 `run_test_workflow.py`。
   - `scripts/jsonld/`：面向 OpenLCA JSON-LD 的抽取、校验与发布脚本。
   - `.github/prompts/`：对 Codex 的提示词说明，其中 `extract-process-workflow.prompt.md` 专门描述流程抽取任务。
+  - `scripts/kb/`：知识库工具（如 `import_ris.py`），用于将参考文献 PDF 批量导入天工数据集。
 - **协作接口**：标准工作流依赖 `.secrets/secrets.toml` 中配置的 OpenAI、tiangong LCA Remote 与 TIDAS 验证服务。首次接入时请先完成凭据校验，再批量运行 Stage 3+。
 - **更多参考**：各阶段产物要求、对齐策略和异常处理见 `.github/prompts/extract-process-workflow.prompt.md`；若需补充分类或地理信息，可查看 `scripts/md/list_*_children.py` 提供的辅助 CLI。
 - **Stage 4 流发布**：当需要补齐缺失的 Flow 时，发布器会调用配置好的 LLM 自动推断流类型，并借助 `scripts/md/list_product_flow_category_children.py` 逐级细化产品分类，确保最终落到最具体的类别。请确认凭据就绪，避免发布阶段因无法访问 LLM 而退回默认分类。
@@ -31,9 +32,15 @@
 2. 编辑 `.secrets/secrets.toml`：
    - `[openai]`：`api_key`, `model`（默认 `gpt-5` 可覆盖）。
    - `[tiangong_lca_remote]`：`url`, `service_name`, `tool_name`, `api_key`。
+   - `[kb]`：`base_url`, `dataset_id`, `api_key` 以及可选 `timeout`/`metadata_fields`（默认已配置单一 `meta` 字段）。
 3. `api_key` 字段直接写入明文 token，框架会自动带上 `Bearer` 前缀。
 4. 建议在跑 Stage 3 前，先用 1~2 个样例交换调用 `FlowSearchService` 进行连通性自测（可参考工作流提示文档中的 Python 片段）。
 - 若运维已预先配置 `.secrets/secrets.toml`，Codex 默认直接使用，无需在执行前反复确认。仅当脚本报出缺少凭据或连接失败时，再检查本地配置。
+
+**知识库导入**
+- 在 `.secrets/secrets.toml` 的 `[kb]` 中填入真实的 host（示例：`https://<kb-host>/v1`）、数据集 ID 与 API key。
+- 仅保留 `meta` 元数据字段。作者、年份、期刊、DOI 与 URL 会在上传前自动拼接成一条引用文本写入 `meta`。
+- 使用 `uv run python scripts/kb/import_ris.py --ris-dir input_data/<目录>` 导入 RIS 文献；若只需验证流程可加 `--dry-run`。附件需与 RIS 文件位于同一 `input_data/<目录>` 下。
 
 ## 4. 质量保障与自检
 - 在修改 Python 源代码后，按序执行：
