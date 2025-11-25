@@ -6,12 +6,20 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _workflow_common import (
-    ensure_run_cache_dir,
-    generate_run_id,
-    load_paper,
-    save_latest_run_id,
-)
+try:
+    from scripts.md._workflow_common import (  # type: ignore
+        ensure_run_cache_dir,
+        generate_run_id,
+        load_paper,
+        save_latest_run_id,
+    )
+except ModuleNotFoundError:  # pragma: no cover - allows direct CLI execution
+    from _workflow_common import (
+        ensure_run_cache_dir,
+        generate_run_id,
+        load_paper,
+        save_latest_run_id,
+    )
 
 from tiangong_lca_spec.process_extraction import preprocess_paper
 

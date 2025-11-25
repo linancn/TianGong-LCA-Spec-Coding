@@ -6,11 +6,12 @@
 - **目标**：实现天工 LCA Spec Coding 工作流的端到端自动化，涵盖论文清洗、流程抽取、交换量对齐、数据合并、TIDAS 校验与最终交付。
 - **核心目录**：
   - `src/tiangong_lca_spec/`：工作流服务、MCP 客户端、数据模型与日志工具。
-  - `scripts/`：`stage1_preprocess.py` ~ `stage4_publish.py` 等阶段化 CLI，以及回归入口 `run_test_workflow.py`。
+  - `scripts/md/`：`stage1_preprocess.py` ~ `stage4_publish.py` 等阶段化 CLI，以及回归入口 `run_test_workflow.py`。
+  - `scripts/jsonld/`：面向 OpenLCA JSON-LD 的抽取、校验与发布脚本。
   - `.github/prompts/`：对 Codex 的提示词说明，其中 `extract-process-workflow.prompt.md` 专门描述流程抽取任务。
 - **协作接口**：标准工作流依赖 `.secrets/secrets.toml` 中配置的 OpenAI、tiangong LCA Remote 与 TIDAS 验证服务。首次接入时请先完成凭据校验，再批量运行 Stage 3+。
-- **更多参考**：各阶段产物要求、对齐策略和异常处理见 `.github/prompts/extract-process-workflow.prompt.md`；若需补充分类或地理信息，可查看 `scripts/list_*_children.py` 提供的辅助 CLI。
-- **Stage 4 流发布**：当需要补齐缺失的 Flow 时，发布器会调用配置好的 LLM 自动推断流类型，并借助 `scripts/list_product_flow_category_children.py` 逐级细化产品分类，确保最终落到最具体的类别。请确认凭据就绪，避免发布阶段因无法访问 LLM 而退回默认分类。
+- **更多参考**：各阶段产物要求、对齐策略和异常处理见 `.github/prompts/extract-process-workflow.prompt.md`；若需补充分类或地理信息，可查看 `scripts/md/list_*_children.py` 提供的辅助 CLI。
+- **Stage 4 流发布**：当需要补齐缺失的 Flow 时，发布器会调用配置好的 LLM 自动推断流类型，并借助 `scripts/md/list_product_flow_category_children.py` 逐级细化产品分类，确保最终落到最具体的类别。请确认凭据就绪，避免发布阶段因无法访问 LLM 而退回默认分类。
 
 ## 2. 开发环境与依赖
 - **Python 版本**：≥ 3.12，推荐通过 `uv toolchain` 管理，默认虚拟环境位于 `.venv/`。

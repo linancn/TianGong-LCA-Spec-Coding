@@ -7,7 +7,15 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from _workflow_common import OpenAIResponsesLLM, dump_json, load_paper, load_secrets
+try:
+    from scripts.md._workflow_common import (  # type: ignore
+        OpenAIResponsesLLM,
+        dump_json,
+        load_paper,
+        load_secrets,
+    )
+except ModuleNotFoundError:  # pragma: no cover - allows direct CLI execution
+    from _workflow_common import OpenAIResponsesLLM, dump_json, load_paper, load_secrets
 
 from tiangong_lca_spec.orchestrator import WorkflowOrchestrator
 

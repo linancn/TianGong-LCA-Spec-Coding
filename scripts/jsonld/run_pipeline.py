@@ -8,12 +8,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
+JSONLD_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = JSONLD_DIR.parent
+REPO_ROOT = SCRIPTS_DIR.parent
+for path in (SCRIPTS_DIR, REPO_ROOT):
+    if str(path) not in sys.path:
+        sys.path.append(str(path))
 
 try:
-    from scripts._workflow_common import ensure_run_cache_dir, generate_run_id  # type: ignore
+    from scripts.md._workflow_common import ensure_run_cache_dir, generate_run_id  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover
     from _workflow_common import ensure_run_cache_dir, generate_run_id  # type: ignore
 
@@ -75,12 +78,12 @@ def main() -> None:
         inline_prompt_path.write_text(args.prompt_inline, encoding="utf-8")
         print(f"[jsonld-run] Inline prompt captured at {inline_prompt_path}")
 
-    stage1_script = Path("scripts_jsonld") / "stage1_jsonld_extract.py"
-    stage2_script = Path("scripts_jsonld") / "stage2_jsonld_validate.py"
-    stage3_script = Path("scripts_jsonld") / "stage3_jsonld_publish.py"
+    stage1_script = JSONLD_DIR / "stage1_jsonld_extract.py"
+    stage2_script = JSONLD_DIR / "stage2_jsonld_validate.py"
+    stage3_script = JSONLD_DIR / "stage3_jsonld_publish.py"
 
     if not stage1_script.exists() or not stage2_script.exists():
-        raise SystemExit("JSON-LD stage scripts not found under scripts_jsonld/. Ensure the repo is up to date.")
+        raise SystemExit("JSON-LD stage scripts not found under scripts/jsonld/. Ensure the repo is up to date.")
 
     prompt_path = inline_prompt_path or args.prompt
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from scripts._workflow_common import (  # type: ignore
+    from scripts.md._workflow_common import (  # type: ignore
         dump_json,
         ensure_run_cache_dir,
         resolve_run_id,

@@ -7,15 +7,26 @@ import argparse
 import json
 from pathlib import Path
 
-from _workflow_common import (
-    OpenAIResponsesLLM,
-    dump_json,
-    ensure_run_cache_dir,
-    load_secrets,
-    resolve_run_id,
-    run_cache_path,
-    save_latest_run_id,
-)
+try:
+    from scripts.md._workflow_common import (  # type: ignore
+        OpenAIResponsesLLM,
+        dump_json,
+        ensure_run_cache_dir,
+        load_secrets,
+        resolve_run_id,
+        run_cache_path,
+        save_latest_run_id,
+    )
+except ModuleNotFoundError:  # pragma: no cover - allows direct CLI execution
+    from _workflow_common import (
+        OpenAIResponsesLLM,
+        dump_json,
+        ensure_run_cache_dir,
+        load_secrets,
+        resolve_run_id,
+        run_cache_path,
+        save_latest_run_id,
+    )
 
 from tiangong_lca_spec.process_extraction import ProcessExtractionService
 

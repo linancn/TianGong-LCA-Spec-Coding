@@ -47,7 +47,7 @@
 
 4. **执行流程编排示例（需自行实现 LLM 客户端后）**
    ```bash
-   uv run python scripts/run_test_workflow.py --skip-tidas
+   uv run python scripts/md/run_test_workflow.py --skip-tidas
    ```
    *该入口示例留作扩展，可在 `src/orchestrator` 目录中补充。*
 
@@ -114,7 +114,7 @@ uv run tidas-validate -i artifacts
 ### 将提示转换为内联代码并执行示例
 - **文献流程**
 ```bash
-uv run python scripts/convert_prompt_to_inline.py --source-json test/data/test_process.json
+uv run python scripts/md/convert_prompt_to_inline.py --source-json test/data/test_process.json
 
 # 危险操作：直接执行转换后的内联prompt（请确保已了解风险）
 codex exec --dangerously-bypass-approvals-and-sandbox "$(cat inline_prompt.txt)"
@@ -122,7 +122,7 @@ codex exec --dangerously-bypass-approvals-and-sandbox "$(cat inline_prompt.txt)"
 
 - **JSON-LD 数据**
   ```bash
-  uv run python scripts_jsonld/convert_prompt_to_inline.py \
+  uv run python scripts/jsonld/convert_prompt_to_inline.py \
     --prompt-path .github/prompts/convert_json.prompt.md \
     --source-json test/data/json_ld/processes \
     --output inline_prompt_jsonld.txt
@@ -132,18 +132,18 @@ codex exec --dangerously-bypass-approvals-and-sandbox "$(cat inline_prompt.txt)"
 
 ### 文献 vs JSON-LD 工作流入口
 
-- **文献（非结构化）数据**：继续使用 `scripts/` 下的 Stage 1→4。
-- **JSON-LD（OpenLCA）数据**：使用 `scripts_jsonld/` 下的 Stage 1→3（或 `run_pipeline.py` 一键执行），共享相同的 `_workflow_common`/TIDAS/发布基础设施。
+- **文献（非结构化）数据**：使用 `scripts/md/` 下的 Stage 1→4。
+- **JSON-LD（OpenLCA）数据**：使用 `scripts/jsonld/` 下的 Stage 1→3（或 `run_pipeline.py` 一键执行），共享相同的 `_workflow_common`/TIDAS/发布基础设施。
 
 | 数据源 | Stage 1 | Stage 2 | Stage 3 | Stage 4 | 说明 |
 |--------|---------|---------|---------|---------|------|
-| 文献 Cleantext | `scripts/stage1_preprocess.py` | `scripts/stage2_extract_processes.py` | `scripts/stage3_align_flows.py` | `scripts/stage4_publish.py` | 原始流程，LLM 提取 + FlowSearch 对齐 |
-| JSON-LD | `scripts_jsonld/stage1_jsonld_extract.py` | `scripts_jsonld/stage2_jsonld_validate.py` | `scripts_jsonld/stage3_jsonld_publish.py` | *(自动隶属于 Stage 3)* | 针对 OpenLCA JSON-LD 的 LLM 重建、校验与发布 |
+| 文献 Cleantext | `scripts/md/stage1_preprocess.py` | `scripts/md/stage2_extract_processes.py` | `scripts/md/stage3_align_flows.py` | `scripts/md/stage4_publish.py` | 原始流程，LLM 提取 + FlowSearch 对齐 |
+| JSON-LD | `scripts/jsonld/stage1_jsonld_extract.py` | `scripts/jsonld/stage2_jsonld_validate.py` | `scripts/jsonld/stage3_jsonld_publish.py` | *(自动隶属于 Stage 3)* | 针对 OpenLCA JSON-LD 的 LLM 重建、校验与发布 |
 
 快速运行 JSON-LD 管线：
 
 ```bash
-uv run python scripts_jsonld/run_pipeline.py \
+uv run python scripts/jsonld/run_pipeline.py \
   --process-dir test/data/json_ld/processes \
   --flows-dir test/data/json_ld/flows \
   --sources-dir test/data/json_ld/sources \
@@ -158,7 +158,7 @@ uv run python scripts_jsonld/run_pipeline.py \
 若想复用 “先生成 inline prompt 再一键触发 Stage 1→Stage 3” 的工作流，可直接执行：
 
 ```bash
-uv run python scripts_jsonld/jsonld_inline_run.py \
+uv run python scripts/jsonld/jsonld_inline_run.py \
   --process-dir test/data/json_ld/processes \
   --flows-dir test/data/json_ld/flows \
   --sources-dir test/data/json_ld/sources \

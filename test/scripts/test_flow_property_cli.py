@@ -15,7 +15,9 @@ MASS_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"
 
 @lru_cache(maxsize=1)
 def _load_cli_main():
-    module_globals = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "flow_property_cli.py"))
+    repo_root = Path(__file__).resolve().parents[2]
+    module_path = repo_root / "scripts" / "md" / "flow_property_cli.py"
+    module_globals = runpy.run_path(str(module_path))
     return module_globals["main"]
 
 

@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-from tiangong_lca_spec.tidas.process_classification_registry import ensure_valid_classification_path
 
+from tiangong_lca_spec.tidas.process_classification_registry import ensure_valid_classification_path
 
 ILCD_PROCESS_XMLNS = {
     "@xmlns": "http://lca.jrc.it/ILCD/Process",
@@ -53,6 +53,20 @@ ILCD_COMPLIANCE_SOURCE_URI = "../sources/d92a1a12-2545-49e2-a585-55c259997756_20
 ILCD_COMPLIANCE_SOURCE_VERSION = "20.20.002"
 DEFAULT_LICENSE = "Free of charge for all users and uses"
 DEFAULT_DATA_SET_VERSION = "01.01.000"
+ILCD_FLOW_PROPERTY_XMLNS = {
+    "@xmlns": "http://lca.jrc.it/ILCD/FlowProperty",
+    "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+    "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+    "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/FlowProperty ../../schemas/ILCD_FlowPropertyDataSet.xsd",
+    "@version": "1.1",
+}
+ILCD_UNIT_GROUP_XMLNS = {
+    "@xmlns": "http://lca.jrc.it/ILCD/UnitGroup",
+    "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+    "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+    "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/UnitGroup ../../schemas/ILCD_UnitGroupDataSet.xsd",
+    "@version": "1.1",
+}
 
 FLOW_CLASSIFICATION_PATHS: dict[str, tuple[dict[str, str], ...]] = {
     "generic_goods": (
@@ -63,7 +77,12 @@ FLOW_CLASSIFICATION_PATHS: dict[str, tuple[dict[str, str], ...]] = {
         {
             "@level": "4",
             "@classId": "38999",
-            "#text": "Articles n.e.c. (including candles, tapers, skins of birds with their feathers, artificial flowers, entertainment articles, hand sieves, hand riddles, vacuum flasks, tailors dummies, animated displays used for shop window dressing, and parts n.e.c.)",
+            "#text": (
+                "Articles n.e.c. (including candles, tapers, skins of birds with their feathers, "
+                "artificial flowers, entertainment articles, hand sieves, hand riddles, vacuum "
+                "flasks, tailors dummies, animated displays used for shop window dressing, and "
+                "parts n.e.c.)"
+            ),
         },
     ),
     "chemicals": (
@@ -73,12 +92,22 @@ FLOW_CLASSIFICATION_PATHS: dict[str, tuple[dict[str, str], ...]] = {
         {
             "@level": "3",
             "@classId": "3417",
-            "#text": "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, and their halogenated, sulphonated, nitrated or nitrosated derivatives; aldehyde-function compounds; ketone-function compounds and quinone-function compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c.",
+            "#text": (
+                "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, "
+                "and their halogenated, sulphonated, nitrated or nitrosated derivatives; "
+                "aldehyde-function compounds; ketone-function compounds and quinone-function "
+                "compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c."
+            ),
         },
         {
             "@level": "4",
             "@classId": "34170",
-            "#text": "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, and their halogenated, sulphonated, nitrated or nitrosated derivatives; aldehyde-function compounds; ketone-function compounds and quinone-function compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c.",
+            "#text": (
+                "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, "
+                "and their halogenated, sulphonated, nitrated or nitrosated derivatives; "
+                "aldehyde-function compounds; ketone-function compounds and quinone-function "
+                "compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c."
+            ),
         },
     ),
     "metal": (

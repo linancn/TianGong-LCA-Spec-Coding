@@ -6,11 +6,12 @@ This guide focuses on general conventions for engineering collaboration, helping
 - **Objective**: Deliver end-to-end automation of the Tiangong LCA Spec Coding workflow, covering paper cleaning, process extraction, exchange alignment, data merging, TIDAS validation, and final delivery.
 - **Core directories**:
   - `src/tiangong_lca_spec/`: Workflow services, MCP clients, data models, and logging utilities.
-  - `scripts/`: Staged CLIs from `stage1_preprocess.py` through `stage4_publish.py`, plus the regression entry point `run_test_workflow.py`.
+  - `scripts/md/`: Staged CLIs from `stage1_preprocess.py` through `stage4_publish.py`, plus the regression entry point `run_test_workflow.py`.
+  - `scripts/jsonld/`: JSON-LD extraction, validation, and publishing helpers.
   - `.github/prompts/`: Prompt specifications for Codex, with `extract-process-workflow.prompt.md` dedicated to the process extraction task.
 - **Collaboration interfaces**: The standard workflow depends on `.secrets/secrets.toml` where OpenAI, Tiangong LCA Remote, and TIDAS validation services are configured. Validate credentials before running Stage 3 or later in batch during your first integration.
-- **Further references**: Requirements, alignment strategies, and exception handling for each stage are documented in `.github/prompts/extract-process-workflow.prompt.md`. For supplemental classification or geographic information, use the helper CLIs provided by `scripts/list_*_children.py`.
-- **Stage 4 flow publishing**: When filling in missing flow definitions, the publisher now leans on the configured LLM to infer both the flow type and the most specific product classification. Follow the credential setup above so the scripts can call `scripts/list_product_flow_category_children.py` via the LLM-assisted selector.
+- **Further references**: Requirements, alignment strategies, and exception handling for each stage are documented in `.github/prompts/extract-process-workflow.prompt.md`. For supplemental classification or geographic information, use the helper CLIs provided by `scripts/md/list_*_children.py`.
+- **Stage 4 flow publishing**: When filling in missing flow definitions, the publisher now leans on the configured LLM to infer both the flow type and the most specific product classification. Follow the credential setup above so the scripts can call `scripts/md/list_product_flow_category_children.py` via the LLM-assisted selector.
 
 ## 2. Development Environment and Dependencies
 - **Python version**: ≥ 3.12. Manage it with `uv toolchain`; the default virtual environment lives in `.venv/`.
