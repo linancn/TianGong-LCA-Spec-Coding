@@ -85,3 +85,64 @@ def test_resolve_ris_path_requires_source(tmp_path: Path) -> None:
     missing_args = SimpleNamespace(ris_path=None, ris_dir=None, ris_file="missing.ris")
     with pytest.raises(SystemExit):
         kb_import._resolve_ris_path(missing_args)
+
+
+def test_resolve_pipeline_inputs_defaults_to_config() -> None:
+    args = SimpleNamespace(pipeline_inputs=None, pipeline_inputs_file=None)
+    config = SimpleNamespace(pipeline_inputs={"mode": "auto"})
+    assert kb_import._resolve_pipeline_inputs(args, config) == {"mode": "auto"}
+
+
+def test_resolve_pipeline_inputs_inline_json() -> None:
+    args = SimpleNamespace(pipeline_inputs='{"foo": "bar"}', pipeline_inputs_file=None)
+    config = SimpleNamespace(pipeline_inputs={})
+    assert kb_import._resolve_pipeline_inputs(args, config) == {"foo": "bar"}
+
+
+def test_resolve_pipeline_inputs_from_file(tmp_path: Path) -> None:
+    payload_file = tmp_path / "inputs.json"
+    payload_file.write_text('{"alpha": 1}', encoding="utf-8")
+    args = SimpleNamespace(pipeline_inputs=None, pipeline_inputs_file=payload_file)
+    config = SimpleNamespace(pipeline_inputs={})
+    assert kb_import._resolve_pipeline_inputs(args, config) == {"alpha": 1}
+
+
+def test_resolve_pipeline_inputs_requires_object(tmp_path: Path) -> None:
+    payload_file = tmp_path / "inputs.json"
+    payload_file.write_text('["a", "b"]', encoding="utf-8")
+    args = SimpleNamespace(pipeline_inputs=None, pipeline_inputs_file=payload_file)
+    config = SimpleNamespace(pipeline_inputs={})
+    with pytest.raises(SystemExit):
+        kb_import._resolve_pipeline_inputs(args, config)
+
+
+def test_resolve_pipeline_inputs_conflict(tmp_path: Path) -> None:
+    payload_file = tmp_path / "inputs.json"
+    payload_file.write_text("{}", encoding="utf-8")
+    args = SimpleNamespace(pipeline_inputs="{}", pipeline_inputs_file=payload_file)
+    config = SimpleNamespace(pipeline_inputs={})
+    with pytest.raises(SystemExit):
+        kb_import._resolve_pipeline_inputs(args, config)
+
+
+def test_build_datasource_entry_populates_expected_fields() -> None:
+    file_meta = {
+        "id": "file-123",
+        "name": "sample.pdf",
+        "mime_type": "application/pdf",
+        "size": 1024,
+        "extension": "pdf",
+    }
+    entry = kb_import._build_datasource_entry(file_meta, "local_file")
+    assert entry["related_id"] == "file-123"
+    assert entry["name"] == "sample.pdf"
+    assert entry["transfer_method"] == "local_file"
+    assert entry["mime_type"] == "application/pdf"
+
+
+def test_extract_document_ids_handles_nested_payloads() -> None:
+    response = {
+        "documents": [{"id": "doc-1"}],
+        "result": {"documents": [{"document_id": "doc-2"}]},
+    }
+    assert set(kb_import._extract_document_ids(response)) == {"doc-1", "doc-2"}

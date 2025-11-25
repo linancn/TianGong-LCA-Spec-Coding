@@ -64,6 +64,11 @@ class KnowledgeBaseConfig:
     dataset_id: str
     request_timeout: float = DEFAULT_TIMEOUT_SECONDS
     metadata_fields: list[MetadataFieldDefinition] = field(default_factory=list)
+    pipeline_datasource_type: str = "local_file"
+    pipeline_start_node_id: str | None = None
+    pipeline_inputs: dict[str, Any] = field(default_factory=dict)
+    pipeline_response_mode: str = "blocking"
+    pipeline_is_published: bool = True
 
     def __post_init__(self) -> None:
         if not self.metadata_fields:
@@ -98,6 +103,15 @@ def load_kb_config(path: Path) -> KnowledgeBaseConfig:
 
     metadata_definitions = _load_metadata_definitions(section.get("metadata_fields"))
 
+    pipeline_cfg = section.get("pipeline") or {}
+    if pipeline_cfg and not isinstance(pipeline_cfg, dict):
+        raise SystemExit("[kb.pipeline] must be a table containing datasource configuration.")
+
+    pipeline_inputs = pipeline_cfg.get("inputs") or {}
+    if not isinstance(pipeline_inputs, dict):
+        raise SystemExit("[kb.pipeline.inputs] must be a JSON object.")
+    pipeline_inputs = dict(pipeline_inputs)
+
     normalized_base_url = f"{base_url.rstrip('/')}/"
 
     return KnowledgeBaseConfig(
@@ -106,6 +120,11 @@ def load_kb_config(path: Path) -> KnowledgeBaseConfig:
         dataset_id=dataset_id,
         request_timeout=timeout,
         metadata_fields=metadata_definitions,
+        pipeline_datasource_type=pipeline_cfg.get("datasource_type") or "local_file",
+        pipeline_start_node_id=_optional_str(pipeline_cfg.get("start_node_id")),
+        pipeline_inputs=pipeline_inputs,
+        pipeline_response_mode=pipeline_cfg.get("response_mode") or "blocking",
+        pipeline_is_published=_coerce_bool(pipeline_cfg.get("is_published"), default=True),
     )
 
 
@@ -160,3 +179,19 @@ def _optional_str(value: Any, *, allow_blank: bool = False) -> str | None:
         if not text:
             return None
     return text
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
