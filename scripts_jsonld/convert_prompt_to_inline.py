@@ -42,10 +42,7 @@ def build_inline_prompt(prompt_path: Path, source_json: str) -> str:
     if not source_path.exists():
         raise SystemExit(f"Source path does not exist: {source_path}")
     if source_path.is_dir():
-        suffix = (
-            "The source text consists of JSON-LD payloads under "
-            f"{{{source_json}}}; iterate over every *.json file recursively."
-        )
+        suffix = "The source text consists of JSON-LD payloads under " f"{{{source_json}}}; iterate over every *.json file recursively."
     else:
         suffix = f"The source text is located at {{{source_json}}}."
     return " ".join(part for part in (PREFIX, inline_text, suffix) if part).strip()

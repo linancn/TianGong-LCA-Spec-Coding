@@ -1377,12 +1377,7 @@ def _build_process_schema_metadata(schema: dict[str, Any]) -> ProcessSchemaMetad
             if is_field_node and isinstance(enum_values, list) and enum_values:
                 enum_fields[pointer] = tuple(_collect_enum_options(node))
 
-            if (
-                is_property_field
-                and pointer.startswith(COMPLIANCE_BASE_POINTER)
-                and pointer != COMPLIANCE_BASE_POINTER
-                and "/properties/common:referenceToComplianceSystem/" not in pointer
-            ):
+            if is_property_field and pointer.startswith(COMPLIANCE_BASE_POINTER) and pointer != COMPLIANCE_BASE_POINTER and "/properties/common:referenceToComplianceSystem/" not in pointer:
                 field_name = path[-1]
                 if field_name and field_name not in compliance_pointers:
                     compliance_pointers[field_name] = pointer
