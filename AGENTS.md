@@ -33,6 +33,7 @@ This guide focuses on general conventions for engineering collaboration, helping
    - `[openai]`: `api_key`, `model` (default `gpt-5`, override as needed).
    - `[tiangong_lca_remote]`: `url`, `service_name`, `tool_name`, `api_key`.
    - `[kb]`: `base_url`, `dataset_id`, `api_key`, optional `timeout`, and `metadata_fields` (defaults already set to the `meta` and `category` fields).
+   - `[kb.pipeline]`: `datasource_type`, `start_node_id`, `is_published`, `response_mode`, and optional `inputs` for the RAG pipeline runner. The pipeline node ID is available from the dataset’s pipeline designer.
 3. Write plaintext tokens directly into `api_key`; the framework automatically prepends `Bearer`.
 4. Before running Stage 3, call `FlowSearchService` with one or two sample exchanges to perform a connectivity self-test (see the workflow prompt document for Python snippets).
 - If operations has already provisioned `.secrets/secrets.toml`, Codex uses it as-is. Only revisit the local configuration when scripts raise missing-credential errors or connection failures.
@@ -41,8 +42,10 @@ Local TIDAS validation now relies on the CLI command `uv run tidas-validate -i a
 
 **Knowledge base ingestion**
 - Populate the `[kb]` section in `.secrets/secrets.toml` with the real host (e.g., `https://<kb-host>/v1`), dataset ID, and API key.
+- Configure `[kb.pipeline]` so the importer can trigger the published RAG pipeline: `datasource_type` should match your FILE block (typically `local_file`), `start_node_id` must be copied from the pipeline designer, and `inputs` carries any required input-field values. If omitted, pipeline defaults apply.
 - Default metadata includes `meta` (auto-generated citation text) and `category` (taken from the first subdirectory under `input_data/`, e.g., `battery`). Override via `--category` if needed.
 - Use `uv run python scripts/kb/import_ris.py --ris-dir input_data/<dir>` (or `--ris-path ...`) to ingest RIS files; add `--dry-run` for previews. Attachments must live under the same `input_data/<dir>` root.
+- The importer now uploads files through the dataset pipeline (`/pipeline/file-upload` + `/pipeline/run`) so the configured pipeline stages run exactly as the UI workflow. Metadata is attached after the pipeline reports the generated document IDs.
 
 ## 4. Quality Assurance and Self-Checks
 - After modifying Python source code, run:

@@ -85,3 +85,55 @@ class KnowledgeBaseClient(AbstractContextManager["KnowledgeBaseClient"]):
         )
         response.raise_for_status()
         return response.json()
+
+    # Pipeline operations -----------------------------------------------------
+    def upload_pipeline_file(self, file_path: Path) -> dict:
+        """Upload a file for use inside a pipeline run."""
+        endpoint = "datasets/pipeline/file-upload"
+        try:
+            with file_path.open("rb") as binary:
+                files = {"file": (file_path.name, binary, "application/pdf")}
+                response = self._client.post(endpoint, files=files)
+                response.raise_for_status()
+                return response.json()
+        except FileNotFoundError as exc:
+            raise SystemExit(f"Attachment not found: {file_path}") from exc
+
+    def fetch_pipeline_datasource_plugins(self, *, is_published: bool = True) -> list[dict]:
+        """Return the datasource plugin metadata for the dataset pipeline."""
+        endpoint = f"datasets/{self._config.dataset_id}/pipeline/datasource-plugins"
+        try:
+            response = self._client.get(endpoint, params={"is_published": str(is_published).lower()})
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return []
+            raise
+        payload = response.json()
+        items = payload.get("data") if isinstance(payload, dict) else payload
+        if isinstance(items, list):
+            return [item for item in items if isinstance(item, dict)]
+        return []
+
+    def resolve_pipeline_start_node_id(self, datasource_type: str, *, is_published: bool = True) -> str | None:
+        """Find the datasource node ID that matches the configured datasource_type."""
+        plugins = self.fetch_pipeline_datasource_plugins(is_published=is_published)
+        datasource_type_lower = (datasource_type or "").lower()
+        for plugin in plugins:
+            node_id = plugin.get("node_id")
+            plugin_type = (
+                plugin.get("provider_type")
+                or plugin.get("datasource_type")
+                or plugin.get("type")
+                or plugin.get("provider")
+            )
+            if node_id and plugin_type and str(plugin_type).lower() == datasource_type_lower:
+                return str(node_id)
+        return None
+
+    def run_pipeline(self, payload: dict) -> dict:
+        """Execute the configured pipeline for the dataset."""
+        endpoint = f"datasets/{self._config.dataset_id}/pipeline/run"
+        response = self._client.post(endpoint, json=payload)
+        response.raise_for_status()
+        return response.json()

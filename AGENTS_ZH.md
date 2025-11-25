@@ -33,14 +33,17 @@
    - `[openai]`：`api_key`, `model`（默认 `gpt-5` 可覆盖）。
    - `[tiangong_lca_remote]`：`url`, `service_name`, `tool_name`, `api_key`。
    - `[kb]`：`base_url`, `dataset_id`, `api_key` 以及可选 `timeout`/`metadata_fields`（默认包含 `meta` 与 `category` 两个字段）。
+   - `[kb.pipeline]`：`datasource_type`, `start_node_id`, `is_published`, `response_mode` 与可选 `inputs`，用于驱动 RAG pipeline。`start_node_id` 需从可视化编排器中复制。
 3. `api_key` 字段直接写入明文 token，框架会自动带上 `Bearer` 前缀。
 4. 建议在跑 Stage 3 前，先用 1~2 个样例交换调用 `FlowSearchService` 进行连通性自测（可参考工作流提示文档中的 Python 片段）。
 - 若运维已预先配置 `.secrets/secrets.toml`，Codex 默认直接使用，无需在执行前反复确认。仅当脚本报出缺少凭据或连接失败时，再检查本地配置。
 
 **知识库导入**
 - 在 `.secrets/secrets.toml` 的 `[kb]` 中填入真实的 host（示例：`https://<kb-host>/v1`）、数据集 ID 与 API key。
+- 通过 `[kb.pipeline]` 配置 RAG pipeline：`datasource_type` 与文件节点类型一致（通常是 `local_file`），`start_node_id` 需在 UI 中查看节点详情后填写，`inputs` 可按需提供必填的输入字段。未设置时使用 pipeline 默认值。
 - 默认元数据包含 `meta`（自动拼接作者/年份/期刊/DOI/URL 的引文）与 `category`（取 `input_data/` 下的首层子目录名称，如 `battery`）。若需覆盖，可传 `--category`。
 - 使用 `uv run python scripts/kb/import_ris.py --ris-dir input_data/<目录>`（或 `--ris-path ...`）导入 RIS 文献；若只需验证流程可加 `--dry-run`。附件需与 RIS 文件位于同一 `input_data/<目录>` 下。
+- 导入过程改为调用 `/pipeline/file-upload` + `/pipeline/run`，确保和 UI 中的 pipeline 完全一致，pipeline 完成后脚本再为生成的 document 附加 `meta` 与 `category`。
 
 ## 4. 质量保障与自检
 - 在修改 Python 源代码后，按序执行：
