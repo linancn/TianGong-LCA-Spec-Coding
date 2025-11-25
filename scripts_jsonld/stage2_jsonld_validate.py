@@ -107,18 +107,14 @@ def _validate_classification(dataset: dict[str, Any], index: int, source: Path) 
     try:
         carrier["common:class"] = ensure_valid_classification_path(tuple(classes))
     except ValueError:
-        carrier["common:class"] = [
-            {"@level": "0", "@classId": "Z", "#text": "Unspecified"}
-        ]
+        carrier["common:class"] = [{"@level": "0", "@classId": "Z", "#text": "Unspecified"}]
 
 
 def _enforce_flow_dataset_version(flow_root: dict[str, Any], uuid_value: str) -> None:
     admin = flow_root.setdefault("administrativeInformation", {})
     publication = admin.setdefault("publicationAndOwnership", {})
     publication["common:dataSetVersion"] = DEFAULT_DATA_SET_VERSION
-    publication["common:permanentDataSetURI"] = (
-        f"https://lcdn.tiangong.earth/showFlow.xhtml?uuid={uuid_value}&version={DEFAULT_DATA_SET_VERSION}"
-    )
+    publication["common:permanentDataSetURI"] = f"https://lcdn.tiangong.earth/showFlow.xhtml?uuid={uuid_value}&version={DEFAULT_DATA_SET_VERSION}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -221,32 +217,24 @@ def main() -> None:
         converted_flows = _read_flow_datasets(flow_datasets_path)
         for dataset in converted_flows:
             uuid_mapper.remap_flow_dataset(dataset)
-        print(
-            f"[jsonld-stage2] Loaded {len(converted_flows)} flow dataset(s) from {flow_datasets_path}"
-        )
+        print(f"[jsonld-stage2] Loaded {len(converted_flows)} flow dataset(s) from {flow_datasets_path}")
     elif args.json_ld_flows:
         converted_flows = convert_flow_directory(args.json_ld_flows)
         for dataset in converted_flows:
             uuid_mapper.remap_flow_dataset(dataset)
-        print(
-            f"[jsonld-stage2] Converted {len(converted_flows)} flow dataset(s) from {args.json_ld_flows}"
-        )
+        print(f"[jsonld-stage2] Converted {len(converted_flows)} flow dataset(s) from {args.json_ld_flows}")
 
     converted_sources: list[dict[str, Any]] = []
     if source_datasets_path.exists():
         converted_sources = _read_source_datasets(source_datasets_path)
         for dataset in converted_sources:
             uuid_mapper.remap_source_dataset(dataset)
-        print(
-            f"[jsonld-stage2] Loaded {len(converted_sources)} source dataset(s) from {source_datasets_path}"
-        )
+        print(f"[jsonld-stage2] Loaded {len(converted_sources)} source dataset(s) from {source_datasets_path}")
     elif args.json_ld_sources:
         converted_sources = convert_source_directory(args.json_ld_sources)
         for dataset in converted_sources:
             uuid_mapper.remap_source_dataset(dataset)
-        print(
-            f"[jsonld-stage2] Converted {len(converted_sources)} source dataset(s) from {args.json_ld_sources}"
-        )
+        print(f"[jsonld-stage2] Converted {len(converted_sources)} source dataset(s) from {args.json_ld_sources}")
 
     process_blocks = _read_process_blocks(process_blocks_path)
     for block in process_blocks:
@@ -266,10 +254,7 @@ def main() -> None:
         primary_source_title=None,
         comment_llm=None,
     )
-    print(
-        f"[jsonld-stage2] Process exports complete -> {artifact_root} "
-        f"(processes={summary.process_count}, flows={summary.flow_count}, sources={summary.source_count})"
-    )
+    print(f"[jsonld-stage2] Process exports complete -> {artifact_root} " f"(processes={summary.process_count}, flows={summary.flow_count}, sources={summary.source_count})")
     dump_json({"alignment": alignment_entries}, alignment_output)
 
     flow_count = summary.flow_count

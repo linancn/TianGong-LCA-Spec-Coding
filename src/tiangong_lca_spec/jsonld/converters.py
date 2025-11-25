@@ -60,14 +60,26 @@ FLOW_CLASSIFICATION_PATHS: dict[str, tuple[dict[str, str], ...]] = {
         {"@level": "1", "@classId": "38", "#text": "Furniture; other transportable goods n.e.c."},
         {"@level": "2", "@classId": "389", "#text": "Other manufactured articles n.e.c."},
         {"@level": "3", "@classId": "3899", "#text": "Other articles"},
-        {"@level": "4", "@classId": "38999", "#text": "Articles n.e.c. (including candles, tapers, skins of birds with their feathers, artificial flowers, entertainment articles, hand sieves, hand riddles, vacuum flasks, tailors dummies, animated displays used for shop window dressing, and parts n.e.c.)"},
+        {
+            "@level": "4",
+            "@classId": "38999",
+            "#text": "Articles n.e.c. (including candles, tapers, skins of birds with their feathers, artificial flowers, entertainment articles, hand sieves, hand riddles, vacuum flasks, tailors dummies, animated displays used for shop window dressing, and parts n.e.c.)",
+        },
     ),
     "chemicals": (
         {"@level": "0", "@classId": "3", "#text": "Other transportable goods, except metal products, machinery and equipment"},
         {"@level": "1", "@classId": "34", "#text": "Basic chemicals"},
         {"@level": "2", "@classId": "341", "#text": "Basic organic chemicals"},
-        {"@level": "3", "@classId": "3417", "#text": "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, and their halogenated, sulphonated, nitrated or nitrosated derivatives; aldehyde-function compounds; ketone-function compounds and quinone-function compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c."},
-        {"@level": "4", "@classId": "34170", "#text": "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, and their halogenated, sulphonated, nitrated or nitrosated derivatives; aldehyde-function compounds; ketone-function compounds and quinone-function compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c."},
+        {
+            "@level": "3",
+            "@classId": "3417",
+            "#text": "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, and their halogenated, sulphonated, nitrated or nitrosated derivatives; aldehyde-function compounds; ketone-function compounds and quinone-function compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c.",
+        },
+        {
+            "@level": "4",
+            "@classId": "34170",
+            "#text": "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, and their halogenated, sulphonated, nitrated or nitrosated derivatives; aldehyde-function compounds; ketone-function compounds and quinone-function compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c.",
+        },
     ),
     "metal": (
         {"@level": "0", "@classId": "4", "#text": "Metal products, machinery and equipment"},
@@ -84,14 +96,22 @@ FLOW_CLASSIFICATION_PATHS: dict[str, tuple[dict[str, str], ...]] = {
         {"@level": "4", "@classId": "17100", "#text": "Electrical energy"},
     ),
     "transport_road": (
-        {"@level": "0", "@classId": "6", "#text": "Distributive trade services; accommodation, food and beverage serving services; transport services; and electricity, gas and water distribution services"},
+        {
+            "@level": "0",
+            "@classId": "6",
+            "#text": "Distributive trade services; accommodation, food and beverage serving services; transport services; and electricity, gas and water distribution services",
+        },
         {"@level": "1", "@classId": "65", "#text": "Freight transport services"},
         {"@level": "2", "@classId": "651", "#text": "Land transport services of freight"},
         {"@level": "3", "@classId": "6511", "#text": "Road transport services of freight"},
         {"@level": "4", "@classId": "65119", "#text": "Other road transport services of freight"},
     ),
     "transport_rail": (
-        {"@level": "0", "@classId": "6", "#text": "Distributive trade services; accommodation, food and beverage serving services; transport services; and electricity, gas and water distribution services"},
+        {
+            "@level": "0",
+            "@classId": "6",
+            "#text": "Distributive trade services; accommodation, food and beverage serving services; transport services; and electricity, gas and water distribution services",
+        },
         {"@level": "1", "@classId": "65", "#text": "Freight transport services"},
         {"@level": "2", "@classId": "651", "#text": "Land transport services of freight"},
         {"@level": "3", "@classId": "6512", "#text": "Railway transport services of freight"},
@@ -196,9 +216,7 @@ def _compliance_reference() -> dict[str, Any]:
 
 
 def _default_intended_applications() -> list[dict[str, str]]:
-    return [
-        _as_language_entry("Life cycle data prepared for Tiangong LCA Spec Coding workflow automation", "en")
-    ]
+    return [_as_language_entry("Life cycle data prepared for Tiangong LCA Spec Coding workflow automation", "en")]
 
 
 def _flow_classification_from_category(category: str | None) -> list[dict[str, str]]:
@@ -371,13 +389,7 @@ class JSONLDProcessConverter:
                     },
                     "identifierOfSubDataSet": "JSONLD",
                     "common:generalComment": _as_language_entry(description or "Converted from OpenLCA JSON-LD.", "en"),
-                    "classificationInformation": {
-                        "common:classification": {
-                            "common:class": classification or [
-                                {"@level": "0", "@classId": "Z", "#text": "Unspecified"}
-                            ]
-                        }
-                    },
+                    "classificationInformation": {"common:classification": {"common:class": classification or [{"@level": "0", "@classId": "Z", "#text": "Unspecified"}]}},
                 },
                 "quantitativeReference": {
                     "referenceToReferenceFlow": reference_flow_id or "1",
@@ -479,11 +491,7 @@ class JSONLDFlowConverter:
                         "name": name_block,
                         "common:synonyms": [_as_language_entry(name, "en")],
                         "common:generalComment": [_as_language_entry(description, "en")],
-                        "classificationInformation": {
-                            "common:classification": {
-                                "common:class": classification
-                            }
-                        },
+                        "classificationInformation": {"common:classification": {"common:class": classification}},
                     },
                     "quantitativeReference": {
                         "referenceToReferenceFlowProperty": reference_flow_property_id,
@@ -512,7 +520,7 @@ class JSONLDFlowConverter:
                             "common:documentationCompliance": "Not defined",
                             "common:qualityCompliance": "Not defined",
                         }
-                    }
+                    },
                 },
                 "administrativeInformation": {
                     "dataEntryBy": {
@@ -555,13 +563,7 @@ class JSONLDFlowPropertyConverter:
                         "common:UUID": property_uuid,
                         "common:name": _as_language_entry(name, "en"),
                         "common:synonyms": [_as_language_entry(name, "en")],
-                        "classificationInformation": {
-                            "common:classification": {
-                                "common:class": classification or [
-                                    {"@level": "0", "@classId": "Z", "#text": "Unspecified"}
-                                ]
-                            }
-                        },
+                        "classificationInformation": {"common:classification": {"common:class": classification or [{"@level": "0", "@classId": "Z", "#text": "Unspecified"}]}},
                     },
                     "quantitativeReference": {
                         "referenceToReferenceUnitGroup": _reference_to_unit_group(unit_group),
@@ -619,13 +621,7 @@ class JSONLDUnitGroupConverter:
                     "dataSetInformation": {
                         "common:UUID": group_uuid,
                         "common:name": _as_language_entry(name, "en"),
-                        "classificationInformation": {
-                            "common:classification": {
-                                "common:class": classification or [
-                                    {"@level": "0", "@classId": "Z", "#text": "Unspecified"}
-                                ]
-                            }
-                        },
+                        "classificationInformation": {"common:classification": {"common:class": classification or [{"@level": "0", "@classId": "Z", "#text": "Unspecified"}]}},
                     },
                     "quantitativeReference": {
                         "referenceToReferenceUnit": "0",
@@ -676,11 +672,7 @@ class JSONLDSourceConverter:
                     "dataSetInformation": {
                         "common:UUID": source_uuid,
                         "common:shortName": _as_language_entry(short_name, "en"),
-                        "classificationInformation": {
-                            "common:classification": {
-                                "common:class": classification
-                            }
-                        },
+                        "classificationInformation": {"common:classification": {"common:class": classification}},
                         "sourceCitation": citation,
                         "publicationType": publication_type,
                         "sourceDescriptionOrComment": [_as_language_entry(description, "en")],

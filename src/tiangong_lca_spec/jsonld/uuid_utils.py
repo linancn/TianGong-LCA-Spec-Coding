@@ -20,10 +20,7 @@ class UUIDMapper:
         flow_root = dataset.get("flowDataSet")
         if not isinstance(flow_root, Mapping):
             return
-        info = (
-            flow_root.get("flowInformation", {})
-            .get("dataSetInformation", {})
-        )
+        info = flow_root.get("flowInformation", {}).get("dataSetInformation", {})
         old_uuid = _ensure_uuid(info)
         new_uuid = _new_uuid()
         self.flow_map[old_uuid] = new_uuid
@@ -35,10 +32,7 @@ class UUIDMapper:
         source_root = dataset.get("sourceDataSet")
         if not isinstance(source_root, Mapping):
             return
-        info = (
-            source_root.get("sourceInformation", {})
-            .get("dataSetInformation", {})
-        )
+        info = source_root.get("sourceInformation", {}).get("dataSetInformation", {})
         old_uuid = _ensure_uuid(info)
         new_uuid = _new_uuid()
         self.source_map[old_uuid] = new_uuid
@@ -50,10 +44,7 @@ class UUIDMapper:
         dataset = block.get("processDataSet")
         if not isinstance(dataset, Mapping):
             return
-        info = (
-            dataset.get("processInformation", {})
-            .get("dataSetInformation", {})
-        )
+        info = dataset.get("processInformation", {}).get("dataSetInformation", {})
         old_uuid = _ensure_uuid(info)
         new_uuid = _new_uuid()
         self.process_map[old_uuid] = new_uuid
@@ -88,6 +79,7 @@ class UUIDMapper:
 
 
 # Helpers --------------------------------------------------------------------------
+
 
 def _replace_uuid_strings(node: Any, old: str, new: str) -> None:
     if old == new:

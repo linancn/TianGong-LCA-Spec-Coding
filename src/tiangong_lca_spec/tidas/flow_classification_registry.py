@@ -46,22 +46,14 @@ class FlowProductClassificationRegistry:
             if not raw:
                 continue
             level = (raw.get("@level") or "").strip()
-            class_id = (
-                raw.get("@classId")
-                or raw.get("@catId")
-                or raw.get("@code")
-                or ""
-            ).strip()
+            class_id = (raw.get("@classId") or raw.get("@catId") or raw.get("@code") or "").strip()
             if not level or not class_id:
                 raise ValueError("Classification entries must include '@level' and '@classId'.")
             record = self._entries_by_id.get(class_id)
             if record is None:
                 raise ValueError(f"Unknown TIDAS product flow classification id '{class_id}'.")
             if record.level != level:
-                raise ValueError(
-                    f"Classification id '{class_id}' declared at level '{level}' "
-                    f"but expected level '{record.level}'."
-                )
+                raise ValueError(f"Classification id '{class_id}' declared at level '{level}' " f"but expected level '{record.level}'.")
             if level in seen_levels:
                 raise ValueError(f"Duplicate classification level '{level}' detected.")
             seen_levels.add(level)
@@ -72,10 +64,7 @@ class FlowProductClassificationRegistry:
 
         level_order = [entry.level for entry in normalised]
         if level_order != sorted(level_order, key=_level_sort_key):
-            raise ValueError(
-                "Classification levels must appear in ascending order "
-                f"(received order: {level_order})."
-            )
+            raise ValueError("Classification levels must appear in ascending order " f"(received order: {level_order}).")
 
         return [entry.as_dict() for entry in normalised]
 
@@ -90,14 +79,7 @@ class FlowProductClassificationRegistry:
             if not needle or needle == "unspecified":
                 continue
             if needle in haystack:
-                if (
-                    best is None
-                    or int(entry.level) > int(best.level)
-                    or (
-                        entry.level == best.level
-                        and len(entry.class_id) > len(best.class_id)
-                    )
-                ):
+                if best is None or int(entry.level) > int(best.level) or (entry.level == best.level and len(entry.class_id) > len(best.class_id)):
                     best = entry
         if best is None:
             # Fallback: match on individual keyword occurrences
@@ -106,14 +88,7 @@ class FlowProductClassificationRegistry:
                 if not needle:
                     continue
                 if any(token and token in haystack for token in needle.split()):
-                    if (
-                        best is None
-                        or int(entry.level) > int(best.level)
-                        or (
-                            entry.level == best.level
-                            and len(entry.class_id) > len(best.class_id)
-                        )
-                    ):
+                    if best is None or int(entry.level) > int(best.level) or (entry.level == best.level and len(entry.class_id) > len(best.class_id)):
                         best = entry
         return best
 
@@ -160,11 +135,7 @@ def _load_classification_entries(
     for candidate in schema.get("oneOf", []):
         props = candidate.get("properties") or {}
         level_const = _extract_const(props.get("@level"))
-        class_const = (
-            _extract_const(props.get("@classId"))
-            or _extract_const(props.get("@catId"))
-            or _extract_const(props.get("@code"))
-        )
+        class_const = _extract_const(props.get("@classId")) or _extract_const(props.get("@catId")) or _extract_const(props.get("@code"))
         text_const = _extract_const(props.get("#text"))
         if not (level_const and class_const and text_const):
             continue

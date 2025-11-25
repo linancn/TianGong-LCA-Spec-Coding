@@ -15,13 +15,8 @@ TIANGONG_CONTACT_UUID = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
 TIANGONG_CONTACT_VERSION = "01.00.000"
 TIANGONG_CONTACT_URI = build_local_dataset_uri("contact data set", TIANGONG_CONTACT_UUID, TIANGONG_CONTACT_VERSION)
 
-DEFAULT_DATA_SOURCE_TEXT = (
-    "Converted from OpenLCA JSON-LD input; upstream references will be refined during alignment."
-)
-DEFAULT_CUTOFF_TEXT = (
-    "Data completeness and cut-off principles follow the supplied OpenLCA JSON-LD dataset; "
-    "unchanged values were preserved during Tiangong normalization."
-)
+DEFAULT_DATA_SOURCE_TEXT = "Converted from OpenLCA JSON-LD input; upstream references will be refined during alignment."
+DEFAULT_CUTOFF_TEXT = "Data completeness and cut-off principles follow the supplied OpenLCA JSON-LD dataset; " "unchanged values were preserved during Tiangong normalization."
 DEFAULT_TECH_DESCRIPTION = "Technology description not provided; derived from OpenLCA JSON-LD."
 DEFAULT_INTENDED_APPLICATION = "Life cycle data prepared for Tiangong LCA Spec Coding workflow automation."
 MASS_FLOW_PROPERTY_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"

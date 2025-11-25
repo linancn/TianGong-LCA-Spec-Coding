@@ -316,11 +316,7 @@ def _ensure_process_defaults(process_dataset: dict[str, Any]) -> None:
 def _attach_process_source_references(process_dataset: dict[str, Any], source_payload: dict[str, Any]) -> None:
     """Populate referenceToDataSource with actual JSON-LD sources when available."""
 
-    sources_block = (
-        source_payload.get("processDocumentation", {}).get("sources")
-        if isinstance(source_payload, dict)
-        else None
-    )
+    sources_block = source_payload.get("processDocumentation", {}).get("sources") if isinstance(source_payload, dict) else None
     if not isinstance(sources_block, list):
         return
 
@@ -333,11 +329,7 @@ def _attach_process_source_references(process_dataset: dict[str, Any], source_pa
     elif isinstance(existing, list):
         reference_entries.extend([entry for entry in existing if isinstance(entry, dict)])
 
-    seen_ids = {
-        entry.get("@refObjectId").strip().lower()
-        for entry in reference_entries
-        if isinstance(entry.get("@refObjectId"), str)
-    }
+    seen_ids = {entry.get("@refObjectId").strip().lower() for entry in reference_entries if isinstance(entry.get("@refObjectId"), str)}
 
     for source in sources_block:
         if not isinstance(source, dict):
@@ -374,11 +366,7 @@ def _ensure_source_defaults(source_dataset: dict[str, Any], uuid_value: str) -> 
     if not isinstance(existing_info, dict):
         existing_info = {}
     data_info: dict[str, Any] = {}
-    short_name = (
-        _first_text(existing_info.get("common:shortName"))
-        or _first_text(existing_info.get("name"))
-        or "Source"
-    )
+    short_name = _first_text(existing_info.get("common:shortName")) or _first_text(existing_info.get("name")) or "Source"
     data_info["common:UUID"] = uuid_value
     data_info["common:shortName"] = _multilang_list(existing_info.get("common:shortName"), short_name)
     classification = {
@@ -504,21 +492,11 @@ def _wrap_process_dataset(
     _ensure_process_defaults(node)
     _attach_process_source_references(node, source_payload)
     _apply_process_classification(node, classifier)
-    class_entries = (
-        node.get("processInformation", {})
-        .get("dataSetInformation", {})
-        .get("classificationInformation", {})
-        .get("common:classification", {})
-        .get("common:class")
-    )
+    class_entries = node.get("processInformation", {}).get("dataSetInformation", {}).get("classificationInformation", {}).get("common:classification", {}).get("common:class")
     if not class_entries:
         category_hint = _classification_from_category(_extract_category_text(source_payload))
         if category_hint:
-            classification_info = (
-                node.setdefault("processInformation", {})
-                .setdefault("dataSetInformation", {})
-                .setdefault("classificationInformation", {})
-            )
+            classification_info = node.setdefault("processInformation", {}).setdefault("dataSetInformation", {}).setdefault("classificationInformation", {})
             classification_info.setdefault("common:classification", {})["common:class"] = category_hint
     apply_jsonld_process_overrides({"processDataSet": node})
     return {
@@ -537,14 +515,7 @@ def _normalise_flow_classes(raw: Any) -> list[dict[str, str]]:
     for idx, entry in enumerate(candidate):
         if isinstance(entry, dict):
             level = entry.get("@level") or entry.get("level") or str(idx)
-            class_id = (
-                entry.get("@classId")
-                or entry.get("classId")
-                or entry.get("@catId")
-                or entry.get("catId")
-                or entry.get("#text")
-                or f"CLASS_{idx}"
-            )
+            class_id = entry.get("@classId") or entry.get("classId") or entry.get("@catId") or entry.get("catId") or entry.get("#text") or f"CLASS_{idx}"
             text = entry.get("#text") or entry.get("text") or entry.get("label") or str(class_id)
             normalised.append(
                 {
@@ -585,12 +556,8 @@ def _ensure_flow_defaults(flow_dataset: dict[str, Any], uuid_value: str) -> None
     name_block = data_info.setdefault("name", {})
     base_name = _first_text(name_block.get("baseName")) or "Unnamed flow"
     name_block["baseName"] = _language_entry(base_name)
-    name_block["treatmentStandardsRoutes"] = _language_entry(
-        _first_text(name_block.get("treatmentStandardsRoutes")) or "Standard treatment not specified"
-    )
-    name_block["mixAndLocationTypes"] = _language_entry(
-        _first_text(name_block.get("mixAndLocationTypes")) or "Production mix, at plant"
-    )
+    name_block["treatmentStandardsRoutes"] = _language_entry(_first_text(name_block.get("treatmentStandardsRoutes")) or "Standard treatment not specified")
+    name_block["mixAndLocationTypes"] = _language_entry(_first_text(name_block.get("mixAndLocationTypes")) or "Production mix, at plant")
     name_block.pop("functionalUnitFlowProperties", None)
     name_block["flowProperties"] = _language_entry("Declared per reference flow property")
 
@@ -725,10 +692,7 @@ def _ensure_flow_classification(
     source: Path | None,
     fallback_text: str | None = None,
 ) -> None:
-    info = (
-        flow_dataset.setdefault("flowInformation", {})
-        .setdefault("dataSetInformation", {})
-    )
+    info = flow_dataset.setdefault("flowInformation", {}).setdefault("dataSetInformation", {})
     classification_info = info.setdefault("classificationInformation", {})
     classification = classification_info.get("common:classification")
     if isinstance(classification, list):
@@ -746,8 +710,7 @@ def _ensure_flow_classification(
     context_hint = f" [category hint: {fallback_text}]" if fallback_text else ""
     if not normalised:
         raise SystemExit(
-            f"Flow dataset{hint}{context_hint} is missing classification entries; "
-            "Stage 1 must emit a complete path defined in src/tidas/schemas/tidas_flows_product_category.json."
+            f"Flow dataset{hint}{context_hint} is missing classification entries; " "Stage 1 must emit a complete path defined in src/tidas/schemas/tidas_flows_product_category.json."
         )
     try:
         classification["common:class"] = ensure_valid_product_flow_classification(tuple(normalised))
@@ -768,10 +731,7 @@ def _wrap_flow_dataset(
     node = dataset.get("flowDataSet")
     if not isinstance(node, dict):
         raise SystemExit("LLM response missing 'flowDataSet'.")
-    info = (
-        node.setdefault("flowInformation", {})
-        .setdefault("dataSetInformation", {})
-    )
+    info = node.setdefault("flowInformation", {}).setdefault("dataSetInformation", {})
     uuid_value = info.get("common:UUID") or str(uuid4())
     info["common:UUID"] = uuid_value
     classification_container = info.get("classificationInformation")
@@ -801,10 +761,7 @@ def _wrap_source_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     node = dataset.get("sourceDataSet")
     if not isinstance(node, dict):
         raise SystemExit("LLM response missing 'sourceDataSet'.")
-    info = (
-        node.setdefault("sourceInformation", {})
-        .setdefault("dataSetInformation", {})
-    )
+    info = node.setdefault("sourceInformation", {}).setdefault("dataSetInformation", {})
     uuid_value = info.get("common:UUID") or str(uuid4())
     info["common:UUID"] = uuid_value
     _ensure_source_defaults(node, uuid_value)
