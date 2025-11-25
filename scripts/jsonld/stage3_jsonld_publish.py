@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# ruff: noqa: E402
 """Stage 3 (JSON-LD): publish converted ILCD datasets via Database_CRUD_Tool."""
 
 from __future__ import annotations
@@ -9,15 +10,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 try:
-    from scripts._workflow_common import resolve_run_id  # type: ignore
+    from scripts.md._workflow_common import resolve_run_id  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover
     from _workflow_common import resolve_run_id  # type: ignore
-from tiangong_lca_spec.core.logging import get_logger, configure_logging
+from tiangong_lca_spec.core.logging import configure_logging, get_logger
 from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 
 LOGGER = get_logger(__name__)

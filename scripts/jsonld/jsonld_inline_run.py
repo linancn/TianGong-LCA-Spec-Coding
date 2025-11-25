@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# ruff: noqa: E402
 """Generate inline JSON-LD prompts and execute Stage 1→3 in a single command."""
 
 from __future__ import annotations
@@ -9,14 +10,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
+JSONLD_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = JSONLD_DIR.parent
+REPO_ROOT = SCRIPTS_DIR.parent
+for path in (SCRIPTS_DIR, REPO_ROOT):
+    if str(path) not in sys.path:
+        sys.path.append(str(path))
 
-from scripts_jsonld.convert_prompt_to_inline import DEFAULT_PROMPT_PATH, build_inline_prompt
+from scripts.jsonld.convert_prompt_to_inline import DEFAULT_PROMPT_PATH, build_inline_prompt
 
 try:
-    from scripts._workflow_common import generate_run_id  # type: ignore
+    from scripts.md._workflow_common import generate_run_id  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover
     from _workflow_common import generate_run_id  # type: ignore
 
@@ -122,9 +126,9 @@ def main() -> None:
         return
 
     run_id = args.run_id or generate_run_id()
-    run_pipeline = Path("scripts_jsonld") / "run_pipeline.py"
+    run_pipeline = JSONLD_DIR / "run_pipeline.py"
     if not run_pipeline.exists():
-        raise SystemExit("scripts_jsonld/run_pipeline.py not found; ensure you are in the repository root.")
+        raise SystemExit("scripts/jsonld/run_pipeline.py not found; ensure you are in the repository root.")
 
     cmd: list[str] = [
         sys.executable,

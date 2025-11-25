@@ -166,3 +166,5 @@ test.md
 test/data/json_ld
 
 inline_prompt_jsonld.txt
+
+input_data/

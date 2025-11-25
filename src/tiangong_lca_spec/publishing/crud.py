@@ -25,7 +25,7 @@ LOGGER = get_logger(__name__)
 
 DATABASE_TOOL_NAME = "Database_CRUD_Tool"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PRODUCT_CATEGORY_SCRIPT = PROJECT_ROOT / "scripts" / "list_product_flow_category_children.py"
+PRODUCT_CATEGORY_SCRIPT = PROJECT_ROOT / "scripts" / "md" / "list_product_flow_category_children.py"
 
 
 def _utc_timestamp() -> str:

@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from scripts import stage4_publish
+from scripts.md import stage4_publish
 from tiangong_lca_spec.publishing.crud import FlowPublisher
 
 EXPECTED_COMPLIANCE_DECLARATIONS = {

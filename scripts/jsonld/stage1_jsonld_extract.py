@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# ruff: noqa: E402
 """Stage 1 (JSON-LD): LLM-assisted conversion of OpenLCA JSON-LD into ILCD datasets."""
 
 from __future__ import annotations
@@ -13,12 +14,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 try:
-    from scripts._workflow_common import (  # type: ignore
+    from scripts.md._workflow_common import (  # type: ignore
         OpenAIResponsesLLM,
         dump_json,
         ensure_run_cache_dir,

@@ -1,22 +1,23 @@
 #!/usr/bin/env python
+# ruff: noqa: E402
 """Stage 2 (JSON-LD): export ILCD artifacts, remap UUIDs, run validation, optionally auto-publish."""
 
 from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 try:  # Allow execution via `python` or `python -m`
-    from scripts._workflow_common import (  # type: ignore
+    from scripts.md._workflow_common import (  # type: ignore
         dump_json,
         ensure_run_cache_dir,
         ensure_run_exports_dir,
@@ -44,13 +45,13 @@ from tiangong_lca_spec.jsonld.process_overrides import (
 )
 from tiangong_lca_spec.jsonld.uuid_utils import UUIDMapper
 from tiangong_lca_spec.tidas.process_classification_registry import ensure_valid_classification_path
+from tiangong_lca_spec.tidas_validation import TidasValidationService
 from tiangong_lca_spec.workflow.artifacts import (
     DEFAULT_DATA_SET_VERSION,
     build_export_filename,
     generate_artifacts,
     resolve_dataset_version,
 )
-from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 
 def _read_process_blocks(path: Path) -> list[dict[str, Any]]:

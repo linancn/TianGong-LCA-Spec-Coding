@@ -61,7 +61,7 @@ def get_children(
 
 
 def main(argv: List[str]) -> int:
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     default_schema = repo_root / "src" / "tidas" / "schemas" / "tidas_locations_category.json"
 
     parser = argparse.ArgumentParser(
