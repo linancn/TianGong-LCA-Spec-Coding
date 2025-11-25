@@ -49,7 +49,10 @@ class MetadataFieldDefinition:
         return text or None
 
 
-DEFAULT_METADATA_FIELDS: tuple[MetadataFieldDefinition, ...] = (MetadataFieldDefinition(name="meta", source="meta"),)
+DEFAULT_METADATA_FIELDS: tuple[MetadataFieldDefinition, ...] = (
+    MetadataFieldDefinition(name="meta", source="meta"),
+    MetadataFieldDefinition(name="category", source="category"),
+)
 
 
 @dataclass(slots=True)

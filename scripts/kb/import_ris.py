@@ -21,18 +21,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Upload RIS entries and attachments to the knowledge base.")
     parser.add_argument("--secrets", type=Path, default=Path(".secrets/secrets.toml"), help="Secrets file containing [kb] credentials.")
     parser.add_argument("--ris-path", type=Path, help="Direct path to the RIS file. Overrides --ris-dir/--ris-file when provided.")
-    parser.add_argument(
-        "--ris-dir",
-        type=Path,
-        default=Path("input_data/battery"),
-        help="Directory containing the RIS file and related attachments.",
-    )
+    parser.add_argument("--ris-dir", type=Path, help="Directory containing the RIS file and related attachments.")
     parser.add_argument("--ris-file", default="battery.ris", help="RIS filename when --ris-path is not provided. Defaults to battery.ris.")
     parser.add_argument(
         "--attachments-root",
         type=Path,
         help="Root directory for attachment paths. Defaults to the RIS directory.",
     )
+    parser.add_argument("--category", help="Optional override for the metadata category. Defaults to the input_data subdirectory name.")
     parser.add_argument("--limit", type=int, help="Optionally limit the number of references ingested.")
     parser.add_argument("--dry-run", action="store_true", help="Only print the planned operations without contacting the API.")
     return parser.parse_args()
@@ -88,8 +84,9 @@ def build_process_rule(doc_form: str) -> dict[str, Any]:
 
 def main() -> None:
     args = parse_args()
-    ris_path = args.ris_path or (args.ris_dir / args.ris_file)
-    attachments_root = args.attachments_root or args.ris_dir
+    ris_path = _resolve_ris_path(args)
+    attachments_root = _resolve_attachments_root(args, ris_path)
+    category_value = _resolve_category(args, ris_path)
     entries = load_ris_entries(ris_path)
     if not entries:
         print(f"[kb] No entries found in {ris_path}")
@@ -101,7 +98,7 @@ def main() -> None:
     config: KnowledgeBaseConfig = load_kb_config(args.secrets)
 
     if args.dry_run:
-        run_dry(entries, attachments_root, config)
+        run_dry(entries, attachments_root, category_value, config)
         return
 
     with KnowledgeBaseClient(config) as client:
@@ -124,6 +121,8 @@ def main() -> None:
             citation = format_citation(record)
             if citation:
                 enriched_record["meta"] = citation
+            if category_value:
+                enriched_record["category"] = category_value
             metadata_entries = build_metadata_entries(enriched_record, metadata_ids, config.metadata_fields)
             payload_dict: dict[str, Any] = {"indexing_technique": indexing, "doc_form": doc_form, "process_rule": process_rule}
 
@@ -136,10 +135,10 @@ def main() -> None:
             uploaded += 1
             print(f"[ok] Uploaded '{title}' as document {document_id}.")
 
-        print(f"[kb] Completed uploads: {uploaded}/{total}")
+        print(f"[kb] Completed uploads: {uploaded}/{total} (category='{category_value}')")
 
 
-def run_dry(entries: list[dict[str, Any]], attachments_root: Path, config: KnowledgeBaseConfig) -> None:
+def run_dry(entries: list[dict[str, Any]], attachments_root: Path, category_value: str | None, config: KnowledgeBaseConfig) -> None:
     """Print the planned operations without invoking the remote API."""
     doc_form = "text_model"
     process_rule = build_process_rule(doc_form)
@@ -154,9 +153,54 @@ def run_dry(entries: list[dict[str, Any]], attachments_root: Path, config: Knowl
         citation = format_citation(record)
         if citation:
             enriched_record["meta"] = citation
+        if category_value:
+            enriched_record["category"] = category_value
         metadata_entries = build_metadata_entries(enriched_record, metadata_ids, config.metadata_fields)
-        meta_value = metadata_entries[0]["value"] if metadata_entries else "<empty>"
-        print(f"[dry-run][ok] Would upload '{attachment.name}' from '{attachment}' with meta='{meta_value}'")
+        meta_entry = next((entry["value"] for entry in metadata_entries if entry["name"] == "meta"), "<empty>")
+        category_entry = next((entry["value"] for entry in metadata_entries if entry["name"] == "category"), "<empty>")
+        print(
+            f"[dry-run][ok] Would upload '{attachment.name}' from '{attachment}' with meta='{meta_entry}' "
+            f"and category='{category_entry}'"
+        )
+
+
+def _resolve_ris_path(args: argparse.Namespace) -> Path:
+    if args.ris_path:
+        return args.ris_path
+    if args.ris_dir:
+        return args.ris_dir / args.ris_file
+    raise SystemExit("Provide either --ris-path or --ris-dir.")
+
+
+def _resolve_attachments_root(args: argparse.Namespace, ris_path: Path) -> Path:
+    if args.attachments_root:
+        return args.attachments_root
+    if args.ris_dir:
+        return args.ris_dir
+    return ris_path.parent
+
+
+def _resolve_category(args: argparse.Namespace, ris_path: Path) -> str | None:
+    if args.category:
+        return args.category
+    source_path = args.ris_dir or ris_path.parent
+    return _derive_category_from_path(source_path)
+
+
+def _derive_category_from_path(path: Path) -> str | None:
+    try:
+        normalized = path.resolve()
+    except FileNotFoundError:
+        normalized = path
+    parts = normalized.parts
+    if "input_data" in parts:
+        idx = parts.index("input_data")
+        if idx + 1 < len(parts):
+            candidate = parts[idx + 1]
+            if candidate:
+                return candidate
+    name = normalized.name
+    return name or None
 
 
 if __name__ == "__main__":
