@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Any
+from typing import Any, Iterable, Mapping
 
 from .config import MetadataFieldDefinition
 

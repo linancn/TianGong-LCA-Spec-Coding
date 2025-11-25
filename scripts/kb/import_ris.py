@@ -140,8 +140,6 @@ def main() -> None:
 
 def run_dry(entries: list[dict[str, Any]], attachments_root: Path, category_value: str | None, config: KnowledgeBaseConfig) -> None:
     """Print the planned operations without invoking the remote API."""
-    doc_form = "text_model"
-    process_rule = build_process_rule(doc_form)
     metadata_ids = {definition.name: f"dry_{idx}" for idx, definition in enumerate(config.metadata_fields, start=1)}
     for idx, record in enumerate(entries, start=1):
         title = record.get("title") or record.get("primary_title") or f"record_{idx}"
@@ -158,10 +156,7 @@ def run_dry(entries: list[dict[str, Any]], attachments_root: Path, category_valu
         metadata_entries = build_metadata_entries(enriched_record, metadata_ids, config.metadata_fields)
         meta_entry = next((entry["value"] for entry in metadata_entries if entry["name"] == "meta"), "<empty>")
         category_entry = next((entry["value"] for entry in metadata_entries if entry["name"] == "category"), "<empty>")
-        print(
-            f"[dry-run][ok] Would upload '{attachment.name}' from '{attachment}' with meta='{meta_entry}' "
-            f"and category='{category_entry}'"
-        )
+        print(f"[dry-run][ok] Would upload '{attachment.name}' from '{attachment}' with meta='{meta_entry}' " f"and category='{category_entry}'")
 
 
 def _resolve_ris_path(args: argparse.Namespace) -> Path:
