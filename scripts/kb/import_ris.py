@@ -80,14 +80,9 @@ def main() -> None:
 
     with KnowledgeBaseClient(config) as client:
         metadata_ids = client.ensure_metadata_fields(config.metadata_fields)
-        start_node_id = config.pipeline_start_node_id or client.resolve_pipeline_start_node_id(
-            config.pipeline_datasource_type, is_published=config.pipeline_is_published
-        )
+        start_node_id = config.pipeline_start_node_id or client.resolve_pipeline_start_node_id(config.pipeline_datasource_type, is_published=config.pipeline_is_published)
         if not start_node_id:
-            raise SystemExit(
-                "Unable to resolve pipeline start node id. Provide [kb.pipeline].start_node_id or ensure "
-                "the datasource_type matches a published pipeline datasource block."
-            )
+            raise SystemExit("Unable to resolve pipeline start node id. Provide [kb.pipeline].start_node_id or ensure " "the datasource_type matches a published pipeline datasource block.")
 
         total = len(entries)
         uploaded = 0
@@ -109,9 +104,7 @@ def main() -> None:
             run_inputs = _build_pipeline_inputs(pipeline_inputs, meta_value)
 
             uploaded_file = client.upload_pipeline_file(attachment)
-            datasource_entry = _build_datasource_entry(
-                uploaded_file, config.pipeline_datasource_type, meta_value=meta_value
-            )
+            datasource_entry = _build_datasource_entry(uploaded_file, config.pipeline_datasource_type, meta_value=meta_value)
             pipeline_payload = {
                 "inputs": run_inputs,
                 "datasource_type": config.pipeline_datasource_type,
