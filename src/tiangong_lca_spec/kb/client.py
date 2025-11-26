@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Iterable
@@ -12,13 +11,12 @@ import httpx
 
 from .config import KnowledgeBaseConfig, MetadataFieldDefinition
 
-_FILENAME_WHITESPACE_PATTERN = re.compile(r"\s+")
-
-
 def _sanitize_filename_for_upload(name: str) -> str:
-    """Remove whitespace because the dataset pipeline rejects filenames with spaces."""
-    sanitized = _FILENAME_WHITESPACE_PATTERN.sub("", name or "")
-    return sanitized or "attachment.pdf"
+    """Return the original filename (or a safe fallback when empty)."""
+    if not name:
+        return "attachment.pdf"
+    stripped = name.strip()
+    return stripped or "attachment.pdf"
 
 
 class KnowledgeBaseClient(AbstractContextManager["KnowledgeBaseClient"]):
