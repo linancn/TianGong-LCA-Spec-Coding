@@ -105,16 +105,21 @@ def main() -> None:
             if category_value:
                 enriched_record["category"] = category_value
             metadata_entries = build_metadata_entries(enriched_record, metadata_ids, config.metadata_fields)
+            meta_value = _get_metadata_value(metadata_entries, "meta")
+            run_inputs = _build_pipeline_inputs(pipeline_inputs, meta_value)
 
             uploaded_file = client.upload_pipeline_file(attachment)
-            datasource_entry = _build_datasource_entry(uploaded_file, config.pipeline_datasource_type)
+            datasource_entry = _build_datasource_entry(
+                uploaded_file, config.pipeline_datasource_type, meta_value=meta_value
+            )
             pipeline_payload = {
-                "inputs": pipeline_inputs,
+                "inputs": run_inputs,
                 "datasource_type": config.pipeline_datasource_type,
                 "datasource_info_list": [datasource_entry],
                 "start_node_id": start_node_id,
                 "is_published": config.pipeline_is_published,
                 "response_mode": config.pipeline_response_mode,
+                "meta": meta_value or "",
             }
             response = client.run_pipeline(pipeline_payload)
             document_ids = _extract_document_ids(response)
@@ -151,12 +156,29 @@ def run_dry(
         if category_value:
             enriched_record["category"] = category_value
         metadata_entries = build_metadata_entries(enriched_record, metadata_ids, config.metadata_fields)
-        meta_entry = next((entry["value"] for entry in metadata_entries if entry["name"] == "meta"), "<empty>")
-        category_entry = next((entry["value"] for entry in metadata_entries if entry["name"] == "category"), "<empty>")
+        meta_value = _get_metadata_value(metadata_entries, "meta")
+        meta_entry = meta_value or "<empty>"
+        category_entry = _get_metadata_value(metadata_entries, "category") or "<empty>"
+        run_inputs = _build_pipeline_inputs(pipeline_inputs, meta_value)
         print(
             f"[dry-run][ok] Would upload '{attachment.name}' from '{attachment}' with meta='{meta_entry}', "
-            f"category='{category_entry}', pipeline_inputs={json.dumps(pipeline_inputs, ensure_ascii=False)}"
+            f"category='{category_entry}', pipeline_inputs={json.dumps(run_inputs, ensure_ascii=False)}"
         )
+
+
+def _get_metadata_value(entries: list[dict[str, Any]], name: str) -> str | None:
+    for entry in entries:
+        if entry.get("name") == name:
+            value = entry.get("value")
+            return str(value) if value is not None else None
+    return None
+
+
+def _build_pipeline_inputs(base_inputs: dict[str, Any], meta_value: str | None) -> dict[str, Any]:
+    """Return the pipeline inputs payload with the required meta field."""
+    merged = dict(base_inputs)
+    merged["meta"] = meta_value or ""
+    return merged
 
 
 def _resolve_ris_path(args: argparse.Namespace) -> Path:
@@ -232,8 +254,13 @@ def _ensure_payload_object(payload: Any) -> dict[str, Any]:
     return payload
 
 
-def _build_datasource_entry(uploaded_file: dict[str, Any], datasource_type: str) -> dict[str, Any]:
-    return {
+def _build_datasource_entry(
+    uploaded_file: dict[str, Any],
+    datasource_type: str,
+    *,
+    meta_value: str | None = None,
+) -> dict[str, Any]:
+    entry = {
         "related_id": uploaded_file.get("id"),
         "name": uploaded_file.get("name"),
         "type": uploaded_file.get("mime_type") or uploaded_file.get("type") or "application/octet-stream",
@@ -244,6 +271,9 @@ def _build_datasource_entry(uploaded_file: dict[str, Any], datasource_type: str)
         "transfer_method": datasource_type,
         "credential_id": uploaded_file.get("credential_id"),
     }
+    if meta_value:
+        entry["meta"] = meta_value
+    return entry
 
 
 def _extract_document_ids(response: dict[str, Any]) -> list[str]:

@@ -133,11 +133,12 @@ def test_build_datasource_entry_populates_expected_fields() -> None:
         "size": 1024,
         "extension": "pdf",
     }
-    entry = kb_import._build_datasource_entry(file_meta, "local_file")
+    entry = kb_import._build_datasource_entry(file_meta, "local_file", meta_value="citation text")
     assert entry["related_id"] == "file-123"
     assert entry["name"] == "sample.pdf"
     assert entry["transfer_method"] == "local_file"
     assert entry["mime_type"] == "application/pdf"
+    assert entry["meta"] == "citation text"
 
 
 def test_extract_document_ids_handles_nested_payloads() -> None:
@@ -146,3 +147,16 @@ def test_extract_document_ids_handles_nested_payloads() -> None:
         "result": {"documents": [{"document_id": "doc-2"}]},
     }
     assert set(kb_import._extract_document_ids(response)) == {"doc-1", "doc-2"}
+
+
+def test_build_pipeline_inputs_injects_meta_without_mutating_base() -> None:
+    base_inputs = {"foo": "bar"}
+    merged = kb_import._build_pipeline_inputs(base_inputs, "citation text")
+    assert merged["meta"] == "citation text"
+    assert merged["foo"] == "bar"
+    assert "meta" not in base_inputs
+
+
+def test_build_pipeline_inputs_defaults_meta_to_empty_string() -> None:
+    merged = kb_import._build_pipeline_inputs({}, None)
+    assert merged["meta"] == ""
