@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Iterable
@@ -10,6 +11,14 @@ from typing import Iterable
 import httpx
 
 from .config import KnowledgeBaseConfig, MetadataFieldDefinition
+
+_FILENAME_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+
+def _sanitize_filename_for_upload(name: str) -> str:
+    """Remove whitespace because the dataset pipeline rejects filenames with spaces."""
+    sanitized = _FILENAME_WHITESPACE_PATTERN.sub("", name or "")
+    return sanitized or "attachment.pdf"
 
 
 class KnowledgeBaseClient(AbstractContextManager["KnowledgeBaseClient"]):
@@ -67,7 +76,8 @@ class KnowledgeBaseClient(AbstractContextManager["KnowledgeBaseClient"]):
         endpoint = f"datasets/{self._config.dataset_id}/document/create-by-file"
         try:
             with file_path.open("rb") as binary:
-                files = {"file": (file_path.name, binary, "application/pdf")}
+                upload_name = _sanitize_filename_for_upload(file_path.name)
+                files = {"file": (upload_name, binary, "application/pdf")}
                 response = self._client.post(endpoint, data={"data": json.dumps(payload)}, files=files)
                 response.raise_for_status()
                 return response.json()
@@ -92,7 +102,8 @@ class KnowledgeBaseClient(AbstractContextManager["KnowledgeBaseClient"]):
         endpoint = "datasets/pipeline/file-upload"
         try:
             with file_path.open("rb") as binary:
-                files = {"file": (file_path.name, binary, "application/pdf")}
+                upload_name = _sanitize_filename_for_upload(file_path.name)
+                files = {"file": (upload_name, binary, "application/pdf")}
                 response = self._client.post(endpoint, files=files)
                 response.raise_for_status()
                 return response.json()
