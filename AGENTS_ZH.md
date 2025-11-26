@@ -9,7 +9,7 @@
   - `scripts/md/`：`stage1_preprocess.py` ~ `stage4_publish.py` 等阶段化 CLI，以及回归入口 `run_test_workflow.py`。
   - `scripts/jsonld/`：面向 OpenLCA JSON-LD 的抽取、校验与发布脚本。
   - `.github/prompts/`：对 Codex 的提示词说明，其中 `extract-process-workflow.prompt.md` 专门描述流程抽取任务。
-  - `scripts/kb/`：知识库工具（如 `import_ris.py`），用于将参考文献 PDF 批量导入天工数据集。
+  - `scripts/kb/`：知识库工具（如用于导入的 `import_ris.py`、用于从对象存储同步解析结果的 `minio_fetch.py`），用于将参考文献 PDF 批量导入天工数据集。
 - **协作接口**：标准工作流依赖 `.secrets/secrets.toml` 中配置的 OpenAI、tiangong LCA Remote 与 TIDAS 验证服务。首次接入时请先完成凭据校验，再批量运行 Stage 3+。
 - **更多参考**：各阶段产物要求、对齐策略和异常处理见 `.github/prompts/extract-process-workflow.prompt.md`；若需补充分类或地理信息，可查看 `scripts/md/list_*_children.py` 提供的辅助 CLI。
 - **Stage 4 流发布**：当需要补齐缺失的 Flow 时，发布器会调用配置好的 LLM 自动推断流类型，并借助 `scripts/md/list_product_flow_category_children.py` 逐级细化产品分类，确保最终落到最具体的类别。请确认凭据就绪，避免发布阶段因无法访问 LLM 而退回默认分类。
@@ -34,6 +34,7 @@
    - `[tiangong_lca_remote]`：`url`, `service_name`, `tool_name`, `api_key`。
    - `[kb]`：`base_url`, `dataset_id`, `api_key` 以及可选 `timeout`/`metadata_fields`（默认包含 `meta` 与 `category` 两个字段）。
    - `[kb.pipeline]`：`datasource_type`, `start_node_id`, `is_published`, `response_mode` 与可选 `inputs`，用于驱动 RAG pipeline。`start_node_id` 需从可视化编排器中复制。
+   - `[minio]`：配置解析产物所在的 MinIO 桶，需提供 `endpoint`, `access_key`, `secret_key`, `bucket_name`, `prefix`，可选 `secure`（默认按 `endpoint` 协议判断）与 `session_token`。
 3. `api_key` 字段直接写入明文 token，框架会自动带上 `Bearer` 前缀。
 4. 建议在跑 Stage 3 前，先用 1~2 个样例交换调用 `FlowSearchService` 进行连通性自测（可参考工作流提示文档中的 Python 片段）。
 - 若运维已预先配置 `.secrets/secrets.toml`，Codex 默认直接使用，无需在执行前反复确认。仅当脚本报出缺少凭据或连接失败时，再检查本地配置。
@@ -44,6 +45,7 @@
 - 默认元数据包含 `meta`（自动拼接作者/年份/期刊/DOI/URL 的引文）与 `category`（取 `input_data/` 下的首层子目录名称，如 `battery`）。若需覆盖，可传 `--category`。
 - 使用 `uv run python scripts/kb/import_ris.py --ris-dir input_data/<目录>`（或 `--ris-path ...`）导入 RIS 文献；若只需验证流程可加 `--dry-run`。附件需与 RIS 文件位于同一 `input_data/<目录>` 下。
 - 导入过程改为调用 `/pipeline/file-upload` + `/pipeline/run`，确保和 UI 中的 pipeline 完全一致，pipeline 完成后脚本再为生成的 document 附加 `meta` 与 `category`。
+- 若需要从 MinIO 同步解析后的 `meta.txt`/`parsed.json`/`pages/`/`source.pdf`，先填写 `[minio]`，再使用 `uv run python scripts/kb/minio_fetch.py list --path <远程子目录>` 查看可用对象，或用 `uv run python scripts/kb/minio_fetch.py download --path <远程子目录> --output input_data/<目录> --include-source` 拉取到本地（如不需要 PDF 可省略 `--include-source`）。支持 `--dry-run` 预览即将下载的文件。
 
 ## 4. 质量保障与自检
 - 在修改 Python 源代码后，按序执行：

@@ -11,6 +11,7 @@ import httpx
 
 from .config import KnowledgeBaseConfig, MetadataFieldDefinition
 
+
 def _sanitize_filename_for_upload(name: str) -> str:
     """Return the original filename (or a safe fallback when empty)."""
     if not name:
@@ -130,12 +131,7 @@ class KnowledgeBaseClient(AbstractContextManager["KnowledgeBaseClient"]):
         datasource_type_lower = (datasource_type or "").lower()
         for plugin in plugins:
             node_id = plugin.get("node_id")
-            plugin_type = (
-                plugin.get("provider_type")
-                or plugin.get("datasource_type")
-                or plugin.get("type")
-                or plugin.get("provider")
-            )
+            plugin_type = plugin.get("provider_type") or plugin.get("datasource_type") or plugin.get("type") or plugin.get("provider")
             if node_id and plugin_type and str(plugin_type).lower() == datasource_type_lower:
                 return str(node_id)
         return None

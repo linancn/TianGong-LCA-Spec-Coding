@@ -9,7 +9,7 @@ This guide focuses on general conventions for engineering collaboration, helping
   - `scripts/md/`: Staged CLIs from `stage1_preprocess.py` through `stage4_publish.py`, plus the regression entry point `run_test_workflow.py`.
   - `scripts/jsonld/`: JSON-LD extraction, validation, and publishing helpers.
   - `.github/prompts/`: Prompt specifications for Codex, with `extract-process-workflow.prompt.md` dedicated to the process extraction task.
-  - `scripts/kb/`: Knowledge base tooling (e.g., `import_ris.py`) for pushing bibliographic PDFs into Tiangong datasets.
+  - `scripts/kb/`: Knowledge base tooling (e.g., `import_ris.py` for ingestion, `minio_fetch.py` for downloading parsed bundles from storage) for pushing bibliographic PDFs into Tiangong datasets.
 - **Collaboration interfaces**: The standard workflow depends on `.secrets/secrets.toml` where OpenAI, Tiangong LCA Remote, and TIDAS validation services are configured. Validate credentials before running Stage 3 or later in batch during your first integration.
 - **Further references**: Requirements, alignment strategies, and exception handling for each stage are documented in `.github/prompts/extract-process-workflow.prompt.md`. For supplemental classification or geographic information, use the helper CLIs provided by `scripts/md/list_*_children.py`.
 - **Stage 4 flow publishing**: When filling in missing flow definitions, the publisher now leans on the configured LLM to infer both the flow type and the most specific product classification. Follow the credential setup above so the scripts can call `scripts/md/list_product_flow_category_children.py` via the LLM-assisted selector.
@@ -34,6 +34,7 @@ This guide focuses on general conventions for engineering collaboration, helping
    - `[tiangong_lca_remote]`: `url`, `service_name`, `tool_name`, `api_key`.
    - `[kb]`: `base_url`, `dataset_id`, `api_key`, optional `timeout`, and `metadata_fields` (defaults already set to the `meta` and `category` fields).
    - `[kb.pipeline]`: `datasource_type`, `start_node_id`, `is_published`, `response_mode`, and optional `inputs` for the RAG pipeline runner. The pipeline node ID is available from the dataset’s pipeline designer.
+   - `[minio]`: `endpoint`, `access_key`, `secret_key`, `bucket_name`, and `prefix` for the KB bundle bucket; optional `secure` (defaults to `https` when omitted) and `session_token` are supported for custom deployments.
 3. Write plaintext tokens directly into `api_key`; the framework automatically prepends `Bearer`.
 4. Before running Stage 3, call `FlowSearchService` with one or two sample exchanges to perform a connectivity self-test (see the workflow prompt document for Python snippets).
 - If operations has already provisioned `.secrets/secrets.toml`, Codex uses it as-is. Only revisit the local configuration when scripts raise missing-credential errors or connection failures.
@@ -46,6 +47,7 @@ Local TIDAS validation now relies on the CLI command `uv run tidas-validate -i a
 - Default metadata includes `meta` (auto-generated citation text) and `category` (taken from the first subdirectory under `input_data/`, e.g., `battery`). Override via `--category` if needed.
 - Use `uv run python scripts/kb/import_ris.py --ris-dir input_data/<dir>` (or `--ris-path ...`) to ingest RIS files; add `--dry-run` for previews. Attachments must live under the same `input_data/<dir>` root.
 - The importer now uploads files through the dataset pipeline (`/pipeline/file-upload` + `/pipeline/run`) so the configured pipeline stages run exactly as the UI workflow. Metadata is attached after the pipeline reports the generated document IDs.
+- When you need to pull parsed artifacts from MinIO, populate `[minio]` as described above and run `uv run python scripts/kb/minio_fetch.py list --path <remote_subdir>` to inspect available bundles or `uv run python scripts/kb/minio_fetch.py download --path <remote_subdir> --output input_data/<dir> --include-source` to materialize the `meta.txt`, `parsed.json`, `pages/`, and optional `source.pdf` files locally. Omit `--include-source` to skip the PDF.
 
 ## 4. Quality Assurance and Self-Checks
 - After modifying Python source code, run:
