@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 import httpx
 
@@ -140,5 +140,55 @@ class KnowledgeBaseClient(AbstractContextManager["KnowledgeBaseClient"]):
         """Execute the configured pipeline for the dataset."""
         endpoint = f"datasets/{self._config.dataset_id}/pipeline/run"
         response = self._client.post(endpoint, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    # Retrieval operations ---------------------------------------------------
+    def retrieve_chunks(
+        self,
+        *,
+        query: str | None = None,
+        retrieval_model: Mapping[str, Any] | None = None,
+        top_k: int | None = None,
+        score_threshold_enabled: bool | None = None,
+        score_threshold: float | None = None,
+        metadata_filtering_conditions: Mapping[str, Any] | None = None,
+        weights: float | int | None = None,
+        extra_payload: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> dict:
+        """Execute a retrieval query against the dataset and return the raw response."""
+        endpoint = f"datasets/{self._config.dataset_id}/retrieve"
+        if payload is not None:
+            request_payload: dict[str, Any] = dict(payload)
+            if query is not None:
+                request_payload["query"] = query
+        else:
+            if query is None or (isinstance(query, str) and not query.strip()):
+                raise ValueError("query must be provided when payload is not supplied.")
+            request_payload = {"query": query}
+
+        model_payload: dict[str, Any] = {}
+        existing_model = request_payload.get("retrieval_model")
+        if isinstance(existing_model, Mapping):
+            model_payload.update(existing_model)
+        if retrieval_model:
+            model_payload.update(retrieval_model)
+        if top_k is not None:
+            model_payload["top_k"] = int(top_k)
+        if score_threshold_enabled is not None:
+            model_payload["score_threshold_enabled"] = bool(score_threshold_enabled)
+        if score_threshold is not None:
+            model_payload["score_threshold"] = float(score_threshold)
+        if weights is not None:
+            model_payload["weights"] = float(weights)
+        if metadata_filtering_conditions is not None:
+            model_payload["metadata_filtering_conditions"] = dict(metadata_filtering_conditions)
+        if model_payload:
+            request_payload["retrieval_model"] = model_payload
+        if extra_payload:
+            request_payload.update(extra_payload)
+
+        response = self._client.post(endpoint, json=request_payload)
         response.raise_for_status()
         return response.json()
