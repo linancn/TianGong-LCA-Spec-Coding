@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
         action="store_const",
         const=True,
         dest="score_threshold_enabled",
-        help="Enable server-side score filtering.",
+        help="Enable server-side score filtering (default: enabled).",
     )
     score_group.add_argument(
         "--score-threshold-disabled",
@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
         action="store_const",
         const=True,
         dest="reranking_enable",
-        help="Enable reranking in retrieval_model.",
+        help="Enable reranking in retrieval_model (default: disabled).",
     )
     rerank_group.add_argument(
         "--reranking-disable",
@@ -115,7 +115,8 @@ def parse_args() -> argparse.Namespace:
         default=240,
         help="Maximum characters displayed per chunk in pretty mode (0 means no truncation).",
     )
-    parser.set_defaults(score_threshold_enabled=None, reranking_enable=None)
+    # The KB API expects explicit flags for reranking and score threshold filtering.
+    parser.set_defaults(score_threshold_enabled=True, reranking_enable=False)
     return parser.parse_args()
 
 
