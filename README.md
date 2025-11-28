@@ -111,6 +111,23 @@ uv run tidas-validate -i artifacts
 
 如需调整服务名称或地址，可直接在 `.secrets/secrets.toml` 对应节内覆盖 `service_name`、`url` 等字段，或使用实际环境变量覆盖 `LCA_*` 前缀的设置。
 
+### 知识库检索自测
+
+完成 `[kb]` 凭据配置后，可以通过 `scripts/kb/retrieve.py` 直接命中知识库检索端点（`POST /datasets/{dataset_id}/retrieve`），用于核对索引是否生效、查看返回的 chunk 内容等：
+
+```bash
+uv run python scripts/kb/retrieve.py \
+  --query "锂电池碳足迹" \
+  --top-k 5 \
+  --search-method hybrid_search \
+  --score-threshold-enabled
+```
+
+- `--retrieval-model/--retrieval-model-file`、`--search-method`、`--reranking-*` 可覆盖检索模型配置。
+- `--metadata-filters`（或同名 `-file`）允许直接传入 JSON 数组，复用 Web 控制台中的过滤条件；如果只想临时筛选，可多次使用 `--filter category:eq=battery` 这种语法并用 `--filter-operator` 控制逻辑关系。
+- 通过 `--payload/--payload-file` 可以整体覆写请求体，脚本只会在此基础上再应用命令行中的增量参数。
+- 默认以易读格式打印命中的段落，可通过 `--format json` 输出原始响应，便于进一步处理。
+
 ### 将提示转换为内联代码并执行示例
 - **文献流程**
 ```bash
