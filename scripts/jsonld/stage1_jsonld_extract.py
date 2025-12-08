@@ -1215,6 +1215,23 @@ def _clean_text(value: Any) -> str | None:
     return None
 
 
+def _normalize_synonym_list(values: Any) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        candidates = re.split(r"[;,]", values)
+    elif isinstance(values, list):
+        candidates = values
+    else:
+        candidates = [values]
+    normalized: list[str] = []
+    for value in candidates:
+        text = _clean_text(value)
+        if text:
+            normalized.append(text)
+    return normalized
+
+
 def _format_functional_unit(exchange: dict[str, Any]) -> str | None:
     if not isinstance(exchange, dict):
         return None
@@ -1659,6 +1676,83 @@ def _extract_payload_uuid(payload: Any) -> str:
         if isinstance(candidate, str):
             return candidate
     return ""
+
+
+def _flow_dataset_type(entry: dict[str, Any]) -> str | None:
+    dataset = entry.get("flowDataSet") if isinstance(entry, dict) else None
+    if not isinstance(dataset, dict):
+        return None
+    modelling = dataset.get("modellingAndValidation", {})
+    lcimethod = modelling.get("LCIMethod", {}) if isinstance(modelling, dict) else {}
+    flow_type = lcimethod.get("typeOfDataSet")
+    return _clean_text(flow_type)
+
+
+def _is_elementary_flow_entry(entry: dict[str, Any]) -> bool:
+    dataset_type = _flow_dataset_type(entry)
+    return bool(dataset_type and dataset_type.lower().startswith("elementary flow"))
+
+
+def _build_elementary_flow_hint(payload: dict[str, Any]) -> dict[str, Any]:
+    hint: dict[str, Any] = {
+        "name": _clean_text(payload.get("name")) or "Unnamed flow",
+        "category": _clean_text(payload.get("category")) or "",
+        "flowType": "elementary",
+    }
+    cas_number = _clean_text(payload.get("casNumber") or payload.get("cas"))
+    formula = _clean_text(payload.get("formula"))
+    synonyms = _normalize_synonym_list(payload.get("synonyms"))
+    if cas_number:
+        hint["cas"] = cas_number
+    if formula:
+        hint["formula"] = formula
+    if synonyms:
+        hint["synonyms"] = synonyms
+    return hint
+
+
+def _append_skipped_flow_log(payload: dict[str, Any], source_file: str) -> None:
+    target = REPO_ROOT / "artifacts" / "exports" / "flows_skipped.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing_text = target.read_text(encoding="utf-8")
+        records = json.loads(existing_text) if existing_text.strip() else []
+    except FileNotFoundError:
+        records = []
+    except json.JSONDecodeError:
+        records = []
+    record = {"source": source_file, "payload": payload}
+    records.append(record)
+    target.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _append_elementary_flow_hint_log(record: dict[str, Any]) -> None:
+    target = REPO_ROOT / "artifacts" / "exports" / "elementary_flow_hints.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing_text = target.read_text(encoding="utf-8")
+        records = json.loads(existing_text) if existing_text.strip() else []
+    except FileNotFoundError:
+        records = []
+    except json.JSONDecodeError:
+        records = []
+    records.append(record)
+    target.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _lookup_elementary_flow_uuid(hint: dict[str, Any], service: Any | None, llm: Any | None) -> tuple[str | None, str]:
+    # Stage 1 no longer performs MCP lookup; return empty result for downstream handling.
+    return None, DEFAULT_DATA_SET_VERSION
+
+
+def _rewrite_elementary_flow_references(
+    process_blocks: list[dict[str, Any]],
+    replacements: dict[str, dict[str, str]],
+    metadata: dict[str, dict[str, Any]],
+    mapping_records: list[dict[str, Any]],
+) -> None:
+    # No-op placeholder retained for compatibility; elementary flow replacement now happens in later stages.
+    return None
 
 
 def _relative_source_path(path: Path) -> str:
@@ -2301,13 +2395,13 @@ def main() -> None:
     process_extractor = JSONLDProcessExtractor(llm, process_classifier, location_normalizer)
     flow_extractor = JSONLDFlowExtractor(llm, flow_classifier, location_normalizer)
     source_extractor = JSONLDSourceExtractor(llm)
-
     process_blocks: list[dict[str, Any]] = []
     flow_datasets: list[dict[str, Any]] = []
     source_datasets: list[dict[str, Any]] = []
     flow_short_descriptions: dict[str, str] = {}
     source_short_names: dict[str, str] = {}
     uuid_mapping_records: list[dict[str, Any]] = []
+    elementary_flow_metadata: dict[str, dict[str, Any]] = {}
 
     for json_path in process_files:
         raw_payload = json.loads(json_path.read_text(encoding="utf-8"))
@@ -2364,8 +2458,20 @@ def main() -> None:
         original_name = _extract_original_name(raw_payload)
         try:
             flow_entries = flow_extractor.run(raw_payload)
-            flow_datasets.extend(flow_entries)
             for entry in flow_entries:
+                if _is_elementary_flow_entry(entry):
+                    _append_skipped_flow_log(raw_payload, source_file)
+                    if original_uuid:
+                        elementary_flow_metadata[original_uuid] = {"name": original_name or _clean_text(raw_payload.get("name")) or original_uuid}
+                    hint = _build_elementary_flow_hint(raw_payload)
+                    _append_elementary_flow_hint_log(
+                        {
+                            "source": source_file,
+                            "original_uuid": original_uuid,
+                            "hint": hint,
+                        }
+                    )
+                    continue
                 dataset = entry.get("flowDataSet")
                 if not isinstance(dataset, dict):
                     continue
@@ -2382,6 +2488,7 @@ def main() -> None:
                     original_name=original_name,
                     source_file=source_file,
                 )
+                flow_datasets.append(entry)
         except (SystemExit, ProcessExtractionError) as exc:
             LOGGER.warning(
                 "jsonld.flow_component_fallback",
@@ -2391,6 +2498,19 @@ def main() -> None:
             fallback_flow = _fallback_flow_block(json_path)
             wrapped = _wrap_flow_dataset(fallback_flow, json_path, raw_payload, flow_classifier)
             dataset = wrapped.get("flowDataSet")
+            if _is_elementary_flow_entry(wrapped):
+                _append_skipped_flow_log(raw_payload, source_file)
+                if original_uuid:
+                    elementary_flow_metadata[original_uuid] = {"name": original_name or _clean_text(raw_payload.get("name")) or original_uuid}
+                hint = _build_elementary_flow_hint(raw_payload)
+                _append_elementary_flow_hint_log(
+                    {
+                        "source": source_file,
+                        "original_uuid": original_uuid,
+                        "hint": hint,
+                    }
+                )
+                continue
             if isinstance(dataset, dict):
                 uuid_value = dataset.get("flowInformation", {}).get("dataSetInformation", {}).get("common:UUID")
                 summary = _compose_flow_short_description_from_dataset(dataset)
