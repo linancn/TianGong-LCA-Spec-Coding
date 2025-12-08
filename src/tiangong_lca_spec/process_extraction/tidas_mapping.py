@@ -34,6 +34,7 @@ DEFAULT_LANGUAGE = "en"
 DEFAULT_DATA_SET_VERSION = "01.01.000"
 
 ILCD_ENTRY_LEVEL_REFERENCE_ID = "d92a1a12-2545-49e2-a585-55c259997756"
+ILCD_ENTRY_LEVEL_REFERENCE_VERSION = "20.20.002"
 
 COMPLIANCE_BASE_POINTER = "/properties/modellingAndValidation/properties/complianceDeclarations/properties/compliance"
 
@@ -168,6 +169,8 @@ def _normalise_dataset_information(
     general_comment_text = _extract_multilang_text(raw_general_comment).strip()
     name_fields = {field: name_block.get(field) for field in ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes", "functionalUnitFlowProperties")}
     base_name_text = _extract_multilang_text(name_fields.get("baseName"))
+    authoritative_treatment_text = _format_name_field_text(_extract_multilang_text(name_fields.get("treatmentStandardsRoutes")))
+    authoritative_mix_text = _format_name_field_text(_extract_multilang_text(name_fields.get("mixAndLocationTypes")))
     name_components = _derive_name_components(
         base_name_text,
         name_fields,
@@ -183,8 +186,14 @@ def _normalise_dataset_information(
         fallback="Unnamed process",
         separator=", ",
     )
-    refreshed_name_block["treatmentStandardsRoutes"] = _ensure_multilang(treatment_text, separator=", ")
-    refreshed_name_block["mixAndLocationTypes"] = _ensure_multilang(mix_text, separator=", ")
+    treatment_output_text = authoritative_treatment_text or treatment_text
+    mix_output_text = authoritative_mix_text or mix_text
+    if treatment_output_text:
+        name_components["treatment"] = treatment_output_text
+    if mix_output_text:
+        name_components["mix"] = mix_output_text
+    refreshed_name_block["treatmentStandardsRoutes"] = _ensure_multilang(treatment_output_text, separator=", ")
+    refreshed_name_block["mixAndLocationTypes"] = _ensure_multilang(mix_output_text, separator=", ")
     if functional_properties_text:
         refreshed_name_block["functionalUnitFlowProperties"] = _ensure_multilang(functional_properties_text, separator=", ")
     info["name"] = refreshed_name_block
@@ -1024,13 +1033,20 @@ def _current_timestamp() -> str:
 
 
 def _build_compliance_reference() -> dict[str, Any] | None:
-    """Return the public ILCD Data Network compliance reference."""
+    """Return the ILCD entry-level compliance reference using ILCD-relative paths."""
+
+    if not ILCD_ENTRY_LEVEL_REFERENCE_ID:
+        return None
 
     return {
-        "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
+        "@refObjectId": ILCD_ENTRY_LEVEL_REFERENCE_ID,
         "@type": "source data set",
-        "@uri": ("https://lcdn.tiangong.earth/showSource.xhtml?" "uuid=d92a1a12-2545-49e2-a585-55c259997756&version=20.20.002"),
-        "@version": "20.20.002",
+        "@uri": build_local_dataset_uri(
+            "source data set",
+            ILCD_ENTRY_LEVEL_REFERENCE_ID,
+            ILCD_ENTRY_LEVEL_REFERENCE_VERSION,
+        ),
+        "@version": ILCD_ENTRY_LEVEL_REFERENCE_VERSION,
         "common:shortDescription": {"@xml:lang": "en", "#text": "ILCD Data Network - Entry-level"},
     }
 
@@ -1202,13 +1218,18 @@ def _normalize_multilang_dict(value: Any) -> dict[str, Any] | None:
 def _ensure_multilang_list(value: Any) -> list[dict[str, Any]]:
     if value in (None, "", [], {}):
         return []
-    if isinstance(value, list):
-        entries = []
-        for item in value:
-            if item not in (None, ""):
-                entries.append(_ensure_multilang(item))
-        return entries
-    return [_ensure_multilang(value)]
+    items = value if isinstance(value, list) else [value]
+    entries: list[dict[str, Any]] = []
+    for item in items:
+        if item in (None, ""):
+            continue
+        normalized = _ensure_multilang(item)
+        text = _stringify(normalized.get("#text")).strip()
+        if not text:
+            continue
+        lang = _stringify(normalized.get("@xml:lang") or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE
+        entries.append({"@xml:lang": lang, "#text": text})
+    return entries
 
 
 def _filter_multilang_entries(
@@ -1540,6 +1561,7 @@ def _coerce_schema_fields(
 
     if isinstance(value, dict):
         properties = schema.get("properties")
+        known_keys = set(properties or {})
         if isinstance(properties, dict):
             for key, child_schema in properties.items():
                 if key in value:
@@ -1563,11 +1585,25 @@ def _coerce_schema_fields(
                         continue
                     value[key] = coerced_child
         additional = schema.get("additionalProperties")
+        extra_keys = [key for key in list(value.keys()) if key not in known_keys]
         if isinstance(additional, dict):
-            known = set(properties or {})
-            for key, child_value in list(value.items()):
-                if key not in known:
-                    value[key] = _coerce_schema_fields(child_value, additional, path + ("additionalProperties",), metadata)
+            for key in extra_keys:
+                coerced_child = _coerce_schema_fields(
+                    value[key],
+                    additional,
+                    path + ("additionalProperties",),
+                    metadata,
+                )
+                if coerced_child in (None, "", [], {}):
+                    value.pop(key, None)
+                else:
+                    value[key] = coerced_child
+        elif additional is True:
+            pass
+        else:
+            if isinstance(properties, dict):
+                for key in extra_keys:
+                    value.pop(key, None)
         return value
 
     if isinstance(value, list):
@@ -2040,6 +2076,10 @@ def _finalise_mix_string(name_components: dict[str, Any], geography: dict[str, A
     location_block = _ensure_dict(geography.get("locationOfOperationSupplyOrProduction"))
     code = location_block.get("@location") or geography.get("code")
     name_components["location_code"] = code
+    existing_mix = _format_name_field_text(name_components.get("mix"))
+    if existing_mix:
+        name_components["mix"] = existing_mix
+        return
     name_components["mix"] = _compose_mix_string(mix_type, location_type, code)
 
 
