@@ -334,11 +334,7 @@ def print_pretty_records(response: dict[str, Any], *, limit: int | None, max_cha
         segment_id = _coerce_str(segment.get("id") or record.get("segment_id"))
         position = segment.get("position") or record.get("position")
         snippet = _build_snippet(segment, record, max_chars)
-        print(
-            f"[{idx}] score={_format_score(score)} "
-            f"doc={doc_id or '-'} segment={segment_id or '-'} "
-            f"pos={position if position is not None else '-'}"
-        )
+        print(f"[{idx}] score={_format_score(score)} " f"doc={doc_id or '-'} segment={segment_id or '-'} " f"pos={position if position is not None else '-'}")
         if snippet:
             print(f"    {snippet}")
         metadata_line = _format_metadata(record, segment)
