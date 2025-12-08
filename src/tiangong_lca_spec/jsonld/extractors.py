@@ -421,11 +421,7 @@ def _has_text_entry(value: Any) -> bool:
     if isinstance(value, dict):
         return bool(
             _clean_text(
-                value.get("#text")
-                or value.get("text")
-                or value.get("@value")
-                or value.get("value")
-                or value.get("description"),
+                value.get("#text") or value.get("text") or value.get("@value") or value.get("value") or value.get("description"),
             )
         )
     if isinstance(value, list):
