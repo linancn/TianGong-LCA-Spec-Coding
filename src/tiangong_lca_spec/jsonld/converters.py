@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from tiangong_lca_spec.tidas.flow_classification_registry import ensure_valid_product_flow_classification
 from tiangong_lca_spec.tidas.process_classification_registry import ensure_valid_classification_path
 
 ILCD_PROCESS_XMLNS = {
@@ -68,85 +70,176 @@ ILCD_UNIT_GROUP_XMLNS = {
     "@version": "1.1",
 }
 
-FLOW_CLASSIFICATION_PATHS: dict[str, tuple[dict[str, str], ...]] = {
-    "generic_goods": (
-        {"@level": "0", "@classId": "3", "#text": "Other transportable goods, except metal products, machinery and equipment"},
-        {"@level": "1", "@classId": "38", "#text": "Furniture; other transportable goods n.e.c."},
-        {"@level": "2", "@classId": "389", "#text": "Other manufactured articles n.e.c."},
-        {"@level": "3", "@classId": "3899", "#text": "Other articles"},
-        {
-            "@level": "4",
-            "@classId": "38999",
-            "#text": (
-                "Articles n.e.c. (including candles, tapers, skins of birds with their feathers, "
-                "artificial flowers, entertainment articles, hand sieves, hand riddles, vacuum "
-                "flasks, tailors dummies, animated displays used for shop window dressing, and "
-                "parts n.e.c.)"
-            ),
-        },
-    ),
-    "chemicals": (
-        {"@level": "0", "@classId": "3", "#text": "Other transportable goods, except metal products, machinery and equipment"},
-        {"@level": "1", "@classId": "34", "#text": "Basic chemicals"},
-        {"@level": "2", "@classId": "341", "#text": "Basic organic chemicals"},
-        {
-            "@level": "3",
-            "@classId": "3417",
-            "#text": (
-                "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, "
-                "and their halogenated, sulphonated, nitrated or nitrosated derivatives; "
-                "aldehyde-function compounds; ketone-function compounds and quinone-function "
-                "compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c."
-            ),
-        },
-        {
-            "@level": "4",
-            "@classId": "34170",
-            "#text": (
-                "Ethers, alcohol peroxides, ether peroxides, epoxides, acetals and hemiacetals, "
-                "and their halogenated, sulphonated, nitrated or nitrosated derivatives; "
-                "aldehyde-function compounds; ketone-function compounds and quinone-function "
-                "compounds; enzymes; prepared enzymes n.e.c.; organic compounds n.e.c."
-            ),
-        },
-    ),
-    "metal": (
-        {"@level": "0", "@classId": "4", "#text": "Metal products, machinery and equipment"},
-        {"@level": "1", "@classId": "41", "#text": "Basic metals"},
-        {"@level": "2", "@classId": "414", "#text": "Copper, nickel, aluminium, alumina, lead, zinc and tin, unwrought"},
-        {"@level": "3", "@classId": "4143", "#text": "Aluminium, unwrought; alumina"},
-        {"@level": "4", "@classId": "41431", "#text": "Unwrought aluminium"},
-    ),
-    "electricity": (
-        {"@level": "0", "@classId": "1", "#text": "Ores and minerals; electricity, gas and water"},
-        {"@level": "1", "@classId": "17", "#text": "Electricity, town gas, steam and hot water"},
-        {"@level": "2", "@classId": "171", "#text": "Electrical energy"},
-        {"@level": "3", "@classId": "1710", "#text": "Electrical energy"},
-        {"@level": "4", "@classId": "17100", "#text": "Electrical energy"},
-    ),
-    "transport_road": (
-        {
-            "@level": "0",
-            "@classId": "6",
-            "#text": "Distributive trade services; accommodation, food and beverage serving services; transport services; and electricity, gas and water distribution services",
-        },
-        {"@level": "1", "@classId": "65", "#text": "Freight transport services"},
-        {"@level": "2", "@classId": "651", "#text": "Land transport services of freight"},
-        {"@level": "3", "@classId": "6511", "#text": "Road transport services of freight"},
-        {"@level": "4", "@classId": "65119", "#text": "Other road transport services of freight"},
-    ),
-    "transport_rail": (
-        {
-            "@level": "0",
-            "@classId": "6",
-            "#text": "Distributive trade services; accommodation, food and beverage serving services; transport services; and electricity, gas and water distribution services",
-        },
-        {"@level": "1", "@classId": "65", "#text": "Freight transport services"},
-        {"@level": "2", "@classId": "651", "#text": "Land transport services of freight"},
-        {"@level": "3", "@classId": "6512", "#text": "Railway transport services of freight"},
-        {"@level": "4", "@classId": "65129", "#text": "Other railway transport services of freight"},
-    ),
+SOURCE_CATEGORY_LOOKUP: dict[str, tuple[str, str]] = {
+    "images": ("0", "Images"),
+    "data set formats": ("1", "Data set formats"),
+    "datasets": ("2", "Databases"),
+    "databases": ("2", "Databases"),
+    "compliance systems": ("3", "Compliance systems"),
+    "statistical classifications": ("4", "Statistical classifications"),
+    "publications and communications": ("5", "Publications and communications"),
+    "other source types": ("6", "Other source types"),
 }
+
+SOURCE_CATEGORY_BY_CODE = {
+    code: label
+    for code, label in {
+        "0": "Images",
+        "1": "Data set formats",
+        "2": "Databases",
+        "3": "Compliance systems",
+        "4": "Statistical classifications",
+        "5": "Publications and communications",
+        "6": "Other source types",
+    }.items()
+}
+
+NAME_SEGMENT_SPLITTER = re.compile(r"[;|]+")
+YEAR_TOKEN_PATTERN = re.compile(r"^\s*(\d{4})(?:\s*[-–/]\s*(\d{2,4}))?\s*$")
+COUNTRY_CODE_PATTERN = re.compile(r"^[A-Z]{2}$")
+MIX_KEYWORD_FRAGMENTS = (
+    "production mix",
+    "consumption mix",
+    "market mix",
+    "market group",
+    "market for",
+    "supply mix",
+    "grid mix",
+    "average mix",
+)
+MIX_KEYWORD_TRAILERS = (" at plant", " to consumer")
+LOCATION_PHRASES = {
+    "global",
+    "world",
+    "worldwide",
+    "china",
+    "mainland china",
+    "people's republic of china",
+    "asia",
+    "east asia",
+    "southeast asia",
+    "europe",
+    "european union",
+    "north america",
+    "south america",
+    "latin america",
+    "germany",
+    "japan",
+    "india",
+    "korea",
+    "republic of korea",
+    "korea, republic of",
+    "taiwan",
+    "canada",
+    "united states",
+    "united kingdom",
+    "great britain",
+    "australia",
+}
+
+
+def _clean_name_token(value: str) -> str:
+    return value.strip().strip(",;:()[]{}")
+
+
+def _looks_like_year_token(value: str) -> bool:
+    cleaned = re.sub(r"[^0-9\-–/]", "", value)
+    if not cleaned:
+        return False
+    if YEAR_TOKEN_PATTERN.match(cleaned):
+        return True
+    if cleaned.isdigit() and len(cleaned) == 4:
+        return True
+    return False
+
+
+def _is_location_token(value: str) -> bool:
+    stripped = re.sub(r"[^A-Za-z\s]", " ", value).strip().lower()
+    if not stripped:
+        return False
+    normalised = " ".join(stripped.split())
+    if normalised in LOCATION_PHRASES:
+        return True
+    words = normalised.split()
+    location_words = {"cn", "china", "global", "world", "asia", "europe", "germany", "japan", "india", "korea", "taiwan", "canada", "united", "states", "kingdom", "america"}
+    if any(word in location_words for word in words):
+        return True
+    if COUNTRY_CODE_PATTERN.match(value.strip()):
+        return True
+    return False
+
+
+def _is_mix_descriptor(value: str) -> bool:
+    lowered = " ".join(value.strip().lower().split())
+    if not lowered:
+        return False
+    if "generic" in lowered:
+        return True
+    for fragment in MIX_KEYWORD_FRAGMENTS:
+        if fragment in lowered:
+            return True
+    if lowered.startswith("market ") or lowered.startswith("mix "):
+        return True
+    for suffix in MIX_KEYWORD_TRAILERS:
+        if lowered.endswith(suffix):
+            return True
+    words = lowered.replace(",", " ").split()
+    if any(word in {"mix", "market"} for word in words):
+        return True
+    return False
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value and value not in items:
+        items.append(value)
+
+
+def _parse_process_name_fields(raw_name: str) -> tuple[str, str | None, str | None, str | None]:
+    text = (raw_name or "").strip()
+    if not text:
+        return "Unnamed process", None, None, None
+    segments = [_clean_name_token(segment) for segment in NAME_SEGMENT_SPLITTER.split(text)]
+    segments = [segment for segment in segments if segment]
+    base_name = ""
+    detail_sources: list[str] = []
+    pre_base_details: list[str] = []
+    for segment in segments:
+        if not base_name:
+            if _looks_like_year_token(segment):
+                continue
+            if _is_mix_descriptor(segment) or _is_location_token(segment):
+                pre_base_details.append(segment)
+                continue
+            base_name = segment
+            continue
+        detail_sources.append(segment)
+    if not base_name:
+        base_name = text
+    detail_sources = pre_base_details + detail_sources
+
+    detail_tokens: list[str] = []
+    for entry in detail_sources:
+        parts = [_clean_name_token(part) for part in entry.split(",")]
+        for part in parts:
+            if not part:
+                continue
+            if _looks_like_year_token(part):
+                continue
+            if part.lower() == base_name.lower():
+                continue
+            detail_tokens.append(part)
+
+    treatment_parts: list[str] = []
+    mix_parts: list[str] = []
+    for token in detail_tokens:
+        if _is_location_token(token) or _is_mix_descriptor(token):
+            _append_unique(mix_parts, token)
+        else:
+            _append_unique(treatment_parts, token)
+
+    treatment_text = ", ".join(treatment_parts) or None
+    mix_text = ", ".join(mix_parts) or None
+    return base_name, treatment_text, mix_text, None
 
 
 def collect_jsonld_files(path: Path) -> list[Path]:
@@ -182,25 +275,25 @@ def _process_classification_from_category(category: str | None) -> list[dict[str
         try:
             return ensure_valid_classification_path(tuple(entries))
         except ValueError:
-            pass
-    fallback = (
-        {"@level": "0", "@classId": "C", "#text": "Manufacturing"},
-        {"@level": "1", "@classId": "27", "#text": "Manufacture of electrical equipment"},
-        {"@level": "2", "@classId": "272", "#text": "Manufacture of batteries and accumulators"},
-        {"@level": "3", "@classId": "2720", "#text": "Manufacture of batteries and accumulators"},
-    )
-    return ensure_valid_classification_path(fallback)
+            raise ValueError(f"Unsupported process category path: {category!r}")
+    raise ValueError("Process category is required to determine Tiangong classification")
 
 
-def _default_location_code(name: str | None) -> str:
+def _default_location_code(name: str | None, *, fallback_to_global: bool = True) -> str | None:
     if not name:
+        return "GLO" if fallback_to_global else None
+    lowered = name.strip().lower()
+    if not lowered:
+        return "GLO" if fallback_to_global else None
+    if lowered in {"glo", "global", "world", "worldwide"}:
         return "GLO"
-    lowered = name.lower()
-    if "china" in lowered or lowered == "cn":
+    if "china" in lowered or lowered in {"cn", "people's republic of china", "prc"}:
         return "CN"
-    if "united states" in lowered or lowered == "usa":
+    if "united states" in lowered or lowered in {"usa", "us"}:
         return "US"
-    return "GLO"
+    if fallback_to_global:
+        return "GLO"
+    return None
 
 
 def _current_timestamp() -> str:
@@ -249,51 +342,45 @@ def _default_intended_applications() -> list[dict[str, str]]:
 
 
 def _flow_classification_from_category(category: str | None) -> list[dict[str, str]]:
-    lowered = (category or "").lower()
-    if "transport" in lowered or "freight" in lowered or "lorry" in lowered or "rail" in lowered:
-        if "rail" in lowered or "train" in lowered:
-            return [dict(entry) for entry in FLOW_CLASSIFICATION_PATHS["transport_rail"]]
-        return [dict(entry) for entry in FLOW_CLASSIFICATION_PATHS["transport_road"]]
-    if any(keyword in lowered for keyword in ("electricity", "electric", "power grid", "voltage")):
-        return [dict(entry) for entry in FLOW_CLASSIFICATION_PATHS["electricity"]]
-    if any(keyword in lowered for keyword in ("aluminium", "copper", "metal", "foil", "collector")):
-        return [dict(entry) for entry in FLOW_CLASSIFICATION_PATHS["metal"]]
-    if any(keyword in lowered for keyword in ("chemical", "oxide", "n-methyl", "pvdf", "binder", "paste", "solvent", "carbon", "nanotube")):
-        return [dict(entry) for entry in FLOW_CLASSIFICATION_PATHS["chemicals"]]
-    return [dict(entry) for entry in FLOW_CLASSIFICATION_PATHS["generic_goods"]]
+    entries = _parse_category_path(category)
+    if entries:
+        try:
+            return ensure_valid_product_flow_classification(tuple(entries))
+        except ValueError as exc:
+            raise ValueError(f"Unsupported flow category path: {category!r}") from exc
+    raise ValueError("Flow category is required to determine Tiangong product classification")
 
 
 def _source_classification_from_category(category: str | None) -> dict[str, str]:
-    lowered = (category or "").lower()
-    if "image" in lowered or "png" in lowered or "jpg" in lowered:
-        class_id = "0"
-        text = "Images"
-    elif "format" in lowered:
-        class_id = "1"
-        text = "Data set formats"
-    elif "database" in lowered:
-        class_id = "2"
-        text = "Databases"
-    elif "compliance" in lowered:
-        class_id = "3"
-        text = "Compliance systems"
-    elif "statistical" in lowered:
-        class_id = "4"
-        text = "Statistical classifications"
-    elif "publication" in lowered or "communication" in lowered or not lowered:
-        class_id = "5"
-        text = "Publications and communications"
-    else:
-        class_id = "5"
-        text = "Publications and communications"
-    return {"@level": "0", "@classId": class_id, "#text": text}
+    if not category:
+        raise ValueError("Source category is required to determine Tiangong classification")
+    entries = _parse_category_path(category)
+    if entries:
+        entry = entries[0]
+        class_id = (entry.get("@classId") or "").strip()
+        label = (entry.get("#text") or "").strip()
+        if class_id in SOURCE_CATEGORY_BY_CODE:
+            resolved_label = label or SOURCE_CATEGORY_BY_CODE[class_id]
+            return {"@level": "0", "@classId": class_id, "#text": resolved_label}
+    normalized = category.strip()
+    key = normalized.lower()
+    if key in SOURCE_CATEGORY_LOOKUP:
+        class_id, text = SOURCE_CATEGORY_LOOKUP[key]
+        return {"@level": "0", "@classId": class_id, "#text": text}
+    if ":" in normalized:
+        prefix, label = normalized.split(":", 1)
+        code = prefix.strip()
+        if code in SOURCE_CATEGORY_BY_CODE:
+            resolved_label = label.strip() or SOURCE_CATEGORY_BY_CODE[code]
+            return {"@level": "0", "@classId": code, "#text": resolved_label}
+    raise ValueError(f"Unsupported source category: {category!r}")
 
 
 def _derive_short_name(name: str) -> str:
     stripped = (name or "").strip()
     if not stripped:
         return "Source"
-    return stripped[:120]
+    return stripped
 
 
 def _guess_publication_type(category: str | None) -> str:
@@ -367,9 +454,16 @@ class JSONLDProcessConverter:
         payload = self.load()
         dataset_uuid = payload.get("@id") or str(uuid4())
         name = payload.get("name") or "Unnamed process"
-        description = payload.get("description") or ""
+        base_name, treatment_text, mix_text, functional_text = _parse_process_name_fields(name)
+        description = payload.get("description")
+        general_comment_entry = None
+        if isinstance(description, str) and description.strip():
+            general_comment_entry = _as_language_entry(description, "en")
         category = payload.get("category")
-        classification = _process_classification_from_category(category)
+        try:
+            classification = _process_classification_from_category(category)
+        except ValueError as exc:
+            raise ValueError(f"{self.jsonld_path}: {exc}") from exc
         location_block = payload.get("location") or {}
         location_code = _default_location_code(location_block.get("name"))
 
@@ -405,19 +499,24 @@ class JSONLDProcessConverter:
         if not reference_flow_id and exchanges:
             reference_flow_id = exchanges[0]["@dataSetInternalID"]
 
+        name_block: dict[str, Any] = {
+            "baseName": _as_language_entry(base_name, "en"),
+        }
+        if treatment_text:
+            name_block["treatmentStandardsRoutes"] = _as_language_entry(treatment_text, "en")
+        if mix_text:
+            name_block["mixAndLocationTypes"] = _as_language_entry(mix_text, "en")
+        if functional_text:
+            name_block["functionalUnitFlowProperties"] = _as_language_entry(functional_text, "en")
+
         process_dataset = {
             **ILCD_PROCESS_XMLNS,
             "processInformation": {
                 "dataSetInformation": {
                     "common:UUID": dataset_uuid,
-                    "name": {
-                        "baseName": _as_language_entry(name, "en"),
-                        "treatmentStandardsRoutes": _as_language_entry(name, "en"),
-                        "mixAndLocationTypes": _as_language_entry("Production mix", "en"),
-                        "functionalUnitFlowProperties": _as_language_entry("Functional unit based on reference flow", "en"),
-                    },
+                    "name": name_block,
                     "identifierOfSubDataSet": "JSONLD",
-                    "common:generalComment": _as_language_entry(description or "Converted from OpenLCA JSON-LD.", "en"),
+                    **({"common:generalComment": general_comment_entry} if general_comment_entry else {}),
                     "classificationInformation": {"common:classification": {"common:class": classification or [{"@level": "0", "@classId": "Z", "#text": "Unspecified"}]}},
                 },
                 "quantitativeReference": {
@@ -473,8 +572,11 @@ class JSONLDFlowConverter:
         flow_uuid = payload.get("@id") or str(uuid4())
         name = payload.get("name") or "Unnamed flow"
         dataset_version = DEFAULT_DATA_SET_VERSION
-        classification = _flow_classification_from_category(payload.get("category"))
-        description = payload.get("description") or "Converted from OpenLCA JSON-LD."
+        try:
+            classification = _flow_classification_from_category(payload.get("category"))
+        except ValueError as exc:
+            raise ValueError(f"{self.jsonld_path}: {exc}") from exc
+        description = payload.get("description")
         name_block = {
             "baseName": _as_language_entry(name, "en"),
             "treatmentStandardsRoutes": _as_language_entry("Standard treatment not specified", "en"),
@@ -509,7 +611,10 @@ class JSONLDFlowConverter:
                 }
             )
         reference_flow_property_id = flow_properties[0]["@dataSetInternalID"]
-        location_code = _default_location_code((payload.get("location") or {}).get("name"))
+        location_code = _default_location_code((payload.get("location") or {}).get("name"), fallback_to_global=False)
+        general_comment_entries = None
+        if isinstance(description, str) and description.strip():
+            general_comment_entries = [_as_language_entry(description, "en")]
 
         flow_dataset = {
             "flowDataSet": {
@@ -519,15 +624,13 @@ class JSONLDFlowConverter:
                         "common:UUID": flow_uuid,
                         "name": name_block,
                         "common:synonyms": [_as_language_entry(name, "en")],
-                        "common:generalComment": [_as_language_entry(description, "en")],
+                        **({"common:generalComment": general_comment_entries} if general_comment_entries else {}),
                         "classificationInformation": {"common:classification": {"common:class": classification}},
                     },
                     "quantitativeReference": {
                         "referenceToReferenceFlowProperty": reference_flow_property_id,
                     },
-                    "geography": {
-                        "locationOfSupply": location_code,
-                    },
+                    **({"geography": {"locationOfSupply": location_code}} if location_code else {}),
                     "technology": {
                         "technologicalApplicability": [_as_language_entry("Applicable to generic supply mixes.", "en")],
                     },
@@ -688,12 +791,18 @@ class JSONLDSourceConverter:
         source_uuid = payload.get("@id") or str(uuid4())
         name = payload.get("name") or "Source"
         category = payload.get("category")
-        classification = _source_classification_from_category(category)
+        try:
+            classification = _source_classification_from_category(category)
+        except ValueError as exc:
+            raise ValueError(f"{self.jsonld_path}: {exc}") from exc
         dataset_version = payload.get("version") or "01.01.000"
         short_name = _derive_short_name(name)
-        description = payload.get("textReference") or payload.get("description") or "Converted from OpenLCA JSON-LD."
+        description = payload.get("description")
+        description_entries = None
+        if isinstance(description, str) and description.strip():
+            description_entries = [_as_language_entry(description, "en")]
         publication_type = _guess_publication_type(category)
-        citation = payload.get("name") or short_name
+        citation = payload.get("textReference") or name or short_name
         dataset = {
             "sourceDataSet": {
                 **ILCD_SOURCE_XMLNS,
@@ -704,7 +813,7 @@ class JSONLDSourceConverter:
                         "classificationInformation": {"common:classification": {"common:class": classification}},
                         "sourceCitation": citation,
                         "publicationType": publication_type,
-                        "sourceDescriptionOrComment": [_as_language_entry(description, "en")],
+                        **({"sourceDescriptionOrComment": description_entries} if description_entries else {}),
                         "referenceToContact": _contact_reference(),
                     }
                 },
