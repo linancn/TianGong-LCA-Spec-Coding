@@ -94,19 +94,7 @@ def _write_inline(text: str, path: Path) -> None:
 
 
 def _masked_command(cmd: list[str]) -> str:
-    masked: list[str] = []
-    skip_next = False
-    for idx, token in enumerate(cmd):
-        if skip_next:
-            skip_next = False
-            continue
-        if token == "--prompt-inline" and idx + 1 < len(cmd):
-            masked.append("--prompt-inline")
-            masked.append("<inline-prompt>")
-            skip_next = True
-        else:
-            masked.append(token)
-    return " ".join(shlex.quote(item) for item in masked)
+    return " ".join(shlex.quote(item) for item in cmd)
 
 
 def _run_command(cmd: list[str]) -> None:
@@ -137,8 +125,6 @@ def main() -> None:
         str(args.process_dir),
         "--run-id",
         run_id,
-        "--prompt-inline",
-        inline_text,
         "--secrets",
         str(args.secrets),
     ]

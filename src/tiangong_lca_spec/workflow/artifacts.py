@@ -22,6 +22,7 @@ from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_ur
 from tiangong_lca_spec.flow_alignment.selector import LanguageModelProtocol
 from tiangong_lca_spec.process_extraction.merge import merge_results
 from tiangong_lca_spec.process_extraction.tidas_mapping import ILCD_ENTRY_LEVEL_REFERENCE_ID
+from tiangong_lca_spec.process_extraction.validators import is_placeholder_value
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = ILCD_FORMAT_SOURCE_UUID
@@ -394,6 +395,22 @@ def _extract_text(value: Any) -> str:
 
 
 ALLOWED_CHINESE_VALUES = {"天工LCA数据团队"}
+PLACEHOLDER_COMMENT_VALUES = {
+    "none",
+    "no specific explanation",
+    "no specific explanations",
+    "no specific explanation provided",
+    "no specific detail",
+    "no specific details",
+    "no specific comment",
+    "no specific comments",
+    "no additional information",
+    "no further information",
+    "not provided",
+    "not specified",
+    "no data",
+    "no information",
+}
 
 
 def _sanitize_to_english(text: str) -> str:
@@ -548,6 +565,17 @@ def _sanitize_comment_text(text: str) -> str:
     if not text:
         return ""
     sanitized = _sanitize_to_english(text)
+    if not sanitized:
+        return ""
+    normalized = sanitized.strip()
+    normalized_lower = normalized.lower().strip(".").strip()
+    normalized_lstrip = normalized_lower.lstrip()
+    if is_placeholder_value(normalized):
+        return ""
+    if normalized_lower in PLACEHOLDER_COMMENT_VALUES:
+        return ""
+    if normalized_lstrip.startswith("{'@xml:lang") or normalized_lstrip.startswith('{"@xml:lang'):
+        return ""
     if sanitized.startswith("FlowSearch hints:"):
         sanitized = _normalize_flowsearch_hints(sanitized)
         sanitized = re.sub(r"(?:\|\s*)?zh_synonyms=[^|]*", "", sanitized, flags=re.IGNORECASE)
@@ -803,7 +831,7 @@ def _sanitize_exchange_language(exchange: dict[str, Any]) -> dict[str, Any]:
         _sanitize_reference_node(reference)
         candidate = _extract_candidate(sanitized)
         if candidate:
-            fallback = name or _extract_text(reference.get("common:shortDescription"))
+            fallback = _extract_text(reference.get("common:shortDescription")) or name
             short_desc = _build_candidate_short_description(candidate, fallback)
             if short_desc:
                 reference["common:shortDescription"] = _language_entry(short_desc, "en")
