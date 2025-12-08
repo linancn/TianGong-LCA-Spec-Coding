@@ -54,6 +54,7 @@ from tiangong_lca_spec.jsonld.converters import (
     collect_jsonld_files,
 )
 from tiangong_lca_spec.jsonld.process_overrides import apply_jsonld_process_overrides
+from tiangong_lca_spec.location import extract_location_response, get_location_catalog
 from tiangong_lca_spec.process_extraction.extractors import (
     LocationNormalizer,
     ProcessClassifier,
@@ -160,6 +161,15 @@ SOURCE_SCHEMA_FILE = "tidas_sources.json"
 
 _STRICT_SCHEMA_STORE: dict[str, dict[str, Any]] | None = None
 _VALIDATOR_CACHE: dict[str, Draft7Validator] = {}
+
+PROCESS_NAME_RECOVERY_PROMPT = """
+You are filling in missing ILCD process naming fields. The JSON context includes the current
+`processInformation` plus the original OpenLCA JSON-LD payload. Use all available evidence to
+infer concise English text for the requested fields. Only respond with JSON containing any
+of the keys `baseName`, `treatmentStandardsRoutes`, and `mixAndLocationTypes`. Each value
+must be a short phrase that would make sense in the ILCD name block. Do not invent data beyond
+what can be inferred from the context, and prefer specific technical descriptors over placeholders.
+"""
 
 
 def _language_entry(text: str | None, lang: str = "en") -> dict[str, str]:
@@ -1287,6 +1297,13 @@ def _extract_location_hint(process_dataset: dict[str, Any], source_payload: dict
     return _clean_text(process_dataset.get("category"))
 
 
+def _build_location_candidates(raw_hint: str | None) -> list[dict[str, str]]:
+    catalog = get_location_catalog()
+    return catalog.build_candidate_list(raw_hint)
+
+
+
+
 def _ensure_process_descriptive_fields(process_dataset: dict[str, Any], source_payload: dict[str, Any]) -> None:
     if not isinstance(process_dataset, dict):
         return
@@ -1374,9 +1391,9 @@ def _ensure_process_temporal_fields(process_dataset: dict[str, Any], source_payl
     process_info["time"] = time_block
 
 
-def _ensure_process_geography(process_dataset: dict[str, Any], source_payload: dict[str, Any]) -> None:
+def _ensure_process_geography(process_dataset: dict[str, Any], source_payload: dict[str, Any]) -> str | None:
     if not isinstance(process_dataset, dict):
-        return
+        return None
     process_info = process_dataset.setdefault("processInformation", {})
     geography = process_info.get("geography")
     if not isinstance(geography, dict):
@@ -1384,13 +1401,57 @@ def _ensure_process_geography(process_dataset: dict[str, Any], source_payload: d
     location_block = geography.get("locationOfOperationSupplyOrProduction")
     if not isinstance(location_block, dict):
         location_block = {}
-    location_hint = _extract_location_hint(process_dataset, source_payload) or "Unspecified region"
-    if not _clean_text(location_block.get("@location")):
-        location_block["@location"] = location_hint
-    if location_hint and not _clean_text(location_block.get("name")):
-        location_block["name"] = location_hint
+    location_hint = _extract_location_hint(process_dataset, source_payload)
+    if location_hint:
+        if not _clean_text(location_block.get("@location")):
+            location_block["@location"] = location_hint
+        if not _clean_text(location_block.get("name")):
+            location_block["name"] = location_hint
     geography["locationOfOperationSupplyOrProduction"] = location_block
     process_info["geography"] = geography
+    return location_hint
+
+
+def _recover_missing_process_names(
+    process_dataset: dict[str, Any],
+    source_payload: dict[str, Any],
+    llm: OpenAIResponsesLLM,
+) -> None:
+    process_info = process_dataset.get("processInformation")
+    if not isinstance(process_info, dict):
+        return
+    data_info = process_info.get("dataSetInformation")
+    if not isinstance(data_info, dict):
+        return
+    name_block = data_info.get("name")
+    if not isinstance(name_block, dict):
+        return
+    required_keys = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
+    missing = [key for key in required_keys if not _has_text_entry(name_block.get(key))]
+    if not missing:
+        return
+    context = {
+        "missingFields": missing,
+        "processInformation": process_info,
+        "sourcePayload": source_payload,
+    }
+    try:
+        response = llm.invoke(
+            {
+                "prompt": PROCESS_NAME_RECOVERY_PROMPT,
+                "context": context,
+                "response_format": {"type": "json_object"},
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("jsonld.process_name_recovery_failed", error=str(exc))
+        return
+    recovery = response if isinstance(response, dict) else {}
+    for key in missing:
+        value = recovery.get(key)
+        text = _clean_text(value)
+        if text:
+            _ensure_multilang_entry(name_block, key, text)
 
 
 def _ensure_exchange_ids(exchanges: list[dict[str, Any]]) -> None:
@@ -1847,27 +1908,47 @@ def _apply_process_classification(
 def _apply_location_normalization(
     dataset: dict[str, Any],
     location_normalizer: LocationNormalizer,
+    location_hint: str | None,
 ) -> None:
     if not isinstance(dataset, dict):
         return
     process_info = dataset.setdefault("processInformation", {})
     if not process_info:
         return
+    catalog = get_location_catalog()
+    initial_code = catalog.best_guess(location_hint)
+    candidates = _build_location_candidates(location_hint)
     try:
-        geography = location_normalizer.run(process_info)
+        context = {"processInformation": process_info}
+        geography = location_normalizer.run(
+            context,
+            hint=location_hint,
+            candidates=candidates,
+            initial_code=initial_code,
+        )
     except Exception as exc:  # noqa: BLE001 - keep pipeline resilient
         LOGGER.warning("jsonld.location_normalization_failed", error=str(exc))
-        return
-    if isinstance(geography, str):
-        geography = {"description": geography}
-    if isinstance(geography, dict):
-        process_info.setdefault("geography", {}).update(geography)
+        geography = None
+    code_from_response, geography_payload = extract_location_response(geography)
+    final_code = catalog.coerce_code(code_from_response) or initial_code
+    geography_block = process_info.setdefault("geography", {})
+    if isinstance(geography_payload, dict):
+        geography_block.update(geography_payload)
+    if final_code:
+        geography_block["code"] = final_code
+        geography_block.setdefault("description", catalog.describe(final_code))
+        supply_block = geography_block.setdefault("locationOfOperationSupplyOrProduction", {})
+        if isinstance(supply_block, dict):
+            supply_block["@location"] = final_code
+            if not _clean_text(supply_block.get("name")):
+                supply_block["name"] = geography_block.get("description") or location_hint or catalog.describe(final_code)
 
 
 def _wrap_process_dataset(
     dataset: dict[str, Any],
     classifier: ProcessClassifier,
     location_normalizer: LocationNormalizer,
+    llm: OpenAIResponsesLLM,
     source_payload: dict[str, Any],
     source_path: Path,
 ) -> dict[str, Any]:
@@ -1883,13 +1964,14 @@ def _wrap_process_dataset(
     _ensure_process_descriptive_fields(node, source_payload)
     _ensure_intended_applications(node, source_payload)
     _ensure_process_temporal_fields(node, source_payload)
-    _ensure_process_geography(node, source_payload)
+    location_hint = _ensure_process_geography(node, source_payload)
+    _recover_missing_process_names(node, source_payload, llm)
     _ensure_process_quantitative_reference(node, source_payload)
     _apply_process_template_fields(node, uuid_value)
     _validate_process_dataset(node, source_path)
     _attach_process_source_references(node, source_payload)
     classification_block = _apply_process_classification(node, classifier, source_payload)
-    _apply_location_normalization(node, location_normalizer)
+    _apply_location_normalization(node, location_normalizer, location_hint)
     class_entries = classification_block.get("common:class")
     if not class_entries:
         category_hint = _classification_from_category(_extract_category_text(source_payload))
@@ -2219,7 +2301,7 @@ def main() -> None:
     flow_classifier = ProductFlowClassifier(llm)
     location_normalizer = LocationNormalizer(llm)
     process_extractor = JSONLDProcessExtractor(llm, process_classifier, location_normalizer)
-    flow_extractor = JSONLDFlowExtractor(llm, flow_classifier)
+    flow_extractor = JSONLDFlowExtractor(llm, flow_classifier, location_normalizer)
     source_extractor = JSONLDSourceExtractor(llm)
 
     process_blocks: list[dict[str, Any]] = []
@@ -2261,6 +2343,7 @@ def main() -> None:
                     fallback,
                     process_classifier,
                     location_normalizer,
+                    llm,
                     raw_payload,
                     json_path,
                 )

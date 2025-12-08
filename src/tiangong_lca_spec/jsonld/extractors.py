@@ -21,6 +21,7 @@ from tiangong_lca_spec.jsonld.converters import (
     TIANGONG_CONTACT_UUID,
     TIANGONG_CONTACT_VERSION,
 )
+from tiangong_lca_spec.location import LocationCatalog, extract_location_response, get_location_catalog
 from tiangong_lca_spec.process_extraction.extractors import (
     LanguageModelProtocol,
     LocationNormalizer,
@@ -390,6 +391,13 @@ DEFAULT_PROCESS_CLASS_PATH = [
 ]
 DEFAULT_DATASET_VALID_UNTIL_YEAR = 2025
 
+NAME_RECOVERY_PROMPT = """
+One or more ILCD name fields are missing. Use the supplied `processInformation`
+and original JSON-LD payload to infer concise English phrases for the missing keys.
+Respond with JSON containing any of: `baseName`, `treatmentStandardsRoutes`, `mixAndLocationTypes`.
+Avoid placeholders; capture the actual process, route, and mix/location descriptions from the evidence provided.
+"""
+
 
 def _clean_text(value: Any) -> str:
     if value is None:
@@ -405,6 +413,26 @@ def _clean_text(value: Any) -> str:
         if isinstance(text, str):
             return text.strip()
     return ""
+
+
+def _has_text_entry(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        return bool(
+            _clean_text(
+                value.get("#text")
+                or value.get("text")
+                or value.get("@value")
+                or value.get("value")
+                or value.get("description"),
+            )
+        )
+    if isinstance(value, list):
+        return any(_has_text_entry(item) for item in value)
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
 
 
 def _require_text(value: Any, field: str) -> str:
@@ -845,7 +873,14 @@ def _match_location_code(text: str | None) -> str | None:
     return None
 
 
-def _resolve_flow_location(semantics: ParsedFlowSemantics, payload: dict[str, Any]) -> str:
+def _resolve_flow_location(
+    semantics: ParsedFlowSemantics,
+    payload: dict[str, Any],
+    *,
+    catalog: LocationCatalog,
+    location_normalizer: LocationNormalizer | None = None,
+    flow_context: dict[str, Any] | None = None,
+) -> tuple[str | None, dict[str, Any]]:
     candidate_texts: list[str | None] = [
         semantics.get("location_text_hint"),
         _extract_location_text(payload),
@@ -853,10 +888,32 @@ def _resolve_flow_location(semantics: ParsedFlowSemantics, payload: dict[str, An
     for text in candidate_texts:
         if not text:
             continue
-        code = _match_location_code(text)
+        code = catalog.best_guess(text)
         if code:
-            return code
-    return ""
+            return code, {"code": code, "description": catalog.describe(code)}
+    raw_hint = candidate_texts[0] or candidate_texts[1] if len(candidate_texts) > 1 else None
+    initial_code = catalog.best_guess(raw_hint)
+    payload_update: dict[str, Any] = {}
+    if location_normalizer and (raw_hint or initial_code):
+        candidates = catalog.build_candidate_list(raw_hint)
+        context = flow_context or {}
+        try:
+            geography = location_normalizer.run(
+                context if any(key in context for key in ("processInformation", "flowInformation")) else {"flowInformation": context},
+                hint=raw_hint,
+                candidates=candidates,
+                initial_code=initial_code,
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("jsonld.flow_location_normalization_failed", error=str(exc))
+            geography = None
+        code_from_response, payload_update = extract_location_response(geography)
+        normalized_code = catalog.coerce_code(code_from_response)
+        if normalized_code:
+            return normalized_code, payload_update
+    if initial_code:
+        return initial_code, {"code": initial_code, "description": catalog.describe(initial_code)}
+    return None, {}
 
 
 def _infer_elementary_categories(semantics: ParsedFlowSemantics, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -995,6 +1052,8 @@ def _build_flow_dataset(
     payload: dict[str, Any],
     semantics: ParsedFlowSemantics,
     classifier: ProductFlowClassifier,
+    location_normalizer: LocationNormalizer | None,
+    catalog: LocationCatalog,
     audit_log: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     flow_uuid = _clean_text(payload.get("@id")) or str(uuid4())
@@ -1046,13 +1105,22 @@ def _build_flow_dataset(
         audit_log=audit_log,
     )
     quantitative_reference = {"referenceToReferenceFlowProperty": reference_property_id}
-    location_code = _resolve_flow_location(semantics, payload)
     flow_information: dict[str, Any] = {
         "dataSetInformation": data_info,
         "quantitativeReference": quantitative_reference,
     }
+    location_code, location_payload = _resolve_flow_location(
+        semantics,
+        payload,
+        catalog=catalog,
+        location_normalizer=location_normalizer,
+        flow_context={"flowInformation": flow_information},
+    )
     if location_code:
-        flow_information["geography"] = {"locationOfSupply": location_code}
+        geography: dict[str, Any] = {"locationOfSupply": location_code}
+        if location_payload.get("description"):
+            geography["description"] = location_payload["description"]
+        flow_information["geography"] = geography
     technology_text = semantics.get("treatment") or semantics.get("description")
     if technology_text:
         flow_information["technology"] = {"technologicalApplicability": [_language_entry(technology_text)]}
@@ -1123,15 +1191,29 @@ def _build_process_administrative_block(
 class JSONLDFlowExtractor:
     """Component-based orchestrator for JSON-LD flow extraction."""
 
-    def __init__(self, llm: LanguageModelProtocol, flow_classifier: ProductFlowClassifier) -> None:
+    def __init__(
+        self,
+        llm: LanguageModelProtocol,
+        flow_classifier: ProductFlowClassifier,
+        location_normalizer: LocationNormalizer,
+    ) -> None:
         self._semantic_parser = JSONLDFlowSemanticParser(llm)
         self._classifier = flow_classifier
+        self._location_normalizer = location_normalizer
+        self._location_catalog = get_location_catalog()
         self._flow_property_audit_log: list[dict[str, str]] = []
 
     def run(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         LOGGER.info("jsonld.flow_pipeline.start")
         semantics = self._semantic_parser.parse(payload)
-        dataset = _build_flow_dataset(payload, semantics, self._classifier, audit_log=self._flow_property_audit_log)
+        dataset = _build_flow_dataset(
+            payload,
+            semantics,
+            self._classifier,
+            self._location_normalizer,
+            self._location_catalog,
+            audit_log=self._flow_property_audit_log,
+        )
         return [{"flowDataSet": dataset}]
 
     def drain_flow_property_audit_records(self) -> list[dict[str, str]]:
@@ -1317,9 +1399,11 @@ class JSONLDProcessExtractor:
         process_classifier: ProcessClassifier,
         location_normalizer: LocationNormalizer,
     ) -> None:
+        self._llm = llm
         self._semantic_parser = JSONLDSemanticParser(llm)
         self._classifier = process_classifier
         self._location_normalizer = location_normalizer
+        self._location_catalog = get_location_catalog()
 
     def run(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         LOGGER.info("jsonld.process_pipeline.start")
@@ -1331,7 +1415,7 @@ class JSONLDProcessExtractor:
 
     def _build_dataset(self, payload: dict[str, Any], semantics: ParsedProcessSemantics) -> dict[str, Any]:
         exchanges, reference_id, functional_unit = _build_exchange_entries(payload)
-        process_information = self._build_process_information(
+        process_information, location_hint = self._build_process_information(
             payload,
             semantics,
             reference_id,
@@ -1344,7 +1428,8 @@ class JSONLDProcessExtractor:
             LOGGER.warning("jsonld.process_pipeline.classification_fallback")
             classification_path = list(DEFAULT_PROCESS_CLASS_PATH)
         self._apply_classification(process_information, classification_path)
-        self._apply_location_normalization(process_information)
+        self._recover_missing_name_fields(process_information, payload)
+        self._apply_location_normalization(process_information, location_hint)
         modelling = self._build_modelling_block(payload, semantics)
         administrative = _build_process_administrative_block(payload, semantics, dataset_uuid)
         dataset = {
@@ -1361,7 +1446,7 @@ class JSONLDProcessExtractor:
         semantics: ParsedProcessSemantics,
         reference_id: str | None,
         functional_unit: str | None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], str | None]:
         dataset_uuid = _clean_text(payload.get("@id")) or str(uuid4())
         documentation = payload.get("processDocumentation") or {}
         technology_block = _build_technology_block(payload, semantics)
@@ -1416,23 +1501,72 @@ class JSONLDProcessExtractor:
         }
         if technology_block:
             process_information["technology"] = technology_block
-        return process_information
+        return process_information, location_hint
 
     def _apply_classification(self, process_information: dict[str, Any], path: list[dict[str, Any]]) -> None:
         container = process_information.setdefault("dataSetInformation", {}).setdefault("classificationInformation", {}).setdefault("common:classification", {})
         container["common:class"] = path
 
-    def _apply_location_normalization(self, process_information: dict[str, Any]) -> None:
+    def _apply_location_normalization(self, process_information: dict[str, Any], location_hint: str | None) -> None:
+        catalog = self._location_catalog
+        initial_code = catalog.best_guess(location_hint)
+        candidates = catalog.build_candidate_list(location_hint)
         try:
-            geography_update = self._location_normalizer.run(process_information)
+            geography_update = self._location_normalizer.run(
+                {"processInformation": process_information},
+                hint=location_hint,
+                candidates=candidates,
+                initial_code=initial_code,
+            )
         except Exception as exc:  # noqa: BLE001 - keep pipeline resilient
             LOGGER.warning("jsonld.location_normalization_failed", error=str(exc))
-            return
+            geography_update = None
+        code_from_response, payload = extract_location_response(geography_update)
+        final_code = catalog.coerce_code(code_from_response) or initial_code
         geography = process_information.setdefault("geography", {})
-        if isinstance(geography_update, str):
-            geography["description"] = geography_update
-        elif isinstance(geography_update, dict):
-            geography.update(geography_update)
+        if isinstance(payload, dict):
+            geography.update(payload)
+        if final_code:
+            geography["code"] = final_code
+            geography.setdefault("description", catalog.describe(final_code))
+            location_block = geography.setdefault("locationOfOperationSupplyOrProduction", {})
+            if isinstance(location_block, dict):
+                location_block["@location"] = final_code
+                if not _clean_text(location_block.get("name")):
+                    location_block["name"] = geography.get("description") or location_hint or catalog.describe(final_code)
+
+    def _recover_missing_name_fields(self, process_information: dict[str, Any], payload: dict[str, Any]) -> None:
+        data_info = process_information.get("dataSetInformation")
+        if not isinstance(data_info, dict):
+            return
+        name_block = data_info.get("name")
+        if not isinstance(name_block, dict):
+            return
+        required = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
+        missing = [key for key in required if not _has_text_entry(name_block.get(key))]
+        if not missing:
+            return
+        context = {
+            "missingFields": missing,
+            "processInformation": process_information,
+            "sourcePayload": payload,
+        }
+        try:
+            response = self._llm.invoke(
+                {
+                    "prompt": NAME_RECOVERY_PROMPT,
+                    "context": context,
+                    "response_format": {"type": "json_object"},
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("jsonld.name_recovery_failed", error=str(exc))
+            return
+        recovery = response if isinstance(response, dict) else {}
+        for key in missing:
+            value = _clean_text(recovery.get(key))
+            if value:
+                name_block[key] = _language_entry(value)
 
     def _build_modelling_block(self, payload: dict[str, Any], semantics: ParsedProcessSemantics) -> dict[str, Any]:
         return {
