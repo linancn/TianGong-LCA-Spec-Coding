@@ -16,9 +16,9 @@ for path in (SCRIPTS_DIR, REPO_ROOT):
         sys.path.append(str(path))
 
 try:
-    from scripts.md._workflow_common import ensure_run_cache_dir, generate_run_id  # type: ignore
+    from scripts.md._workflow_common import generate_run_id, save_latest_run_id  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover
-    from _workflow_common import ensure_run_cache_dir, generate_run_id  # type: ignore
+    from _workflow_common import generate_run_id, save_latest_run_id  # type: ignore
 
 
 def _as_path(value: str | None) -> Path | None:
@@ -47,11 +47,6 @@ def parse_args() -> argparse.Namespace:
         help="Keep Stage 3 in dry-run mode (no Database_CRUD_Tool commit).",
     )
     parser.add_argument("--skip-stage3", action="store_true", help="Stop after Stage 2 (no publish).")
-    parser.add_argument("--prompt", type=Path, default=Path(".github/prompts/convert_json.prompt.md"), help="LLM prompt used during Stage 1 JSON-LD extraction.")
-    parser.add_argument(
-        "--prompt-inline",
-        help="Inline prompt text that overrides --prompt. Useful for Codex one-line executions.",
-    )
     parser.add_argument("--secrets", type=Path, default=Path(".secrets/secrets.toml"), help="Secrets file containing OpenAI credentials.")
     parser.add_argument("--llm-cache", type=Path, help="Override for Stage 1 JSON-LD LLM cache directory.")
     parser.add_argument("--disable-cache", action="store_true", help="Disable LLM response caching during Stage 1.")
@@ -59,6 +54,14 @@ def parse_args() -> argparse.Namespace:
         "--stage2-extra-args",
         nargs=argparse.REMAINDER,
         help="Additional arguments appended to the Stage 2 command (after orchestrator-provided args).",
+    )
+    parser.add_argument(
+        "--new-run",
+        action="store_true",
+        help=(
+            "Generate a fresh run id (default behavior). This flag is retained for backward compatibility; "
+            "omit it and the orchestrator will still start a new run unless --run-id is provided."
+        ),
     )
     return parser.parse_args()
 
@@ -70,22 +73,24 @@ def _run(cmd: list[str]) -> None:
 
 def main() -> None:
     args = parse_args()
-    run_id = args.run_id or generate_run_id()
-    inline_prompt_path: Path | None = None
-    if args.prompt_inline:
-        cache_dir = ensure_run_cache_dir(run_id)
-        inline_prompt_path = cache_dir / "inline_prompt_jsonld.txt"
-        inline_prompt_path.write_text(args.prompt_inline, encoding="utf-8")
-        print(f"[jsonld-run] Inline prompt captured at {inline_prompt_path}")
-
+    if args.run_id:
+        if args.new_run:
+            print("[jsonld-run] --new-run ignored because --run-id was provided; using supplied value.")
+        run_id = args.run_id
+        print(f"[jsonld-run] Using provided run id: {run_id}")
+    else:
+        run_id = generate_run_id()
+        if args.new_run:
+            print(f"[jsonld-run] Generated fresh run id via --new-run: {run_id}")
+        else:
+            print(f"[jsonld-run] Generated fresh run id (default behavior): {run_id}")
+    save_latest_run_id(run_id, pipeline="jsonld")
     stage1_script = JSONLD_DIR / "stage1_jsonld_extract.py"
     stage2_script = JSONLD_DIR / "stage2_jsonld_validate.py"
     stage3_script = JSONLD_DIR / "stage3_jsonld_publish.py"
 
     if not stage1_script.exists() or not stage2_script.exists():
         raise SystemExit("JSON-LD stage scripts not found under scripts/jsonld/. Ensure the repo is up to date.")
-
-    prompt_path = inline_prompt_path or args.prompt
 
     stage1_cmd = [
         sys.executable,
@@ -97,7 +102,9 @@ def main() -> None:
     ]
     if args.flows_dir:
         stage1_cmd.extend(["--flow-dir", str(args.flows_dir)])
-    stage1_cmd.extend(["--prompt", str(prompt_path), "--secrets", str(args.secrets)])
+    if args.sources_dir:
+        stage1_cmd.extend(["--source-dir", str(args.sources_dir)])
+    stage1_cmd.extend(["--secrets", str(args.secrets)])
     if args.llm_cache:
         stage1_cmd.extend(["--llm-cache", str(args.llm_cache)])
     if args.disable_cache:
@@ -114,8 +121,6 @@ def main() -> None:
     ]
     if args.clean_exports:
         stage2_cmd.append("--clean-exports")
-    if args.sources_dir:
-        stage2_cmd.extend(["--json-ld-sources", str(args.sources_dir)])
     if args.stage2_extra_args:
         stage2_cmd.extend(args.stage2_extra_args)
     print(f"[jsonld-run] Stage 2 (validate) -> {stage2_script}")
