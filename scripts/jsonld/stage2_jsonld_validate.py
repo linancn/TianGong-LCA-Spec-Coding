@@ -35,15 +35,18 @@ except ModuleNotFoundError:  # pragma: no cover
         save_latest_run_id,
     )
 
-from tiangong_lca_spec.jsonld.converters import (
-    convert_flow_directory,
-    convert_source_directory,
+from tiangong_lca_spec.core.constants import ILCD_FORMAT_SOURCE_UUID
+from tiangong_lca_spec.jsonld.flow_references import (
+    FlowReferenceData,
+    build_flow_reference,
+    reference_data_from_flow_dataset,
 )
 from tiangong_lca_spec.jsonld.process_overrides import (
     apply_jsonld_process_overrides,
     auto_fix_from_validation,
 )
 from tiangong_lca_spec.jsonld.uuid_utils import UUIDMapper
+from tiangong_lca_spec.process_extraction.tidas_mapping import ILCD_ENTRY_LEVEL_REFERENCE_ID
 from tiangong_lca_spec.tidas.process_classification_registry import ensure_valid_classification_path
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 from tiangong_lca_spec.workflow.artifacts import (
@@ -118,6 +121,90 @@ def _enforce_flow_dataset_version(flow_root: dict[str, Any], uuid_value: str) ->
     publication["common:permanentDataSetURI"] = f"https://lcdn.tiangong.earth/showFlow.xhtml?uuid={uuid_value}&version={DEFAULT_DATA_SET_VERSION}"
 
 
+def _enforce_source_dataset_version(source_root: dict[str, Any], uuid_value: str) -> None:
+    admin = source_root.setdefault("administrativeInformation", {})
+    publication = admin.setdefault("publicationAndOwnership", {})
+    publication["common:dataSetVersion"] = DEFAULT_DATA_SET_VERSION
+    publication["common:permanentDataSetURI"] = f"https://lcdn.tiangong.earth/showSource.xhtml?uuid={uuid_value}&version={DEFAULT_DATA_SET_VERSION}"
+
+
+def _build_flow_metadata_index(flow_datasets: list[dict[str, Any]]) -> dict[str, FlowReferenceData]:
+    lookup: dict[str, FlowReferenceData] = {}
+    for dataset in flow_datasets:
+        flow_root = dataset.get("flowDataSet")
+        if not isinstance(flow_root, dict):
+            continue
+        version = resolve_dataset_version(flow_root)
+        metadata = reference_data_from_flow_dataset(flow_root, version=version)
+        if metadata:
+            lookup[metadata.uuid] = metadata
+    return lookup
+
+
+def _iter_process_exchanges(process_dataset: dict[str, Any]) -> list[dict[str, Any]]:
+    exchanges_node = process_dataset.get("exchanges")
+    if isinstance(exchanges_node, dict):
+        raw_items = exchanges_node.get("exchange")
+        if isinstance(raw_items, list):
+            return [item for item in raw_items if isinstance(item, dict)]
+        if isinstance(raw_items, dict):
+            return [raw_items]
+    elif isinstance(exchanges_node, list):
+        return [item for item in exchanges_node if isinstance(item, dict)]
+    return []
+
+
+def _strip_exchange_names(process_path: Path) -> None:
+    if not process_path.exists():
+        return
+    for json_path in process_path.glob("*.json"):
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        dataset = payload.get("processDataSet")
+        if not isinstance(dataset, dict):
+            continue
+        changed = False
+        for exchange in _iter_process_exchanges(dataset):
+            if "exchangeName" in exchange:
+                exchange.pop("exchangeName", None)
+                changed = True
+        if changed:
+            dump_json(payload, json_path)
+
+
+def _rebuild_process_flow_references(
+    process_blocks: list[dict[str, Any]],
+    flow_metadata: dict[str, FlowReferenceData],
+) -> None:
+    missing_refs: set[str] = set()
+    for block in process_blocks:
+        dataset = block.get("processDataSet")
+        if not isinstance(dataset, dict):
+            continue
+        for exchange in _iter_process_exchanges(dataset):
+            ref = exchange.get("referenceToFlowDataSet")
+            if not isinstance(ref, dict):
+                continue
+            uuid_value = ref.get("@refObjectId")
+            if not isinstance(uuid_value, str):
+                continue
+            uuid_key = uuid_value.strip()
+            if not uuid_key:
+                continue
+            metadata = flow_metadata.get(uuid_key)
+            if metadata is None:
+                missing_refs.add(uuid_key)
+                continue
+            uri = f"../flows/{metadata.uuid}_{metadata.version}.xml"
+            exchange["referenceToFlowDataSet"] = build_flow_reference(metadata, uri=uri)
+            exchange.pop("referenceToFlowPropertyDataSet", None)
+    if missing_refs:
+        missing_list = ", ".join(sorted(missing_refs))
+        raise SystemExit("Stage 2 detected process exchanges referencing unknown flow UUIDs: " f"{missing_list}. Ensure the corresponding flow datasets are generated in Stage 1.")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", help="Run identifier produced by Stage 1 JSON-LD extractor.")
@@ -162,16 +249,6 @@ def parse_args() -> argparse.Namespace:
         help="Clean the exports directory before writing JSON-LD artifacts.",
     )
     parser.add_argument(
-        "--json-ld-flows",
-        type=Path,
-        help="Legacy fallback directory containing OpenLCA JSON-LD flow datasets to convert when Stage 1 flow caches are unavailable.",
-    )
-    parser.add_argument(
-        "--json-ld-sources",
-        type=Path,
-        help="Directory containing OpenLCA JSON-LD source datasets to convert (optional).",
-    )
-    parser.add_argument(
         "--skip-auto-publish",
         action="store_true",
         help="Do not automatically invoke Stage 3 JSON-LD publisher after validation succeeds.",
@@ -191,9 +268,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    run_id = resolve_run_id(args.run_id)
+    run_id = resolve_run_id(args.run_id, pipeline="jsonld")
     ensure_run_cache_dir(run_id)
-    save_latest_run_id(run_id)
+    save_latest_run_id(run_id, pipeline="jsonld")
 
     process_blocks_path = args.process_blocks or run_cache_path(run_id, "stage1_process_blocks.json")
     process_datasets_path = args.process_datasets or run_cache_path(run_id, "process_datasets.json")
@@ -211,7 +288,8 @@ def main() -> None:
     if not process_blocks_path.exists():
         raise SystemExit(f"Process blocks file not found: {process_blocks_path}")
 
-    uuid_mapper = UUIDMapper()
+    preserve_source_ids = [value for value in (ILCD_FORMAT_SOURCE_UUID, ILCD_ENTRY_LEVEL_REFERENCE_ID) if value]
+    uuid_mapper = UUIDMapper(preserve_source_uuids=preserve_source_ids)
 
     converted_flows: list[dict[str, Any]] = []
     if flow_datasets_path.exists():
@@ -219,11 +297,8 @@ def main() -> None:
         for dataset in converted_flows:
             uuid_mapper.remap_flow_dataset(dataset)
         print(f"[jsonld-stage2] Loaded {len(converted_flows)} flow dataset(s) from {flow_datasets_path}")
-    elif args.json_ld_flows:
-        converted_flows = convert_flow_directory(args.json_ld_flows)
-        for dataset in converted_flows:
-            uuid_mapper.remap_flow_dataset(dataset)
-        print(f"[jsonld-stage2] Converted {len(converted_flows)} flow dataset(s) from {args.json_ld_flows}")
+    else:
+        raise SystemExit("Flow datasets were not found. Run Stage 1 JSON-LD extraction first so stage1_flow_blocks.json is available.")
 
     converted_sources: list[dict[str, Any]] = []
     if source_datasets_path.exists():
@@ -231,15 +306,15 @@ def main() -> None:
         for dataset in converted_sources:
             uuid_mapper.remap_source_dataset(dataset)
         print(f"[jsonld-stage2] Loaded {len(converted_sources)} source dataset(s) from {source_datasets_path}")
-    elif args.json_ld_sources:
-        converted_sources = convert_source_directory(args.json_ld_sources)
-        for dataset in converted_sources:
-            uuid_mapper.remap_source_dataset(dataset)
-        print(f"[jsonld-stage2] Converted {len(converted_sources)} source dataset(s) from {args.json_ld_sources}")
+    else:
+        print(f"[jsonld-stage2] Source datasets file not found ({source_datasets_path}); proceeding without source data.")
 
     process_blocks = _read_process_blocks(process_blocks_path)
     for block in process_blocks:
         uuid_mapper.remap_process_block(block)
+
+    flow_metadata = _build_flow_metadata_index(converted_flows)
+    _rebuild_process_flow_references(process_blocks, flow_metadata)
 
     alignment_entries: list[dict[str, Any]] = []
 
@@ -257,6 +332,7 @@ def main() -> None:
     )
     print(f"[jsonld-stage2] Process exports complete -> {artifact_root} " f"(processes={summary.process_count}, flows={summary.flow_count}, sources={summary.source_count})")
     dump_json({"alignment": alignment_entries}, alignment_output)
+    _strip_exchange_names(artifact_root / "processes")
 
     flow_count = summary.flow_count
     if not args.validation_only and converted_flows:
@@ -282,6 +358,7 @@ def main() -> None:
             uuid_value = info.get("common:UUID")
             if not uuid_value:
                 continue
+            _enforce_source_dataset_version(source_root, uuid_value)
             dataset_version = resolve_dataset_version(source_root)
             dump_json(dataset, sources_dir / build_export_filename(uuid_value, dataset_version))
         print(f"[jsonld-stage2] Wrote {len(converted_sources)} remapped source dataset(s) -> {sources_dir}")
