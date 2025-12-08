@@ -1302,8 +1302,6 @@ def _build_location_candidates(raw_hint: str | None) -> list[dict[str, str]]:
     return catalog.build_candidate_list(raw_hint)
 
 
-
-
 def _ensure_process_descriptive_fields(process_dataset: dict[str, Any], source_payload: dict[str, Any]) -> None:
     if not isinstance(process_dataset, dict):
         return
