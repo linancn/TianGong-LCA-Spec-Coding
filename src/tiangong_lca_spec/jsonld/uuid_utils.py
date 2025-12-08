@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 
 class UUIDMapper:
     """Track UUID remapping tables for JSON-LD datasets."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, preserve_source_uuids: Iterable[str] | None = None) -> None:
         self.flow_map: dict[str, str] = {}
         self.source_map: dict[str, str] = {}
         self.process_map: dict[str, str] = {}
+        self._preserve_source_uuids = {value.strip().lower() for value in (preserve_source_uuids or []) if isinstance(value, str) and value.strip()}
 
     # Flow datasets -----------------------------------------------------------------
     def remap_flow_dataset(self, dataset: dict[str, Any]) -> None:
@@ -33,6 +34,9 @@ class UUIDMapper:
             return
         info = source_root.get("sourceInformation", {}).get("dataSetInformation", {})
         old_uuid = _ensure_uuid(info)
+        if self._should_preserve_source_uuid(old_uuid):
+            self.source_map.setdefault(old_uuid, old_uuid)
+            return
         new_uuid = _new_uuid()
         self.source_map[old_uuid] = new_uuid
         info["common:UUID"] = new_uuid
@@ -64,7 +68,7 @@ class UUIDMapper:
                     node["@refObjectId"] = self.source_map[ref]
                 elif ref in self.process_map:
                     node["@refObjectId"] = self.process_map[ref]
-                elif ref_type == "source data set":
+                elif ref_type == "source data set" and not self._should_preserve_source_uuid(ref):
                     new_uuid = self.source_map.setdefault(ref, _new_uuid())
                     node["@refObjectId"] = new_uuid
             uri = node.get("@uri")
@@ -75,6 +79,12 @@ class UUIDMapper:
         elif isinstance(node, list):
             for item in node:
                 self._rewrite_references(item)
+
+    def _should_preserve_source_uuid(self, uuid_value: str | None) -> bool:
+        if not isinstance(uuid_value, str):
+            return False
+        key = uuid_value.strip().lower()
+        return bool(key) and key in self._preserve_source_uuids
 
 
 # Helpers --------------------------------------------------------------------------

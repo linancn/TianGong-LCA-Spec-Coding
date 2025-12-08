@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,11 +13,6 @@ from tiangong_lca_spec.core.uris import build_local_dataset_uri
 TIANGONG_CONTACT_UUID = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
 TIANGONG_CONTACT_VERSION = "01.00.000"
 TIANGONG_CONTACT_URI = build_local_dataset_uri("contact data set", TIANGONG_CONTACT_UUID, TIANGONG_CONTACT_VERSION)
-
-DEFAULT_DATA_SOURCE_TEXT = "Converted from OpenLCA JSON-LD input; upstream references will be refined during alignment."
-DEFAULT_CUTOFF_TEXT = "Data completeness and cut-off principles follow the supplied OpenLCA JSON-LD dataset; " "unchanged values were preserved during Tiangong normalization."
-DEFAULT_TECH_DESCRIPTION = "Technology description not provided; derived from OpenLCA JSON-LD."
-DEFAULT_INTENDED_APPLICATION = "Life cycle data prepared for Tiangong LCA Spec Coding workflow automation."
 MASS_FLOW_PROPERTY_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"
 MASS_FLOW_PROPERTY_VERSION = "03.00.003"
 
@@ -34,22 +28,22 @@ def apply_jsonld_process_overrides(process_dataset: dict[str, Any]) -> None:
 
     modelling = target.setdefault("modellingAndValidation", {})
     dsr = modelling.setdefault("dataSourcesTreatmentAndRepresentativeness", {})
-    if not dsr.get("dataCutOffAndCompletenessPrinciples"):
-        dsr["dataCutOffAndCompletenessPrinciples"] = [_language_entry(DEFAULT_CUTOFF_TEXT)]
     references = dsr.get("referenceToDataSource")
     reference_entries: list[dict[str, Any]] = []
     if isinstance(references, dict):
         reference_entries.append(references)
     elif isinstance(references, list):
         reference_entries.extend([entry for entry in references if isinstance(entry, dict)])
-    if not reference_entries:
-        reference_entries.append(_build_default_data_source_reference())
-    dsr["referenceToDataSource"] = reference_entries
+    if reference_entries:
+        dsr["referenceToDataSource"] = reference_entries
 
     process_info = target.setdefault("processInformation", {})
-    technology = process_info.setdefault("technology", {})
-    if not technology.get("technologyDescriptionAndIncludedProcesses"):
-        technology["technologyDescriptionAndIncludedProcesses"] = [_language_entry(DEFAULT_TECH_DESCRIPTION)]
+    technology = process_info.get("technology")
+    if isinstance(technology, dict):
+        if not technology.get("technologyDescriptionAndIncludedProcesses"):
+            technology.pop("technologyDescriptionAndIncludedProcesses", None)
+        if not technology:
+            process_info.pop("technology", None)
 
     admin = target.setdefault("administrativeInformation", {})
     data_entry = admin.setdefault("dataEntryBy", {})
@@ -59,8 +53,6 @@ def apply_jsonld_process_overrides(process_dataset: dict[str, Any]) -> None:
 
     commissioner = admin.setdefault("common:commissionerAndGoal", {})
     commissioner.setdefault("common:referenceToCommissioner", _build_contact_reference())
-    if not commissioner.get("common:intendedApplications"):
-        commissioner["common:intendedApplications"] = [_language_entry(DEFAULT_INTENDED_APPLICATION)]
 
     exchanges_node = target.setdefault("exchanges", {})
     exchanges = exchanges_node.get("exchange")
@@ -72,8 +64,6 @@ def apply_jsonld_process_overrides(process_dataset: dict[str, Any]) -> None:
         if not isinstance(exchange, dict):
             continue
         exchange["@dataSetInternalID"] = str(exchange.get("@dataSetInternalID") or idx)
-        amount = exchange.get("meanAmount")
-        exchange["meanAmount"] = str(amount) if amount is not None else "0"
         ref = exchange.setdefault("referenceToFlowDataSet", {})
         flow_id = ref.get("@refObjectId") or exchange.get("exchangeId") or exchange.get("flowId")
         if flow_id:
@@ -123,12 +113,6 @@ def _build_contact_reference() -> dict[str, Any]:
             _language_entry("天工LCA数据团队", "zh"),
         ],
     }
-
-
-def _build_default_data_source_reference() -> dict[str, Any]:
-    reference = build_dataset_format_reference()
-    reference["common:shortDescription"] = _language_entry(DEFAULT_DATA_SOURCE_TEXT)
-    return deepcopy(reference)
 
 
 def auto_fix_from_validation(report_path: Path | str, artifact_root: Path | str) -> bool:

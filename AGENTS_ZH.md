@@ -13,6 +13,7 @@
 - **协作接口**：标准工作流依赖 `.secrets/secrets.toml` 中配置的 OpenAI、tiangong LCA Remote 与 TIDAS 验证服务。首次接入时请先完成凭据校验，再批量运行 Stage 3+。
 - **更多参考**：各阶段产物要求、对齐策略和异常处理见 `.github/prompts/extract-process-workflow.prompt.md`；若需补充分类或地理信息，可查看 `scripts/md/list_*_children.py` 提供的辅助 CLI。
 - **Stage 4 流发布**：当需要补齐缺失的 Flow 时，发布器会调用配置好的 LLM 自动推断流类型，并借助 `scripts/md/list_product_flow_category_children.py` 逐级细化产品分类，确保最终落到最具体的类别。请确认凭据就绪，避免发布阶段因无法访问 LLM 而退回默认分类。
+- **Run ID 管理**：文献流程沿用默认的 `artifacts/.latest_run_id`；Stage 2~4 未传 `--run-id` 时会复用该文件记录的最近一次 run。JSON-LD 流程单独维护 `artifacts/.latest_jsonld_run_id`，`scripts/jsonld/run_pipeline.py` 无参运行会生成新 run 并写入该文件，只有显式传入 ID 时才会复用旧缓存，Stage 2/3 也会在缺省情况下读取该文件以便重试最近一次 JSON-LD run。
 
 ## 2. 开发环境与依赖
 - **Python 版本**：≥ 3.12，推荐通过 `uv toolchain` 管理，默认虚拟环境位于 `.venv/`。
