@@ -595,8 +595,13 @@ FLOW_CLASSIFICATION_RETRY_ATTEMPTS = 2
 
 LOCATION_PROMPT = (
     "Normalize the process geography for the schema field "
-    "`processInformation.geography.locationOfOperationSupplyOrProduction`. Return JSON with "
-    "keys 'code' (ISO country/region identifier) and 'description' (short context)."
+    "`processInformation.geography.locationOfOperationSupplyOrProduction`. The JSON context "
+    "contains `processInformation` or `flowInformation`, plus optional `rawLocationHint`, "
+    "`initialCodeSuggestion`, and `candidateLocations` (each entry lists an ILCD code and "
+    "description from the official hierarchy). Choose the most specific ILCD code supported "
+    "by the evidence—prefer one of the candidate codes when appropriate, otherwise fall back "
+    "to another valid ILCD code. Return JSON with `code` and optional `description` or "
+    "`subLocation` notes. Do not fabricate new codes."
 )
 
 
@@ -860,12 +865,29 @@ class ProductFlowClassifier:
 class LocationNormalizer:
     llm: LanguageModelProtocol
 
-    def run(self, process_info: dict[str, Any]) -> dict[str, Any]:
+    def run(
+        self,
+        process_info: dict[str, Any],
+        *,
+        hint: str | None = None,
+        candidates: list[dict[str, str]] | None = None,
+        initial_code: str | None = None,
+    ) -> dict[str, Any]:
         LOGGER.info("process_extraction.location_normalization")
+        if isinstance(process_info, dict) and any(key in process_info for key in ("processInformation", "flowInformation")):
+            context_payload: dict[str, Any] = dict(process_info)
+        else:
+            context_payload = {"processInformation": process_info}
+        if hint:
+            context_payload["rawLocationHint"] = hint
+        if candidates:
+            context_payload["candidateLocations"] = candidates
+        if initial_code:
+            context_payload["initialCodeSuggestion"] = initial_code
         response = self.llm.invoke(
             {
                 "prompt": LOCATION_PROMPT,
-                "context": process_info,
+                "context": context_payload,
                 "response_format": {"type": "json_object"},
             }
         )
