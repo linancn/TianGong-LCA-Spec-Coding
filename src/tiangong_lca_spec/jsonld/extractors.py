@@ -41,6 +41,8 @@ ILCD_COMPLIANCE_SOURCE_URI = build_local_dataset_uri("source data set", ILCD_COM
 
 MASS_FLOW_PROPERTY_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"
 MASS_FLOW_PROPERTY_VERSION = "03.00.003"
+MASS_DISTANCE_FLOW_PROPERTY_UUID = "118f2a40-50ec-457c-aa60-9bc6b6af9931"
+MASS_DISTANCE_FLOW_PROPERTY_VERSION = "01.01.000"
 FLOW_PROPERTY_VERSION_OVERRIDES: dict[str, str] = {
     "838aaa23-0117-11db-92e3-0800200c9a66": "03.00.000",
     "01846770-4cfe-4a25-8ad9-919d8d378345": "03.00.004",
@@ -48,6 +50,7 @@ FLOW_PROPERTY_VERSION_OVERRIDES: dict[str, str] = {
     "341fd786-b2ad-4552-a762-5eafcab45dee": "01.00.003",
     "441238a3-ba09-46ec-b35b-c30cfba746d1": "02.00.003",
     "93a60a56-a3c8-11da-a746-0800200c9a66": "03.00.003",
+    MASS_DISTANCE_FLOW_PROPERTY_UUID: MASS_DISTANCE_FLOW_PROPERTY_VERSION,
 }
 FLOW_PROPERTY_STANDARD_MAPPINGS: tuple[dict[str, Any], ...] = (
     {
@@ -61,6 +64,21 @@ FLOW_PROPERTY_STANDARD_MAPPINGS: tuple[dict[str, Any], ...] = (
         "target_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
         "target_name": "Mass",
         "target_version": "03.00.003",
+    },
+    {
+        "aliases": (
+            "mass*distance",
+            "mass distance",
+            "transport work",
+            "tkm",
+            "t*km",
+            "ton kilometer",
+            "tonne kilometer",
+            "kg*km",
+        ),
+        "target_uuid": MASS_DISTANCE_FLOW_PROPERTY_UUID,
+        "target_name": "mass*distance",
+        "target_version": MASS_DISTANCE_FLOW_PROPERTY_VERSION,
     },
 )
 
@@ -1012,6 +1030,20 @@ def _build_flow_properties_block(
             if audit_record and audit_log is not None:
                 audit_log.append(audit_record)
             mean_value = factor.get("conversionFactor", 1)
+            unit_hint = _clean_text(factor.get("unit"))
+            if mapped_flow_property and mapped_flow_property.get("@id") == MASS_DISTANCE_FLOW_PROPERTY_UUID:
+                # Normalize to kg*km reference; convert common inputs (t*km, g*km)
+                normalized = _clean_text(mean_value) or "1"
+                try:
+                    numeric = float(normalized)
+                except Exception:
+                    numeric = 1.0
+                unit_lower = unit_hint.lower() if isinstance(unit_hint, str) else ""
+                if unit_lower in ("t*km", "tkm", "ton*km", "tonne*km", "tonne km", "ton km"):
+                    numeric *= 1000.0
+                elif unit_lower in ("g*km", "gkm"):
+                    numeric /= 1000.0
+                mean_value = str(numeric)
             entries.append(
                 {
                     "@dataSetInternalID": str(idx),

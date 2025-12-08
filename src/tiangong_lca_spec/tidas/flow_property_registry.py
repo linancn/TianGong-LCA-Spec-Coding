@@ -14,6 +14,8 @@ MAPPING_PATH = SCHEMA_DIR / "flowproperty_unitgroup_mapping.json"
 FLOW_PROPERTY_VERSION_OVERRIDES: Mapping[str, str] = {
     # Mass property ships with a published ILCD dataset version.
     "93a60a56-a3c8-11da-a746-0800200b9a66": "03.00.003",
+    # mass*distance (kg*km) transport service property.
+    "118f2a40-50ec-457c-aa60-9bc6b6af9931": "01.01.000",
 }
 DEFAULT_FLOW_PROPERTY_VERSION = "01.01.000"
 
