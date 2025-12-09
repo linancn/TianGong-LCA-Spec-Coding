@@ -1717,22 +1717,11 @@ def _build_elementary_flow_hint(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _append_skipped_flow_log(payload: dict[str, Any], source_file: str) -> None:
-    target = REPO_ROOT / "artifacts" / "exports" / "flows_skipped.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        existing_text = target.read_text(encoding="utf-8")
-        records = json.loads(existing_text) if existing_text.strip() else []
-    except FileNotFoundError:
-        records = []
-    except json.JSONDecodeError:
-        records = []
-    record = {"source": source_file, "payload": payload}
-    records.append(record)
-    target.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    return None  # Deprecated in favor of run-scoped skipped UUID whitelist.
 
 
-def _append_elementary_flow_hint_log(record: dict[str, Any]) -> None:
-    target = REPO_ROOT / "artifacts" / "exports" / "elementary_flow_hints.json"
+def _append_elementary_flow_hint_log(record: dict[str, Any], run_id: str) -> None:
+    target = run_cache_path(run_id, "elementary_flow_hints.json")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         existing_text = target.read_text(encoding="utf-8")
@@ -1767,7 +1756,7 @@ def _relative_source_path(path: Path) -> str:
         return str(path)
 
 
-def _append_uuid_mapping_record(
+def _append_stage1_metadata_record(
     records: list[dict[str, Any]],
     *,
     dataset_type: str,
@@ -1778,20 +1767,20 @@ def _append_uuid_mapping_record(
 ) -> None:
     if not isinstance(dataset, dict):
         return
-    new_uuid = ""
-    new_name = ""
+    stage1_uuid = ""
+    stage1_name = ""
     if dataset_type == "Process":
         info = dataset.get("processInformation", {}).get("dataSetInformation", {})
-        new_uuid = info.get("common:UUID") or ""
-        new_name = _compose_process_display_name(dataset)
+        stage1_uuid = info.get("common:UUID") or ""
+        stage1_name = _compose_process_display_name(dataset)
     elif dataset_type == "Flow":
         info = dataset.get("flowInformation", {}).get("dataSetInformation", {})
-        new_uuid = info.get("common:UUID") or ""
-        new_name = _compose_flow_display_name(dataset)
+        stage1_uuid = info.get("common:UUID") or ""
+        stage1_name = _compose_flow_display_name(dataset)
     elif dataset_type == "Source":
         info = dataset.get("sourceInformation", {}).get("dataSetInformation", {})
-        new_uuid = info.get("common:UUID") or ""
-        new_name = _compose_source_display_name(dataset)
+        stage1_uuid = info.get("common:UUID") or ""
+        stage1_name = _compose_source_display_name(dataset)
     else:
         return
 
@@ -1800,19 +1789,18 @@ def _append_uuid_mapping_record(
             "type": dataset_type,
             "original_uuid": original_uuid,
             "original_name": original_name,
-            "new_uuid": new_uuid,
-            "new_name": new_name,
+            "stage1_uuid": stage1_uuid,
+            "stage1_name": stage1_name,
             "source_file": source_file,
         }
     )
 
 
-def _write_uuid_mapping_log(run_id: str, records: list[dict[str, Any]]) -> None:
-    log_dir = Path("artifacts") / run_id / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "uuid_mapping_log.json"
-    log_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[jsonld-stage1] UUID mapping log -> {log_path}")
+def _write_stage1_metadata_cache(run_id: str, records: list[dict[str, Any]]) -> None:
+    """Persist Stage 1 metadata for downstream UUID joins."""
+    cache_path = run_cache_path(run_id, "stage1_metadata_cache.json")
+    dump_json(records, cache_path)
+    print(f"[jsonld-stage1] Metadata cache -> {cache_path}")
 
 
 def _apply_flow_short_descriptions(process_dataset: dict[str, Any], flow_short_map: dict[str, str]) -> None:
@@ -2405,8 +2393,10 @@ def main() -> None:
     source_datasets: list[dict[str, Any]] = []
     flow_short_descriptions: dict[str, str] = {}
     source_short_names: dict[str, str] = {}
-    uuid_mapping_records: list[dict[str, Any]] = []
+    stage1_metadata_records: list[dict[str, Any]] = []
     elementary_flow_metadata: dict[str, dict[str, Any]] = {}
+    skipped_flow_records: list[dict[str, Any]] = []
+    skipped_flow_uuids: set[str] = set()
 
     for json_path in process_files:
         raw_payload = json.loads(json_path.read_text(encoding="utf-8"))
@@ -2419,8 +2409,8 @@ def main() -> None:
                 dataset = entry.get("processDataSet")
                 if isinstance(dataset, dict):
                     _attach_process_source_references(dataset, raw_payload)
-                    _append_uuid_mapping_record(
-                        uuid_mapping_records,
+                    _append_stage1_metadata_record(
+                        stage1_metadata_records,
                         dataset_type="Process",
                         dataset=dataset,
                         original_uuid=original_uuid,
@@ -2447,8 +2437,8 @@ def main() -> None:
             )
             dataset = process_blocks[-1].get("processDataSet")
             if isinstance(dataset, dict):
-                _append_uuid_mapping_record(
-                    uuid_mapping_records,
+                _append_stage1_metadata_record(
+                    stage1_metadata_records,
                     dataset_type="Process",
                     dataset=dataset,
                     original_uuid=original_uuid,
@@ -2465,16 +2455,25 @@ def main() -> None:
             flow_entries = flow_extractor.run(raw_payload)
             for entry in flow_entries:
                 if _is_elementary_flow_entry(entry):
-                    _append_skipped_flow_log(raw_payload, source_file)
-                    if original_uuid:
-                        elementary_flow_metadata[original_uuid] = {"name": original_name or _clean_text(raw_payload.get("name")) or original_uuid}
+                    uuid_key = (original_uuid or _extract_payload_uuid(raw_payload)).strip()
+                    if uuid_key:
+                        skipped_flow_uuids.add(uuid_key)
+                        skipped_flow_records.append(
+                            {
+                                "uuid": uuid_key,
+                                "name": original_name or _clean_text(raw_payload.get("name")) or uuid_key,
+                                "source": source_file,
+                            }
+                        )
+                        elementary_flow_metadata[uuid_key] = {"name": original_name or _clean_text(raw_payload.get("name")) or uuid_key}
                     hint = _build_elementary_flow_hint(raw_payload)
                     _append_elementary_flow_hint_log(
                         {
                             "source": source_file,
-                            "original_uuid": original_uuid,
+                            "original_uuid": uuid_key,
                             "hint": hint,
-                        }
+                        },
+                        run_id,
                     )
                     continue
                 dataset = entry.get("flowDataSet")
@@ -2485,8 +2484,8 @@ def main() -> None:
                 if isinstance(uuid_value, str) and summary:
                     key = (_strip_version_suffix(uuid_value) or uuid_value).lower()
                     flow_short_descriptions[key] = summary
-                _append_uuid_mapping_record(
-                    uuid_mapping_records,
+                _append_stage1_metadata_record(
+                    stage1_metadata_records,
                     dataset_type="Flow",
                     dataset=dataset,
                     original_uuid=original_uuid,
@@ -2504,16 +2503,25 @@ def main() -> None:
             wrapped = _wrap_flow_dataset(fallback_flow, json_path, raw_payload, flow_classifier)
             dataset = wrapped.get("flowDataSet")
             if _is_elementary_flow_entry(wrapped):
-                _append_skipped_flow_log(raw_payload, source_file)
-                if original_uuid:
-                    elementary_flow_metadata[original_uuid] = {"name": original_name or _clean_text(raw_payload.get("name")) or original_uuid}
+                uuid_key = (original_uuid or _extract_payload_uuid(raw_payload)).strip()
+                if uuid_key:
+                    skipped_flow_uuids.add(uuid_key)
+                    skipped_flow_records.append(
+                        {
+                            "uuid": uuid_key,
+                            "name": original_name or _clean_text(raw_payload.get("name")) or uuid_key,
+                            "source": source_file,
+                        }
+                    )
+                    elementary_flow_metadata[uuid_key] = {"name": original_name or _clean_text(raw_payload.get("name")) or uuid_key}
                 hint = _build_elementary_flow_hint(raw_payload)
                 _append_elementary_flow_hint_log(
                     {
                         "source": source_file,
-                        "original_uuid": original_uuid,
+                        "original_uuid": uuid_key,
                         "hint": hint,
-                    }
+                    },
+                    run_id,
                 )
                 continue
             if isinstance(dataset, dict):
@@ -2522,8 +2530,8 @@ def main() -> None:
                 if isinstance(uuid_value, str) and summary:
                     key = (_strip_version_suffix(uuid_value) or uuid_value).lower()
                     flow_short_descriptions[key] = summary
-                _append_uuid_mapping_record(
-                    uuid_mapping_records,
+                _append_stage1_metadata_record(
+                    stage1_metadata_records,
                     dataset_type="Flow",
                     dataset=dataset,
                     original_uuid=original_uuid,
@@ -2552,8 +2560,8 @@ def main() -> None:
                 if isinstance(uuid_value, str) and short_name:
                     key = (_strip_version_suffix(uuid_value) or uuid_value).lower()
                     source_short_names[key] = short_name
-                _append_uuid_mapping_record(
-                    uuid_mapping_records,
+                _append_stage1_metadata_record(
+                    stage1_metadata_records,
                     dataset_type="Source",
                     dataset=dataset,
                     original_uuid=original_uuid,
@@ -2576,8 +2584,8 @@ def main() -> None:
                 if isinstance(uuid_value, str) and short_name:
                     key = (_strip_version_suffix(uuid_value) or uuid_value).lower()
                     source_short_names[key] = short_name
-                _append_uuid_mapping_record(
-                    uuid_mapping_records,
+                _append_stage1_metadata_record(
+                    stage1_metadata_records,
                     dataset_type="Source",
                     dataset=dataset,
                     original_uuid=original_uuid,
@@ -2596,7 +2604,16 @@ def main() -> None:
             _apply_source_reference_short_names(dataset, source_short_names)
         _strip_exchange_name_fields(dataset)
 
-    _write_uuid_mapping_log(run_id, uuid_mapping_records)
+    # Write skipped elementary flow whitelist
+    skipped_path = run_cache_path(run_id, "stage1_skipped_flow_uuids.json")
+    skipped_payload = {
+        "skipped_flow_uuids": sorted(skipped_flow_uuids),
+        "records": skipped_flow_records,
+    }
+    dump_json(skipped_payload, skipped_path)
+    print(f"[jsonld-stage1] Recorded {len(skipped_flow_uuids)} skipped elementary flow UUID(s) -> {skipped_path}")
+
+    _write_stage1_metadata_cache(run_id, stage1_metadata_records)
     _write_flow_property_audit_log(run_id, flow_property_audit_records)
 
     dump_json({"process_blocks": process_blocks}, output_path)

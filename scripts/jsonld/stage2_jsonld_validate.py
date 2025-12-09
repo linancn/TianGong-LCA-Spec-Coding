@@ -154,6 +154,30 @@ def _iter_process_exchanges(process_dataset: dict[str, Any]) -> list[dict[str, A
     return []
 
 
+def _load_skipped_flow_whitelist(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return set()
+    uuids: set[str] = set()
+    if isinstance(payload, dict):
+        entries = payload.get("skipped_flow_uuids")
+        if isinstance(entries, list):
+            for item in entries:
+                if isinstance(item, str) and item.strip():
+                    uuids.add(item.strip())
+        records = payload.get("records")
+        if isinstance(records, list):
+            for entry in records:
+                if isinstance(entry, dict):
+                    uid = entry.get("uuid")
+                    if isinstance(uid, str) and uid.strip():
+                        uuids.add(uid.strip())
+    return uuids
+
+
 def _strip_exchange_names(process_path: Path) -> None:
     if not process_path.exists():
         return
@@ -174,9 +198,72 @@ def _strip_exchange_names(process_path: Path) -> None:
             dump_json(payload, json_path)
 
 
+def _load_stage1_metadata(run_id: str) -> list[dict[str, Any]]:
+    path = run_cache_path(run_id, "stage1_metadata_cache.json")
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if isinstance(payload, list):
+        return [entry for entry in payload if isinstance(entry, dict)]
+    return []
+
+
+def _write_global_mapping_log(run_id: str, uuid_mapper: UUIDMapper, artifact_root: Path) -> None:
+    """Emit unified global_id_mapping.json with original->final UUID/name/file context."""
+    metadata = _load_stage1_metadata(run_id)
+    index: dict[str, dict[str, Any]] = {}
+    for entry in metadata:
+        stage1_uuid = entry.get("stage1_uuid")
+        if isinstance(stage1_uuid, str) and stage1_uuid.strip():
+            index[stage1_uuid.strip().lower()] = entry
+
+    global_mapping: dict[str, list[dict[str, str]]] = {"processes": [], "flows": [], "sources": []}
+
+    def _append_entries(mapping: dict[str, str], bucket: str, type_label: str) -> None:
+        for stage1_uuid, export_uuid in mapping.items():
+            meta = index.get(stage1_uuid.strip().lower() if isinstance(stage1_uuid, str) else "")
+            if not meta:
+                continue
+            global_mapping[bucket].append(
+                {
+                    "type": meta.get("type") or type_label,
+                    "original_uuid": meta.get("original_uuid") or "",
+                    "original_name": meta.get("original_name") or "",
+                    "new_uuid": export_uuid,
+                    "new_name": meta.get("stage1_name") or meta.get("original_name") or "",
+                    "source_file": meta.get("source_file") or "",
+                }
+            )
+
+    _append_entries(uuid_mapper.process_map, "processes", "Process")
+    _append_entries(uuid_mapper.flow_map, "flows", "Flow")
+    _append_entries(uuid_mapper.source_map, "sources", "Source")
+
+    logs_dir = artifact_root.parent / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    mapping_path = logs_dir / "global_id_mapping.json"
+    dump_json(global_mapping, mapping_path)
+
+    # Clean up fragmented logs if present
+    for extra in ("uuid_mapping_log.json", "export_process_map.json", "export_source_map.json"):
+        target = logs_dir / extra
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    print(f"[jsonld-stage2] Global mapping log -> {mapping_path}")
+
+
 def _rebuild_process_flow_references(
     process_blocks: list[dict[str, Any]],
     flow_metadata: dict[str, FlowReferenceData],
+    allowed_missing: set[str],
 ) -> None:
     missing_refs: set[str] = set()
     for block in process_blocks:
@@ -195,6 +282,8 @@ def _rebuild_process_flow_references(
                 continue
             metadata = flow_metadata.get(uuid_key)
             if metadata is None:
+                if uuid_key in allowed_missing:
+                    continue
                 missing_refs.add(uuid_key)
                 continue
             uri = f"../flows/{metadata.uuid}_{metadata.version}.xml"
@@ -314,7 +403,10 @@ def main() -> None:
         uuid_mapper.remap_process_block(block)
 
     flow_metadata = _build_flow_metadata_index(converted_flows)
-    _rebuild_process_flow_references(process_blocks, flow_metadata)
+    skipped_whitelist = _load_skipped_flow_whitelist(run_cache_path(run_id, "stage1_skipped_flow_uuids.json"))
+    if skipped_whitelist:
+        print(f"[jsonld-stage2] Loaded {len(skipped_whitelist)} skipped elementary flow UUID(s) whitelist")
+    _rebuild_process_flow_references(process_blocks, flow_metadata, skipped_whitelist)
 
     alignment_entries: list[dict[str, Any]] = []
 
@@ -362,6 +454,8 @@ def main() -> None:
             dataset_version = resolve_dataset_version(source_root)
             dump_json(dataset, sources_dir / build_export_filename(uuid_value, dataset_version))
         print(f"[jsonld-stage2] Wrote {len(converted_sources)} remapped source dataset(s) -> {sources_dir}")
+
+    _write_global_mapping_log(run_id, uuid_mapper, artifact_root)
 
     validator = TidasValidationService()
     try:

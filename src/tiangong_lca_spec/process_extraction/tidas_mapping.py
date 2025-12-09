@@ -156,7 +156,8 @@ def _normalise_dataset_information(
     data_info: Any,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     info = _ensure_dict(data_info)
-    uuid_value = str(uuid4())
+    existing_uuid = _stringify(info.get("common:UUID")).strip()
+    uuid_value = existing_uuid or str(uuid4())
     info["common:UUID"] = uuid_value
 
     identifier = _stringify(info.get("identifierOfSubDataSet")).strip()
