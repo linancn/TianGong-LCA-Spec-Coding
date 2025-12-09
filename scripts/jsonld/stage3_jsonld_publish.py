@@ -106,6 +106,38 @@ def _publish_dataset(client: DatabaseCrudClient, table: str, payload: dict[str, 
         )
 
 
+def _upsert_dataset(client: DatabaseCrudClient, table: str, payload: dict[str, Any], dry_run: bool) -> dict[str, Any] | None:
+    """
+    Insert-first strategy with fallback to update for flows/processes when insert conflicts.
+    Keeps idempotency for reruns without explicit upsert support.
+    """
+    try:
+        return _publish_dataset(client, table, payload, dry_run)
+    except Exception as exc:  # noqa: BLE001
+        if dry_run:
+            raise
+        # Only flows/processes have explicit update handlers
+        try:
+            if table == "flows":
+                return client.update_flow(payload)
+            if table == "processes":
+                return client.update_process(payload)
+        except Exception as update_exc:  # noqa: BLE001
+            LOGGER.warning(
+                "jsonld_stage3.upsert_failed",
+                table=table,
+                error=str(update_exc),
+                original_error=str(exc),
+            )
+            raise
+        LOGGER.warning(
+            "jsonld_stage3.insert_failed_skip_update",
+            table=table,
+            error=str(exc),
+        )
+        raise
+
+
 def _resolve_dataset_uuid(table: str, payload: dict[str, Any]) -> str:
     if table == "flowproperties":
         info = payload.get("flowPropertyDataSet", {}).get("flowPropertiesInformation", {}).get("dataSetInformation", {})
@@ -201,16 +233,20 @@ def _build_hint_description(hint: Mapping[str, Any]) -> str:
 
 
 def _load_elementary_flow_hints(exports_dir: Path) -> list[dict[str, Any]]:
-    path = exports_dir / "elementary_flow_hints.json"
-    if not path.exists():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        LOGGER.warning("jsonld_stage3.hints_parse_failed", path=str(path), error=str(exc))
-        return []
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+    candidates = [
+        exports_dir / "elementary_flow_hints.json",
+        exports_dir.parent / "cache" / "elementary_flow_hints.json",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            LOGGER.warning("jsonld_stage3.hints_parse_failed", path=str(path), error=str(exc))
+            continue
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
     return []
 
 
@@ -443,7 +479,7 @@ def _select_elementary_candidate(hint: Mapping[str, Any], candidates: list[Any],
                 "- Semantic compartment: infer core medium (air, water, soil, resource); ignore prefixes/suffixes/adjectives like 'unspecified'.\n"
                 "  If media align, wording/path differences are acceptable; if media differ, it's a conflict.\n"
                 "- Specificity: respect 'unspecified'. Input unspecified + candidate unspecified or generic water = good; input unspecified + candidate sea water = downgrade or reject.\n"
-                "Decide if a candidate refers to the same physical entity in the same compartment. Return JSON {\"best_index\": int or null} (0-based)."
+                'Decide if a candidate refers to the same physical entity in the same compartment. Return JSON {"best_index": int or null} (0-based).'
             )
             response = llm.invoke({"prompt": prompt, "context": context, "response_format": {"type": "json_object"}})
             if isinstance(response, dict):
@@ -490,7 +526,7 @@ def _select_elementary_candidate(hint: Mapping[str, Any], candidates: list[Any],
                 score -= 0.2
         return score
 
-    ranked = sorted((( _score(c), c) for c in candidates), key=lambda item: item[0], reverse=True)
+    ranked = sorted(((_score(c), c) for c in candidates), key=lambda item: item[0], reverse=True)
     debug_dump = []
     for cand in candidates:
         debug_dump.append(
@@ -598,6 +634,57 @@ def _rewrite_elementary_flow_references(
         if changed:
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return mapping_records
+
+
+def _populate_global_mapping_from_uuid_log(logs_dir: Path, global_mapping: dict[str, dict[str, str]]) -> None:
+    """
+    Populate global id mapping directly from Stage 1 uuid_mapping_log.json.
+    This avoids depending on export_process_map/export_source_map files that are not generated.
+    """
+    log_path = logs_dir / "uuid_mapping_log.json"
+    if not log_path.exists():
+        return
+    try:
+        entries = json.loads(log_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("jsonld_stage3.global_mapping_uuid_log_parse_failed", error=str(exc))
+        return
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        dataset_type = _coerce_text(entry.get("type")).lower()
+        src = _coerce_text(entry.get("original_uuid"))
+        dst = _coerce_text(entry.get("new_uuid"))
+        if not src or not dst:
+            continue
+        if src in global_mapping.get("processes", {}) or src in global_mapping.get("sources", {}) or src in global_mapping.get("product_flows", {}):
+            continue
+        if dataset_type == "process":
+            global_mapping["processes"][src] = dst
+        elif dataset_type == "source":
+            global_mapping["sources"][src] = dst
+        elif dataset_type == "flow":
+            global_mapping["product_flows"][src] = dst
+
+
+def _collapse_global_mapping(global_mapping: dict[str, dict[str, str]]) -> None:
+    """Resolve chained mappings (e.g., original -> stage1 -> export) into direct original -> export."""
+
+    def _resolve(mapping: dict[str, str], key: str, seen: set[str]) -> str:
+        if key in seen:
+            return mapping.get(key, "")
+        seen.add(key)
+        value = mapping.get(key)
+        if value and value in mapping:
+            mapping[key] = _resolve(mapping, value, seen)
+        return mapping.get(key, "")
+
+    for table in ("processes", "sources", "product_flows"):
+        mapping = global_mapping.get(table, {})
+        for src in list(mapping.keys()):
+            _resolve(mapping, src, set())
 
 
 def _extract_remote_record_id(result: Mapping[str, Any]) -> str:
@@ -816,11 +903,7 @@ def main() -> None:
     _check_validation(validation_report if validation_report.exists() else None)
 
     hints = _load_elementary_flow_hints(exports_dir)
-    hint_lookup = {
-        entry.get("original_uuid"): entry.get("hint")
-        for entry in hints
-        if isinstance(entry, Mapping) and entry.get("original_uuid") and isinstance(entry.get("hint"), Mapping)
-    }
+    hint_lookup = {entry.get("original_uuid"): entry.get("hint") for entry in hints if isinstance(entry, Mapping) and entry.get("original_uuid") and isinstance(entry.get("hint"), Mapping)}
     replacements: dict[str, dict[str, str]] = {}
     mapping_records: list[dict[str, Any]] = []
     llm = None
@@ -859,13 +942,20 @@ def main() -> None:
             datasets = _iterate_datasets(exports_dir / "flowproperties")
             for path, payload in datasets:
                 LOGGER.info("jsonld_stage3.publish_flow_property", path=str(path), dry_run=dry_run)
-                _publish_dataset(client, "flowproperties", payload, dry_run)
+                try:
+                    _upsert_dataset(client, "flowproperties", payload, dry_run)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("jsonld_stage3.flow_property_publish_failed", path=str(path), error=str(exc))
 
         if not args.skip_flows:
             datasets = _iterate_datasets(exports_dir / "flows")
             for path, payload in datasets:
                 LOGGER.info("jsonld_stage3.publish_flow", path=str(path), dry_run=dry_run)
-                result = _publish_dataset(client, "flows", payload, dry_run)
+                try:
+                    result = _upsert_dataset(client, "flows", payload, dry_run)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("jsonld_stage3.flow_publish_failed", path=str(path), error=str(exc))
+                    continue
                 if not dry_run and result:
                     local_uuid = _extract_flow_uuid(payload)
                     if not local_uuid:
@@ -893,7 +983,11 @@ def main() -> None:
             datasets = _iterate_datasets(exports_dir / "sources")
             for path, payload in datasets:
                 LOGGER.info("jsonld_stage3.publish_source", path=str(path), dry_run=dry_run)
-                result = _publish_dataset(client, "sources", payload, dry_run)
+                try:
+                    result = _upsert_dataset(client, "sources", payload, dry_run)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("jsonld_stage3.source_publish_failed", path=str(path), error=str(exc))
+                    continue
                 if not dry_run and result:
                     local_uuid = _extract_source_uuid(payload)
                     if not local_uuid:
@@ -916,14 +1010,68 @@ def main() -> None:
         if replacements and not args.skip_processes:
             mapping_records = _rewrite_elementary_flow_references(exports_dir / "processes", replacements, hint_lookup)
             if mapping_records:
-                log_path = exports_dir / "elementary_flow_mapping_log.json"
-                log_path.write_text(json.dumps(mapping_records, ensure_ascii=False, indent=2), encoding="utf-8")
+                logs_dir = exports_dir.parent / "logs"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                substitution_log = logs_dir / "elementary_flow_substitution_log.json"
+                substitution_log.write_text(json.dumps(mapping_records, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # Build global ID mapping (original @id -> final UUID) for processes/sources/product flows
+        try:
+            logs_dir = exports_dir.parent / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            mapping_path = logs_dir / "global_id_mapping.json"
+            if mapping_path.exists():
+                LOGGER.info("jsonld_stage3.global_mapping_exists_skip_rebuild", path=str(mapping_path))
+            else:
+                global_mapping = {"processes": {}, "sources": {}, "product_flows": {}}
+                process_map = logs_dir / "export_process_map.json"
+                source_map = logs_dir / "export_source_map.json"
+                # process map: original @id (source_uuid/stage1_uuid) -> final export_uuid
+                if process_map.exists():
+                    try:
+                        items = json.loads(process_map.read_text(encoding="utf-8"))
+                        if isinstance(items, list):
+                            for entry in items:
+                                if isinstance(entry, dict):
+                                    src = _coerce_text(entry.get("source_uuid") or entry.get("stage1_uuid"))
+                                    dst = _coerce_text(entry.get("export_uuid"))
+                                    if src and dst:
+                                        global_mapping["processes"][src] = dst
+                    except Exception as exc:  # noqa: BLE001
+                        LOGGER.warning("jsonld_stage3.global_mapping_process_parse_failed", error=str(exc))
+                # source/flow map: only final export_uuid mappings; flows here are product/waste flows
+                if source_map.exists():
+                    try:
+                        items = json.loads(source_map.read_text(encoding="utf-8"))
+                        if isinstance(items, list):
+                            for entry in items:
+                                if not isinstance(entry, dict):
+                                    continue
+                                entry_type = _coerce_text(entry.get("type")).lower()
+                                src = _coerce_text(entry.get("source_uuid") or entry.get("stage1_uuid"))
+                                dst = _coerce_text(entry.get("export_uuid"))
+                                if src and dst:
+                                    if entry_type == "source":
+                                        global_mapping["sources"][src] = dst
+                                    elif entry_type == "flow":
+                                        global_mapping["product_flows"][src] = dst
+                    except Exception as exc:  # noqa: BLE001
+                        LOGGER.warning("jsonld_stage3.global_mapping_source_parse_failed", error=str(exc))
+                # Fall back to Stage 1 mapping log to populate mappings when export maps are absent
+                _populate_global_mapping_from_uuid_log(logs_dir, global_mapping)
+                _collapse_global_mapping(global_mapping)
+                mapping_path.write_text(json.dumps(global_mapping, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("jsonld_stage3.global_mapping_write_failed", error=str(exc))
 
         if not args.skip_processes:
             datasets = _iterate_datasets(exports_dir / "processes")
             for path, payload in datasets:
                 LOGGER.info("jsonld_stage3.publish_process", path=str(path), dry_run=dry_run)
-                _publish_dataset(client, "processes", payload, dry_run)
+                try:
+                    _upsert_dataset(client, "processes", payload, dry_run)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("jsonld_stage3.process_publish_failed", path=str(path), error=str(exc))
 
     finally:
         client.close()
