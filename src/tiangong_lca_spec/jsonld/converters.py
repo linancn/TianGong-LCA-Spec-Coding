@@ -515,7 +515,6 @@ class JSONLDProcessConverter:
                 "dataSetInformation": {
                     "common:UUID": dataset_uuid,
                     "name": name_block,
-                    "identifierOfSubDataSet": "JSONLD",
                     **({"common:generalComment": general_comment_entry} if general_comment_entry else {}),
                     "classificationInformation": {"common:classification": {"common:class": classification or [{"@level": "0", "@classId": "Z", "#text": "Unspecified"}]}},
                 },
