@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from time import sleep
 from typing import Any, TypedDict
 from uuid import uuid4
 
@@ -156,6 +157,8 @@ ELEMENTARY_CATEGORY_RESOURCES = [
 NAME_SEGMENT_SPLIT = re.compile(r"[;|]")
 NAME_TOKEN_SPLIT = re.compile(r"[,，、]")
 YEAR_FRAGMENT = re.compile(r"^(?:\d{4})(?:\s*[-–]\s*(?:\d{2,4}))?$")
+CJK_CHAR_PATTERN = re.compile(r"[\u2e80-\u2eff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ua000-\ua4cf\uac00-\ud7af\uff00-\uffef]+")
+NAME_REMARK_KEYWORDS = ("remark", "note", "todo", "关系", "备注", "说明", "看一下", "待定", "待确认")
 MIX_KEYWORDS = (
     "generic",
     "mix",
@@ -362,21 +365,50 @@ class JSONLDSemanticParser:
 
     def parse(self, payload: dict[str, Any]) -> ParsedProcessSemantics:
         LOGGER.info("jsonld.semantic_parser.invoke")
-        response = self._llm.invoke(
-            {
-                "prompt": self._prompt,
-                "context": payload,
-                "response_format": {"type": "json_object"},
-            }
-        )
-        data = _coerce_dict(response)
+        delays = (0.0, 0.5, 1.0)
+        last_error: Exception | None = None
+        data: dict[str, Any] = {}
+        for attempt, delay in enumerate(delays, start=1):
+            if delay:
+                sleep(delay)
+            try:
+                response = self._llm.invoke(
+                    {
+                        "prompt": self._prompt,
+                        "context": payload,
+                        "response_format": {"type": "json_object"},
+                    }
+                )
+                data = _coerce_dict(response)
+                if not _clean_text(data.get("base_name")):
+                    raise ProcessExtractionError("LLM returned empty base_name")
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                LOGGER.warning("jsonld.semantic_parser.retry", attempt=attempt, error=str(exc))
+        else:
+            LOGGER.warning("jsonld.semantic_parser.fallback", error=str(last_error) if last_error else "unknown error")
+            return ParsedProcessSemantics()
+
         semantics = ParsedProcessSemantics()
-        semantics["base_name"] = _require_text(data.get("base_name"), "base_name")
-        semantics["technical_route"] = _clean_text(data.get("technical_route"))
-        semantics["mix_type"] = _clean_text(data.get("mix_type"))
-        semantics["location_text_hint"] = _clean_text(data.get("location_text_hint"))
-        semantics["description"] = _clean_text(data.get("description"))
-        semantics["lci_method_principle"] = self._normalize_principle(data.get("lci_method_principle"))
+        base_name_text = _clean_text(data.get("base_name"))
+        if base_name_text:
+            semantics["base_name"] = base_name_text
+        technical_route = _clean_text(data.get("technical_route"))
+        if technical_route:
+            semantics["technical_route"] = technical_route
+        mix_type = _clean_text(data.get("mix_type"))
+        if mix_type:
+            semantics["mix_type"] = mix_type
+        location_hint = _clean_text(data.get("location_text_hint"))
+        if location_hint:
+            semantics["location_text_hint"] = location_hint
+        description = _clean_text(data.get("description"))
+        if description:
+            semantics["description"] = description
+        principle = self._normalize_principle(data.get("lci_method_principle"))
+        if principle:
+            semantics["lci_method_principle"] = principle
         reference_year = _coerce_int(data.get("reference_year"))
         if reference_year:
             semantics["reference_year"] = reference_year
@@ -531,23 +563,47 @@ def _derive_location_hint(payload: dict[str, Any], semantics: ParsedProcessSeman
     return _clean_text(payload.get("category")) or "Unspecified region"
 
 
+def _sanitize_name_component(value: str | None) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    normalized = text.strip(" ,;")
+    if is_placeholder_value(normalized):
+        return ""
+    if len(normalized) <= 1:
+        return ""
+    if CJK_CHAR_PATTERN.search(normalized):
+        return ""
+    lowered = normalized.lower()
+    if any(keyword in lowered for keyword in NAME_REMARK_KEYWORDS):
+        return ""
+    return normalized
+
+
 def _derive_process_name_fields(
     payload: dict[str, Any],
     semantics: ParsedProcessSemantics,
-) -> tuple[str, str, str]:
+) -> tuple[str | None, str | None, str | None]:
+    # Prefer LLM semantic outputs when available
+    base_candidate = _sanitize_name_component(semantics.get("base_name"))
+    treatment_candidate = _sanitize_name_component(semantics.get("technical_route"))
+    mix_candidate = _sanitize_name_component(semantics.get("mix_type") or semantics.get("location_text_hint"))
+    if base_candidate:
+        return base_candidate, treatment_candidate or base_candidate, mix_candidate or None
+
+    # Fallback: rules with sanitization/guardrails
     raw_name = _clean_text(payload.get("name"))
     base_name, treatment_tokens, mix_tokens = _extract_name_components_from_string(raw_name)
-    if not base_name:
-        base_name = semantics.get("base_name") or "Unnamed process"
-    treatment_text = "; ".join(treatment_tokens) or base_name
-    mix_text = "; ".join(mix_tokens)
-    if not mix_text:
-        location = payload.get("location") or {}
-        if isinstance(location, dict):
-            mix_text = _clean_text(location.get("name")) or _clean_text(location.get("code")) or ""
-    if not mix_text:
-        mix_text = _clean_text(semantics.get("location_text_hint")) or base_name
-    return base_name, treatment_text, mix_text
+    base_name = _sanitize_name_component(base_name)
+    treatment_clean = [_sanitize_name_component(token) for token in treatment_tokens]
+    treatment_clean = [token for token in treatment_clean if token]
+    mix_clean = [_sanitize_name_component(token) for token in mix_tokens]
+    mix_clean = [token for token in mix_clean if token]
+
+    treatment_text = "; ".join(_deduplicate_tokens(treatment_clean)) if treatment_clean else None
+    mix_text = "; ".join(_deduplicate_tokens(mix_clean)) if mix_clean else None
+
+    return base_name or None, treatment_text, mix_text
 
 
 def _merge_description(semantics: ParsedProcessSemantics, payload: dict[str, Any]) -> str:
@@ -1482,20 +1538,29 @@ class JSONLDProcessExtractor:
         location_hint = _derive_location_hint(payload, semantics)
 
         base_name_text, treatment_text, mix_text = _derive_process_name_fields(payload, semantics)
-        name_block: dict[str, Any] = {
-            "baseName": _language_entry(base_name_text),
-            "treatmentStandardsRoutes": _language_entry(treatment_text or base_name_text),
-            "mixAndLocationTypes": _language_entry(mix_text or location_hint),
-        }
+        name_block: dict[str, Any] = {}
+        if base_name_text:
+            name_block["baseName"] = _language_entry(base_name_text)
+        if treatment_text:
+            name_block["treatmentStandardsRoutes"] = _language_entry(treatment_text)
+        elif base_name_text:
+            name_block["treatmentStandardsRoutes"] = _language_entry(base_name_text)
+        if mix_text:
+            name_block["mixAndLocationTypes"] = _language_entry(mix_text)
+        elif location_hint:
+            name_block["mixAndLocationTypes"] = _language_entry(location_hint)
         if functional_unit:
             name_block["functionalUnitFlowProperties"] = _language_entry(functional_unit)
 
         data_info: dict[str, Any] = {
             "common:UUID": dataset_uuid,
-            "identifierOfSubDataSet": "JSONLD",
             "name": name_block,
             "classificationInformation": {"common:classification": {}},
         }
+        # Preserve identifierOfSubDataSet only when it exists in the source payload.
+        source_identifier = _clean_text(payload.get("identifierOfSubDataSet"))
+        if source_identifier:
+            data_info["identifierOfSubDataSet"] = source_identifier
         description_entry = general_comment or _clean_text(documentation.get("inventoryMethodDescription"))
         if description_entry:
             data_info["common:generalComment"] = _language_entry(description_entry)

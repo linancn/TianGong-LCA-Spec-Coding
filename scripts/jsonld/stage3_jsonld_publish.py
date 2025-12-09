@@ -249,6 +249,30 @@ def _load_elementary_flow_hints(exports_dir: Path) -> list[dict[str, Any]]:
             return [item for item in payload if isinstance(item, dict)]
     return []
 
+def _load_substitution_log(log_path: Path) -> list[dict[str, Any]]:
+    if not log_path.exists():
+        return []
+    try:
+        payload = json.loads(log_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    return payload if isinstance(payload, list) else []
+
+def _merge_substitution_logs(
+    existing: list[dict[str, Any]],
+    new_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Keep latest record per (process_id, original_flow_id) to avoid log blow-up.
+    """
+    merged: dict[tuple[str | None, str | None], dict[str, Any]] = {}
+    for record in existing + new_records:
+        if not isinstance(record, dict):
+            continue
+        key = (record.get("process_id"), record.get("original_flow_id"))
+        merged[key] = record
+    return list(merged.values())
+
 
 def _preferred_language_text(value: Any) -> str | None:
     if value is None:
@@ -903,6 +927,23 @@ def main() -> None:
     _check_validation(validation_report if validation_report.exists() else None)
 
     hints = _load_elementary_flow_hints(exports_dir)
+    logs_dir = exports_dir.parent / "logs"
+    substitution_log_path = logs_dir / "elementary_flow_substitution_log.json"
+    existing_substitution_records = _load_substitution_log(substitution_log_path)
+    success_flow_ids = {
+        record.get("original_flow_id")
+        for record in existing_substitution_records
+        if isinstance(record, dict) and record.get("status") == "SUCCESS"
+    }
+    if success_flow_ids and hints:
+        before = len(hints)
+        hints = [item for item in hints if item.get("original_uuid") not in success_flow_ids]
+        LOGGER.info(
+            "jsonld_stage3.resume_skip_completed_hints",
+            skipped=len(success_flow_ids),
+            remaining=len(hints),
+            total_before=before,
+        )
     hint_lookup = {entry.get("original_uuid"): entry.get("hint") for entry in hints if isinstance(entry, Mapping) and entry.get("original_uuid") and isinstance(entry.get("hint"), Mapping)}
     replacements: dict[str, dict[str, str]] = {}
     mapping_records: list[dict[str, Any]] = []
@@ -1010,14 +1051,12 @@ def main() -> None:
         if replacements and not args.skip_processes:
             mapping_records = _rewrite_elementary_flow_references(exports_dir / "processes", replacements, hint_lookup)
             if mapping_records:
-                logs_dir = exports_dir.parent / "logs"
                 logs_dir.mkdir(parents=True, exist_ok=True)
-                substitution_log = logs_dir / "elementary_flow_substitution_log.json"
-                substitution_log.write_text(json.dumps(mapping_records, ensure_ascii=False, indent=2), encoding="utf-8")
+                combined = _merge_substitution_logs(existing_substitution_records, mapping_records)
+                substitution_log_path.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
 
         # Build global ID mapping (original @id -> final UUID) for processes/sources/product flows
         try:
-            logs_dir = exports_dir.parent / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
             mapping_path = logs_dir / "global_id_mapping.json"
             if mapping_path.exists():
