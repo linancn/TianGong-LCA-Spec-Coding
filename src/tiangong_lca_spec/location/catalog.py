@@ -9,7 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
-DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "tidas" / "schemas" / "tidas_locations_category.json"
+# Schema lives under repo_root/src/tidas/schemas
+DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "src" / "tidas" / "schemas" / "tidas_locations_category.json"
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
 
 
