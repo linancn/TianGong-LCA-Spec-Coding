@@ -6,6 +6,7 @@ CLI helper to explore the TIDAS location schema hierarchy.
 from __future__ import annotations
 
 import argparse
+import importlib.resources as resources
 import json
 import sys
 from collections import defaultdict
@@ -61,8 +62,9 @@ def get_children(
 
 
 def main(argv: List[str]) -> int:
-    repo_root = Path(__file__).resolve().parents[2]
-    default_schema = repo_root / "src" / "tidas" / "schemas" / "tidas_locations_category.json"
+    default_schema = Path(
+        resources.files("tidas_tools.tidas.schemas") / "tidas_locations_category.json"
+    )
 
     parser = argparse.ArgumentParser(
         description="List the next level of location codes from the TIDAS schema.",

@@ -5,6 +5,7 @@ CLI helper to explore the TIDAS process category hierarchy.
 
 from __future__ import annotations
 
+import importlib.resources as resources
 import sys
 from pathlib import Path
 
@@ -12,8 +13,9 @@ from _level_hierarchy_cli import run_cli
 
 
 def main(argv: list[str]) -> int:
-    repo_root = Path(__file__).resolve().parents[2]
-    default_schema = repo_root / "src" / "tidas" / "schemas" / "tidas_processes_category.json"
+    default_schema = Path(
+        resources.files("tidas_tools.tidas.schemas") / "tidas_processes_category.json"
+    )
     return run_cli(argv, default_schema)
 
 
