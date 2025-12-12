@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources as resources
 import json
 import re
 from collections import defaultdict, deque
@@ -9,8 +10,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
-# Schema lives under repo_root/src/tidas/schemas
-DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "src" / "tidas" / "schemas" / "tidas_locations_category.json"
+# Schema is provided by the installed tidas_tools package
+DEFAULT_SCHEMA_PATH = Path(
+    resources.files("tidas_tools.tidas.schemas") / "tidas_locations_category.json"
+)
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
 
 

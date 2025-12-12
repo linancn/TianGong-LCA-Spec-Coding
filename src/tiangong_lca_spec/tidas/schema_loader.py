@@ -5,10 +5,11 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import dataclass
+import importlib.resources as resources
 from pathlib import Path
 from typing import Any
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "tidas" / "schemas"
+SCHEMA_DIR = Path(resources.files("tidas_tools.tidas.schemas"))
 
 
 def _json_pointer_get(document: Any, pointer: str) -> Any:

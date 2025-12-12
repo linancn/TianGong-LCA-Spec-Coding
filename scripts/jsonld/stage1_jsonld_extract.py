@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import importlib.resources as resources
 import sys
 from collections import deque
 from copy import deepcopy
@@ -159,7 +160,7 @@ DEFAULT_PUBLICATION_TYPE = "Undefined"
 PROCESS_ROOT_SECTIONS: tuple[str, ...] = ("exchanges", "modellingAndValidation", "administrativeInformation", "LCIAResults")
 
 LOGGER = get_logger(__name__)
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "src" / "tidas" / "schemas"
+SCHEMA_DIR = Path(resources.files("tidas_tools.tidas.schemas"))
 FLOW_SCHEMA_FILE = "tidas_flows.json"
 PROCESS_SCHEMA_FILE = "tidas_processes.json"
 SOURCE_SCHEMA_FILE = "tidas_sources.json"
@@ -2169,7 +2170,9 @@ def _ensure_flow_classification(
     context_hint = f" [category hint: {fallback_text}]" if fallback_text else ""
     if not normalised:
         raise SystemExit(
-            f"Flow dataset{hint}{context_hint} is missing classification entries; " "Stage 1 must emit a complete path defined in src/tidas/schemas/tidas_flows_product_category.json."
+            f"Flow dataset{hint}{context_hint} is missing classification entries; "
+            "Stage 1 must emit a complete path defined in the TIDAS product flow "
+            "classification schema (tidas_tools.tidas.schemas/tidas_flows_product_category.json)."
         )
     try:
         classification["common:class"] = ensure_valid_product_flow_classification(tuple(normalised))
@@ -2177,7 +2180,7 @@ def _ensure_flow_classification(
         raise SystemExit(
             f"Flow dataset{hint}{context_hint} has invalid product classification: {exc}. "
             "Update the Stage 1 prompt/output so the LLM returns a valid path directly from "
-            "src/tidas/schemas/tidas_flows_product_category.json."
+            "tidas_tools.tidas.schemas/tidas_flows_product_category.json."
         ) from exc
 
 
