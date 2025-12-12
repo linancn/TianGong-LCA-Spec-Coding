@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources as resources
 import json
 from collections import defaultdict
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "tidas" / "schemas"
+SCHEMA_DIR = Path(resources.files("tidas_tools.tidas.schemas"))
 
 
 @dataclass(frozen=True)
