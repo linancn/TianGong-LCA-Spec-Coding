@@ -9,7 +9,8 @@ import importlib.resources as resources
 from pathlib import Path
 from typing import Any
 
-SCHEMA_DIR = Path(resources.files("tidas_tools.tidas.schemas"))
+# Keep the Traversable path to bundled schemas (supports / and open()).
+SCHEMA_DIR = resources.files("tidas_tools.tidas.schemas")
 
 
 def _json_pointer_get(document: Any, pointer: str) -> Any:
