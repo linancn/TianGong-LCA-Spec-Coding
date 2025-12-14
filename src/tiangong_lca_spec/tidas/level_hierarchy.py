@@ -10,7 +10,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
-SCHEMA_DIR = Path(resources.files("tidas_tools.tidas.schemas"))
+# Keep the Traversable path to bundled schemas (supports / and open()).
+SCHEMA_DIR = resources.files("tidas_tools.tidas.schemas")
 
 
 @dataclass(frozen=True)
@@ -49,21 +50,26 @@ def _load_entries(schema_path: Path) -> list[HierarchyEntry]:
     return entries
 
 
-def _build_child_map(entries: Iterable[HierarchyEntry]) -> tuple[list[HierarchyEntry], dict[str, list[HierarchyEntry]]]:
+def _build_child_map(
+    entries: Iterable[HierarchyEntry],
+) -> tuple[list[HierarchyEntry], dict[str, list[HierarchyEntry]], dict[str, HierarchyEntry | None]]:
     child_map: dict[str, list[HierarchyEntry]] = defaultdict(list)
     last_per_level: dict[int, HierarchyEntry] = {}
     roots: list[HierarchyEntry] = []
+    parent_map: dict[str, HierarchyEntry | None] = {}
 
     for entry in entries:
         if entry.level == 0:
             roots.append(entry)
             child_map.setdefault("", []).append(entry)
+            parent_map[entry.code] = None
         else:
             parent = _find_parent(entry, last_per_level)
             if parent:
                 child_map.setdefault(parent.code, []).append(entry)
+                parent_map[entry.code] = parent
         last_per_level[entry.level] = entry
-    return roots, child_map
+    return roots, child_map, parent_map
 
 
 def _find_parent(entry: HierarchyEntry, last_per_level: dict[int, HierarchyEntry]) -> HierarchyEntry | None:
@@ -81,7 +87,7 @@ class HierarchyNavigator:
 
     def __init__(self, entries: Iterable[HierarchyEntry]) -> None:
         self._entries = list(entries)
-        self._roots, self._child_map = _build_child_map(self._entries)
+        self._roots, self._child_map, self._parent_map = _build_child_map(self._entries)
         self._entry_map = {entry.code: entry for entry in self._entries}
         self._max_level = max((entry.level for entry in self._entries), default=-1)
 
@@ -98,6 +104,21 @@ class HierarchyNavigator:
 
     def get_entry(self, code: str) -> HierarchyEntry | None:
         return self._entry_map.get(code)
+
+    def path(self, code: str) -> list[HierarchyEntry]:
+        """Return the path from root to the given code (empty if not found)."""
+        entry = self._entry_map.get(code)
+        if not entry:
+            return []
+        chain = [entry]
+        while True:
+            parent = self._parent_map.get(entry.code)
+            if not parent:
+                break
+            chain.append(parent)
+            entry = parent
+        chain.reverse()
+        return chain
 
 
 def load_level_entries(schema_path: Path) -> list[HierarchyEntry]:
