@@ -25,7 +25,7 @@
   uv sync --group dev    # 安装含 black/ruff 的开发依赖
   ```
   如需镜像可临时设置 `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。
-- **关键运行库**：`anyio`, `httpx`, `mcp`, `pydantic`, `pydantic-settings`, `tenacity`, `structlog`, `python-dotenv`, `jsonschema`, `openai`。
+- **关键运行库**：`anyio`, `httpx`, `jsonschema`, `langgraph`, `mcp`, `openai`, `pydantic`, `pydantic-settings`, `python-dotenv`, `structlog`, `tenacity`。
 - **构建体系**：项目使用 `hatchling`，`pyproject.toml` 在 `[tool.hatch.build.targets.wheel]` 下声明 `src/tiangong_lca_spec` 为构建目标。
 
 ## 3. 凭据与远程服务

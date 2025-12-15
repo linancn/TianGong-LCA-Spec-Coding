@@ -25,7 +25,7 @@ This guide focuses on general conventions for engineering collaboration, helping
   uv sync --group dev    # Install development dependencies including black/ruff
   ```
   Set `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple` temporarily if you need a mirror.
-- **Key runtime libraries**: `anyio`, `httpx`, `mcp`, `pydantic`, `pydantic-settings`, `tenacity`, `structlog`, `python-dotenv`, `jsonschema`, `openai`.
+- **Key runtime libraries**: `anyio`, `httpx`, `jsonschema`, `langgraph`, `mcp`, `openai`, `pydantic`, `pydantic-settings`, `python-dotenv`, `structlog`, `tenacity`.
 - **Build system**: The project uses `hatchling`. In `pyproject.toml`, `[tool.hatch.build.targets.wheel]` declares `src/tiangong_lca_spec` as the build target.
 
 ## 3. Credentials and Remote Services
