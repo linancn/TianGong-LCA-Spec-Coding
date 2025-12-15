@@ -10,10 +10,11 @@ This guide focuses on general conventions for engineering collaboration, helping
   - `scripts/jsonld/`: JSON-LD extraction, validation, and publishing helpers.
   - `.github/prompts/`: Prompt specifications for Codex, with `extract-process-workflow.prompt.md` dedicated to the process extraction task.
   - `scripts/kb/`: Knowledge base tooling (e.g., `import_ris.py` for ingestion, `minio_fetch.py` for downloading parsed bundles, and `retrieve.py` for issuing test retrieval queries) for pushing bibliographic PDFs into Tiangong datasets.
-- **Collaboration interfaces**: The standard workflow depends on `.secrets/secrets.toml` where OpenAI, Tiangong LCA Remote, and TIDAS validation services are configured. Validate credentials before running Stage 3 or later in batch during your first integration.
+  - `test/`: Unit tests and regression fixtures.
+- **Collaboration interfaces**: The standard workflow depends on `.secrets/secrets.toml` where OpenAI and Tiangong LCA Remote services are configured. Validate credentials before running Stage 3 or later in batch during your first integration.
 - **Further references**: Requirements, alignment strategies, and exception handling for each stage are documented in `.github/prompts/extract-process-workflow.prompt.md`. For supplemental classification or geographic information, use the helper CLIs provided by `scripts/md/list_*_children.py`.
 - **Stage 4 flow publishing**: When filling in missing flow definitions, the publisher now leans on the configured LLM to infer both the flow type and the most specific product classification. Follow the credential setup above so the scripts can call `scripts/md/list_product_flow_category_children.py` via the LLM-assisted selector.
-- **Run ID management**: The markdown pipeline continues to use the default `artifacts/.latest_run_id`, which downstream stages reuse whenever `--run-id` is omitted. JSON-LD stages keep their own `artifacts/.latest_jsonld_run_id`; running `scripts/jsonld/run_pipeline.py` without `--run-id` generates a fresh identifier and records it there, and Stage 2/Stage 3 fall back to that file when retrying individual steps.
+- **Run ID management**: The markdown pipeline continues to use the default `artifacts/.latest_run_id`, which downstream stages reuse whenever `--run-id` is omitted. JSON-LD stages keep their own `artifacts/.latest_jsonld_run_id`; running `scripts/jsonld/run_pipeline.py` without `--run-id` generates a fresh identifier and records it there, and Stage 2/Stage 3 fall back to that file when `--run-id` is omitted. Pass `--run-id` explicitly to rerun an older pipeline output.
 
 ## 2. Development Environment and Dependencies
 - **Python version**: ≥ 3.12. Manage it with `uv toolchain`; the default virtual environment lives in `.venv/`.
@@ -25,7 +26,7 @@ This guide focuses on general conventions for engineering collaboration, helping
   uv sync --group dev    # Install development dependencies including black/ruff
   ```
   Set `UV_PYPI_URL=https://pypi.tuna.tsinghua.edu.cn/simple` temporarily if you need a mirror.
-- **Key runtime libraries**: `anyio`, `httpx`, `jsonschema`, `langgraph`, `mcp`, `openai`, `pydantic`, `pydantic-settings`, `python-dotenv`, `structlog`, `tenacity`.
+- **Key runtime libraries**: `anyio`, `httpx`, `jsonschema`, `langgraph`, `mcp`, `openai`, `pydantic`, `pydantic-settings`, `python-dotenv`, `structlog`, `tenacity`. (`langgraph` is currently available for future graph-style workflows; the shipped CLIs/orchestrator do not depend on it yet.)
 - **Build system**: The project uses `hatchling`. In `pyproject.toml`, `[tool.hatch.build.targets.wheel]` declares `src/tiangong_lca_spec` as the build target.
 
 ## 3. Credentials and Remote Services
@@ -35,12 +36,12 @@ This guide focuses on general conventions for engineering collaboration, helping
    - `[tiangong_lca_remote]`: `url`, `service_name`, `tool_name`, `api_key`.
    - `[kb]`: `base_url`, `dataset_id`, `api_key`, optional `timeout`, and `metadata_fields` (defaults already set to the `meta` and `category` fields).
    - `[kb.pipeline]`: `datasource_type`, `start_node_id`, `is_published`, `response_mode`, and optional `inputs` for the RAG pipeline runner. The pipeline node ID is available from the dataset’s pipeline designer.
-   - `[minio]`: `endpoint`, `access_key`, `secret_key`, `bucket_name`, and `prefix` for the KB bundle bucket; optional `secure` (defaults to `https` when omitted) and `session_token` are supported for custom deployments.
+   - `[minio]`: `endpoint`, `access_key`, `secret_key`, `bucket_name`, and `prefix` for the KB bundle bucket; optional `secure` (defaults to the endpoint scheme when present, otherwise `https`) and `session_token` are supported for custom deployments.
 3. Write plaintext tokens directly into `api_key`; the framework automatically prepends `Bearer`.
 4. Before running Stage 3, call `FlowSearchService` with one or two sample exchanges to perform a connectivity self-test (see the workflow prompt document for Python snippets).
 - If operations has already provisioned `.secrets/secrets.toml`, Codex uses it as-is. Only revisit the local configuration when scripts raise missing-credential errors or connection failures.
 
-Local TIDAS validation now relies on the CLI command `uv run tidas-validate -i artifacts`, which Stage 3 executes automatically. No additional MCP credentials are required for this step.
+Local TIDAS validation relies on the CLI command `uv run tidas-validate -i artifacts`, which `scripts/md/stage3_align_flows.py` runs by default (disable with `--skip-artifact-validation`). No additional MCP credentials are required for this step.
 
 **Knowledge base ingestion**
 - Populate the `[kb]` section in `.secrets/secrets.toml` with the real host (e.g., `https://<kb-host>/v1`), dataset ID, and API key.
@@ -59,7 +60,7 @@ Local TIDAS validation now relies on the CLI command `uv run tidas-validate -i a
   uv run python -m compileall src scripts
   uv run pytest
   ```
-- When changes involve process extraction or alignment logic, prioritize a minimal Stage 1→Stage 6 end-to-end run. Command examples and stage requirements are in `.github/prompts/extract-process-workflow.prompt.md`.
+- When changes involve process extraction or alignment logic, prioritize a minimal end-to-end run (literature pipeline: Stage 1→Stage 4; JSON-LD pipeline: Stage 1→Stage 3). Command examples and stage requirements are in `.github/prompts/extract-process-workflow.prompt.md`.
 - Structured logging defaults to `structlog`. While running CLIs, monitor `flow_alignment.*`, `process_extraction.*`, and similar events to quickly localize issues.
 - Before committing, ensure intermediate files under `artifacts/` are not accidentally staged. Clean them locally or add them to `.gitignore` if needed.
 
