@@ -7,11 +7,48 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypedDict
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from langgraph.graph import END, StateGraph
 from tidas_sdk import create_process
+from tidas_sdk.core.multilang import MultiLangList
+from tidas_sdk.entities.utils import default_timestamp
+from tidas_sdk.generated.tidas_data_types import GlobalReferenceTypeVariant0
+from tidas_sdk.generated.tidas_processes import (
+    CommonClassItemOption0,
+    ComplianceDeclarationsComplianceOption0,
+    DataSetInformationClassificationInformationCommonClassification,
+    ExchangesExchangeItem,
+    ModellingAndValidationValidationReview,
+    ProcessDataSetAdministrativeInformationCommonCommissionerAndGoal,
+    ProcessDataSetAdministrativeInformationDataEntryBy,
+    ProcessDataSetAdministrativeInformationPublicationAndOwnership,
+    ProcessDataSetModellingAndValidationComplianceDeclarations,
+    ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness,
+    ProcessDataSetModellingAndValidationLCIMethodAndAllocation,
+    ProcessDataSetModellingAndValidationValidation,
+    ProcessDataSetProcessInformationDataSetInformation,
+    ProcessDataSetProcessInformationGeography,
+    ProcessDataSetProcessInformationQuantitativeReference,
+    ProcessDataSetProcessInformationTechnology,
+    ProcessDataSetProcessInformationTime,
+    ProcessInformationDataSetInformationClassificationInformation,
+    ProcessInformationDataSetInformationName,
+    ProcessInformationGeographyLocationOfOperationSupplyOrProduction,
+    Processes,
+    ProcessesProcessDataSet,
+    ProcessesProcessDataSetAdministrativeInformation,
+    ProcessesProcessDataSetExchanges,
+    ProcessesProcessDataSetModellingAndValidation,
+    ProcessesProcessDataSetProcessInformation,
+)
 
+from tiangong_lca_spec.core.constants import (
+    ILCD_FORMAT_SOURCE_SHORT_DESCRIPTION,
+    ILCD_FORMAT_SOURCE_URI,
+    ILCD_FORMAT_SOURCE_UUID,
+    ILCD_FORMAT_SOURCE_VERSION,
+)
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.core.logging import get_logger
@@ -30,6 +67,7 @@ from tiangong_lca_spec.process_extraction.tidas_mapping import (
     ILCD_ENTRY_LEVEL_REFERENCE_ID,
     ILCD_ENTRY_LEVEL_REFERENCE_VERSION,
 )
+from tiangong_lca_spec.utils.translate import Translator
 
 from .prompts import EXCHANGES_PROMPT, PROCESS_SPLIT_PROMPT, TECH_DESCRIPTION_PROMPT
 
@@ -65,6 +103,15 @@ def _ensure_dict(value: Any) -> dict[str, Any]:
 
 def _language_entry(text: str, lang: str = "en") -> dict[str, str]:
     return {"@xml:lang": lang, "#text": text}
+
+
+def _normalize_uuid(value: str | None) -> str:
+    if not value:
+        return str(uuid4())
+    try:
+        return str(UUID(str(value)))
+    except Exception:
+        return str(uuid4())
 
 
 def _pick_lang(value: Any, *, prefer: str = "en") -> str | None:
@@ -112,7 +159,9 @@ def _flow_summary(flow_dataset: dict[str, Any]) -> dict[str, Any]:
     base_name_en = _pick_lang(name_block.get("baseName"), prefer="en")
     base_name_zh = _pick_lang(name_block.get("baseName"), prefer="zh")
     treatment_en = _pick_lang(name_block.get("treatmentStandardsRoutes"), prefer="en")
+    treatment_zh = _pick_lang(name_block.get("treatmentStandardsRoutes"), prefer="zh")
     mix_en = _pick_lang(name_block.get("mixAndLocationTypes"), prefer="en")
+    mix_zh = _pick_lang(name_block.get("mixAndLocationTypes"), prefer="zh")
     general_en = _pick_lang(data_info.get("common:generalComment"), prefer="en")
     general_zh = _pick_lang(data_info.get("common:generalComment"), prefer="zh")
 
@@ -131,16 +180,20 @@ def _flow_summary(flow_dataset: dict[str, Any]) -> dict[str, Any]:
         "base_name_en": base_name_en,
         "base_name_zh": base_name_zh,
         "treatment_en": treatment_en,
+        "treatment_zh": treatment_zh,
         "mix_en": mix_en,
+        "mix_zh": mix_zh,
         "general_comment_en": general_en,
         "general_comment_zh": general_zh,
         "classification": classification,
     }
 
 
-def _as_multilang_list(value: Any, *, default_lang: str = "en") -> list[dict[str, str]]:
+def _as_multilang_list(value: Any, *, default_lang: str = "en") -> MultiLangList:
+    if isinstance(value, MultiLangList):
+        return value
     if value is None:
-        return []
+        return MultiLangList()
     if isinstance(value, list):
         out: list[dict[str, str]] = []
         for item in value:
@@ -150,91 +203,147 @@ def _as_multilang_list(value: Any, *, default_lang: str = "en") -> list[dict[str
                 text = str(item).strip()
                 if text:
                     out.append(_language_entry(text, default_lang))
-        return [entry for entry in out if entry.get("#text")]
+        return MultiLangList([entry for entry in out if entry.get("#text")])
     if isinstance(value, dict) and "#text" in value:
         text = str(value.get("#text") or "").strip()
         if not text:
-            return []
+            return MultiLangList()
         lang = str(value.get("@xml:lang") or default_lang) or default_lang
-        return [_language_entry(text, lang)]
+        return MultiLangList([_language_entry(text, lang)])
     text = str(value).strip()
-    return [_language_entry(text, default_lang)] if text else []
+    return MultiLangList([_language_entry(text, default_lang)]) if text else MultiLangList()
 
 
-def _contact_reference() -> dict[str, Any]:
+def _global_reference(
+    *,
+    ref_type: str,
+    ref_object_id: str,
+    version: str,
+    uri: str,
+    short_description: Any,
+    extra_fields: dict[str, Any] | None = None,
+) -> GlobalReferenceTypeVariant0:
+    reference = GlobalReferenceTypeVariant0(
+        type=ref_type,
+        ref_object_id=ref_object_id,
+        version=version,
+        uri=uri,
+        common_short_description=_as_multilang_list(short_description),
+    )
+    if extra_fields:
+        for key, value in extra_fields.items():
+            setattr(reference, key, value)
+    return reference
+
+
+def _as_classification_items(entries: list[dict[str, Any]]) -> list[CommonClassItemOption0]:
+    items: list[CommonClassItemOption0] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        level = str(entry.get("@level") or entry.get("level") or "0").strip()
+        if not (level.isdigit() and len(level) == 1):
+            level = "0"
+        class_id = str(entry.get("@classId") or entry.get("class_id") or entry.get("classId") or "C").strip() or "C"
+        text = str(entry.get("#text") or entry.get("text") or "").strip()
+        if not text:
+            continue
+        items.append(CommonClassItemOption0(level=level, class_id=class_id, text=text))
+    if not items:
+        items = [CommonClassItemOption0(level="0", class_id="C", text="Manufacturing")]
+    return items
+
+
+def _contact_reference() -> GlobalReferenceTypeVariant0:
     ref_object_id = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
     version = "01.00.000"
-    return {
-        "@refObjectId": ref_object_id,
-        "@type": "contact data set",
-        "@uri": build_local_dataset_uri("contact data set", ref_object_id, version),
-        "@version": version,
-        "common:shortDescription": [
+    return _global_reference(
+        ref_type="contact data set",
+        ref_object_id=ref_object_id,
+        version=version,
+        uri=build_local_dataset_uri("contact data set", ref_object_id, version),
+        short_description=[
             _language_entry("Tiangong LCA Data Working Group", "en"),
             _language_entry("天工LCA数据团队", "zh"),
         ],
-    }
+    )
 
 
-def _entry_level_compliance_reference() -> dict[str, Any]:
-    return {
-        "@refObjectId": ILCD_ENTRY_LEVEL_REFERENCE_ID,
-        "@type": "source data set",
-        "@uri": build_local_dataset_uri(
+def _entry_level_compliance_reference() -> GlobalReferenceTypeVariant0:
+    return _global_reference(
+        ref_type="source data set",
+        ref_object_id=ILCD_ENTRY_LEVEL_REFERENCE_ID,
+        version=ILCD_ENTRY_LEVEL_REFERENCE_VERSION,
+        uri=build_local_dataset_uri(
             "source data set",
             ILCD_ENTRY_LEVEL_REFERENCE_ID,
             ILCD_ENTRY_LEVEL_REFERENCE_VERSION,
         ),
-        "@version": ILCD_ENTRY_LEVEL_REFERENCE_VERSION,
-        "common:shortDescription": [_language_entry("ILCD Data Network - Entry-level", "en")],
+        short_description=[_language_entry("ILCD Data Network - Entry-level", "en")],
+    )
+
+
+def _compliance_declarations() -> ProcessDataSetModellingAndValidationComplianceDeclarations:
+    mapped_fields = {
+        "common_approval_of_overall_compliance": "common:approvalOfOverallCompliance",
+        "common_nomenclature_compliance": "common:nomenclatureCompliance",
+        "common_methodological_compliance": "common:methodologicalCompliance",
+        "common_review_compliance": "common:reviewCompliance",
+        "common_documentation_compliance": "common:documentationCompliance",
+        "common_quality_compliance": "common:qualityCompliance",
     }
+    values: dict[str, str] = {}
+    for field_name, source_key in mapped_fields.items():
+        values[field_name] = COMPLIANCE_DEFAULT_PREFERENCES.get(source_key) or "Not defined"
+    compliance = ComplianceDeclarationsComplianceOption0(
+        common_reference_to_compliance_system=_entry_level_compliance_reference(),
+        **values,
+    )
+    return ProcessDataSetModellingAndValidationComplianceDeclarations(compliance=compliance)
 
 
-def _compliance_declarations() -> dict[str, Any]:
-    compliance = {"common:referenceToComplianceSystem": _entry_level_compliance_reference()}
-    for field, value in COMPLIANCE_DEFAULT_PREFERENCES.items():
-        compliance[field] = value
-    return {"compliance": compliance}
+def _dataset_format_reference() -> GlobalReferenceTypeVariant0:
+    return _global_reference(
+        ref_type="source data set",
+        ref_object_id=ILCD_FORMAT_SOURCE_UUID,
+        version=ILCD_FORMAT_SOURCE_VERSION,
+        uri=ILCD_FORMAT_SOURCE_URI,
+        short_description=[ILCD_FORMAT_SOURCE_SHORT_DESCRIPTION],
+    )
 
 
-def _dataset_format_reference() -> dict[str, Any]:
-    from tiangong_lca_spec.core.constants import build_dataset_format_reference as _build
-
-    reference = dict(_build())
-    reference["common:shortDescription"] = _as_multilang_list(reference.get("common:shortDescription"))
-    return reference
-
-
-def _candidate_reference(candidate: FlowCandidate) -> dict[str, Any]:
+def _candidate_reference(candidate: FlowCandidate, *, translator: Translator | None = None) -> GlobalReferenceTypeVariant0:
     version = candidate.version or "01.01.000"
-    uuid_value = candidate.uuid or str(uuid4())
+    uuid_value = _normalize_uuid(candidate.uuid)
     uri = build_portal_uri("flow", uuid_value, version)
-    return {
-        "@type": "flow data set",
-        "@refObjectId": uuid_value,
-        "@version": version,
-        "@uri": uri,
-        "common:shortDescription": _as_multilang_list(
-            {
-                "@xml:lang": "en",
-                "#text": candidate.base_name,
-            }
-        ),
-    }
+    name = str(candidate.base_name or "Unnamed flow").strip() or "Unnamed flow"
+    short_desc = _build_multilang_entries(name, translator=translator)
+    if not short_desc:
+        short_desc = [_language_entry(name, "en")]
+    return _global_reference(
+        ref_type="flow data set",
+        ref_object_id=uuid_value,
+        version=version,
+        uri=uri,
+        short_description=short_desc,
+    )
 
 
-def _placeholder_flow_reference(name: str) -> dict[str, Any]:
-    identifier = str(uuid4())
+def _placeholder_flow_reference(name: str, *, translator: Translator | None = None) -> GlobalReferenceTypeVariant0:
+    identifier = _normalize_uuid(None)
     version = "00.00.000"
     uri = build_portal_uri("flow", identifier, version)
-    return {
-        "@type": "flow data set",
-        "@refObjectId": identifier,
-        "@version": version,
-        "@uri": uri,
-        "common:shortDescription": [_language_entry(name or "Unnamed flow", "en")],
-        "unmatched:placeholder": True,
-    }
+    short_desc = _build_multilang_entries(name or "Unnamed flow", translator=translator)
+    if not short_desc:
+        short_desc = [_language_entry(name or "Unnamed flow", "en")]
+    return _global_reference(
+        ref_type="flow data set",
+        ref_object_id=identifier,
+        version=version,
+        uri=uri,
+        short_description=short_desc,
+        extra_fields={"unmatched:placeholder": True},
+    )
 
 
 def _default_exchange_amount() -> str:
@@ -248,12 +357,33 @@ def _reference_direction(operation: str | None) -> str:
     return "Output"
 
 
+def _build_multilang_entries(
+    text: str | None,
+    *,
+    translator: Translator | None = None,
+    zh_text: str | None = None,
+) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    base = str(text).strip() if text else ""
+    if base:
+        entries.append(_language_entry(base, "en"))
+    zh_value = str(zh_text).strip() if zh_text else ""
+    if not zh_value and translator and base:
+        translated = translator.translate(base, "zh")
+        if translated:
+            zh_value = translated.strip()
+    if zh_value and zh_value != base:
+        entries.append(_language_entry(zh_value, "zh"))
+    return entries
+
+
 def _build_langgraph(
     *,
     llm: LanguageModelProtocol | None,
     settings: Settings,
     flow_search_fn: FlowSearchFn,
     selector: CandidateSelector,
+    translator: Translator | None,
 ) -> Any:
     graph = StateGraph(ProcessFromFlowState)
 
@@ -445,6 +575,7 @@ def _build_langgraph(
             return {}
         flow_summary = state.get("flow_summary") or {}
         target_flow_name = flow_summary.get("base_name_en") or "reference flow"
+        target_flow_name_zh = flow_summary.get("base_name_zh")
         tech_description = state.get("technical_description") or ""
         scope = state.get("scope") or ""
         assumptions = state.get("assumptions") or []
@@ -484,7 +615,7 @@ def _build_langgraph(
 
             matched_entry = exchange_plans.get(process_id) or {}
             exchanges_raw = matched_entry.get("exchanges") or []
-            exchange_items: list[dict[str, Any]] = []
+            exchange_items: list[ExchangesExchangeItem] = []
             reference_internal_id: str | None = None
             next_internal_id = 1
             for exchange in exchanges_raw:
@@ -512,25 +643,26 @@ def _build_langgraph(
                                 break
                 if selected_uuid:
                     candidate = FlowCandidate(uuid=str(selected_uuid), base_name=name, version=str(selected_version) if selected_version else None)
-                    reference = _candidate_reference(candidate)
+                    reference = _candidate_reference(candidate, translator=translator)
                 else:
-                    reference = _placeholder_flow_reference(name)
+                    reference = _placeholder_flow_reference(name, translator=translator)
 
                 amount = exchange.get("amount")
                 amount_text = _default_exchange_amount() if amount in (None, "", 0) else str(amount)
 
                 comment_text = str(exchange.get("generalComment") or "").strip()
-                exchange_item = {
-                    "@dataSetInternalID": internal_id,
-                    "exchangeName": name,
-                    "exchangeDirection": direction,
-                    "referenceToFlowDataSet": reference,
-                    "meanAmount": amount_text,
-                    "resultingAmount": amount_text,
-                    "dataDerivationTypeStatus": "Estimated",
-                }
+                exchange_item = ExchangesExchangeItem(
+                    data_set_internal_id=internal_id,
+                    reference_to_flow_data_set=reference,
+                    exchange_direction=direction,
+                    mean_amount=amount_text,
+                    resulting_amount=amount_text,
+                    data_derivation_type_status="Estimated",
+                    exchangeName=name,
+                )
                 if comment_text:
-                    exchange_item["generalComment"] = _as_multilang_list(comment_text)
+                    comment_entries = _build_multilang_entries(comment_text, translator=translator)
+                    exchange_item.general_comment = _as_multilang_list(comment_entries or comment_text)
                 exchange_items.append(exchange_item)
 
                 if is_reference_flow_process and bool(exchange.get("is_reference_flow")):
@@ -540,16 +672,22 @@ def _build_langgraph(
                 # Ensure a reference exchange exists even if LLM failed to mark it.
                 reference_internal_id = str(next_internal_id)
                 exchange_items.append(
-                    {
-                        "@dataSetInternalID": reference_internal_id,
-                        "exchangeName": target_flow_name,
-                        "exchangeDirection": reference_direction,
-                        "referenceToFlowDataSet": _placeholder_flow_reference(target_flow_name),
-                        "meanAmount": _default_exchange_amount(),
-                        "resultingAmount": _default_exchange_amount(),
-                        "dataDerivationTypeStatus": "Estimated",
-                        "generalComment": _as_multilang_list(flow_summary.get("general_comment_en") or ""),
-                    }
+                    ExchangesExchangeItem(
+                        data_set_internal_id=reference_internal_id,
+                        reference_to_flow_data_set=_placeholder_flow_reference(target_flow_name, translator=translator),
+                        exchange_direction=reference_direction,
+                        mean_amount=_default_exchange_amount(),
+                        resulting_amount=_default_exchange_amount(),
+                        data_derivation_type_status="Estimated",
+                        general_comment=_as_multilang_list(
+                            _build_multilang_entries(
+                                flow_summary.get("general_comment_en") or "",
+                                translator=translator,
+                                zh_text=flow_summary.get("general_comment_zh"),
+                            )
+                        ),
+                        exchangeName=target_flow_name,
+                    )
                 )
 
             functional_unit = f"1 {flow_summary.get('treatment_en') or 'unit'} of {target_flow_name}".strip()
@@ -559,69 +697,135 @@ def _build_langgraph(
                 else:
                     functional_unit = f"1 unit of {target_flow_name}"
 
-            dataset_payload = {
-                "processDataSet": {
-                    "processInformation": {
-                        "dataSetInformation": {
-                            "common:UUID": proc_uuid,
-                            "name": {
-                                "baseName": _as_multilang_list(_language_entry(process_name, "en")),
-                                "treatmentStandardsRoutes": _as_multilang_list(_language_entry(scope or "Unspecified treatment", "en")),
-                                "mixAndLocationTypes": _as_multilang_list(_language_entry(flow_summary.get("mix_en") or "Unspecified mix/location", "en")),
-                            },
-                            "classificationInformation": {"common:classification": {"common:class": classification_path}},
-                            "common:generalComment": _as_multilang_list(_language_entry(process_desc, "en")),
-                        },
-                        "quantitativeReference": {
-                            "@type": "Reference flow(s)",
-                            "referenceToReferenceFlow": reference_internal_id or "1",
-                            "functionalUnitOrOther": _as_multilang_list(_language_entry(functional_unit, "en")),
-                        },
-                        "time": {"common:referenceYear": int(datetime.now(timezone.utc).strftime("%Y"))},
-                        "geography": {"locationOfOperationSupplyOrProduction": {"@location": "GLO"}},
-                        "technology": {
-                            "technologyDescriptionAndIncludedProcesses": _as_multilang_list(
-                                _language_entry(
-                                    "; ".join([text for text in [tech_description, process_desc, *assumptions] if text]).strip(),
-                                    "en",
-                                )
-                            )
-                        },
-                    },
-                    "exchanges": {"exchange": exchange_items},
-                    "modellingAndValidation": {
-                        "LCIMethodAndAllocation": {"typeOfDataSet": "Unit process, single operation"},
-                        "validation": {"review": {"@type": "Not reviewed"}},
-                        "complianceDeclarations": _compliance_declarations(),
-                    },
-                    "administrativeInformation": {
-                        "common:commissionerAndGoal": {"common:referenceToCommissioner": _contact_reference()},
-                        "dataEntryBy": {
-                            "common:referenceToDataSetFormat": _dataset_format_reference(),
-                            "common:referenceToPersonOrEntityEnteringTheData": _contact_reference(),
-                        },
-                        "publicationAndOwnership": {
-                            "common:dataSetVersion": version,
-                            "common:permanentDataSetURI": build_portal_uri("process", proc_uuid, version),
-                            "common:referenceToOwnershipOfDataSet": _contact_reference(),
-                            "common:copyright": "false",
-                            "common:licenseType": "Free of charge for all users and uses",
-                        },
-                    },
-                }
+            name_entries = _build_multilang_entries(process_name, translator=translator)
+            treatment_entries = _build_multilang_entries(scope or "Unspecified treatment", translator=translator)
+            mix_entries = _build_multilang_entries(
+                flow_summary.get("mix_en") or "Unspecified mix/location",
+                translator=translator,
+                zh_text=flow_summary.get("mix_zh"),
+            )
+            comment_entries = _build_multilang_entries(process_desc, translator=translator)
+            functional_unit_zh = None
+            if target_flow_name_zh:
+                if reference_direction == "Input":
+                    functional_unit_zh = f"处理 1 单位 {target_flow_name_zh}"
+                else:
+                    functional_unit_zh = f"1 单位 {target_flow_name_zh}"
+            functional_unit_entries = _build_multilang_entries(
+                functional_unit,
+                translator=translator,
+                zh_text=functional_unit_zh,
+            )
+            tech_text = "; ".join([text for text in [tech_description, process_desc, *assumptions] if text]).strip()
+            tech_entries = _build_multilang_entries(tech_text, translator=translator)
+
+            classification_items = _as_classification_items(classification_path)
+            classification = DataSetInformationClassificationInformationCommonClassification(
+                common_class=classification_items
+            )
+            classification_info = ProcessInformationDataSetInformationClassificationInformation(
+                common_classification=classification
+            )
+            dataset_name = ProcessInformationDataSetInformationName(
+                base_name=_as_multilang_list(name_entries or process_name),
+                treatment_standards_routes=_as_multilang_list(treatment_entries or (scope or "Unspecified treatment")),
+                mix_and_location_types=_as_multilang_list(
+                    mix_entries or (flow_summary.get("mix_en") or "Unspecified mix/location")
+                ),
+            )
+            data_set_information = ProcessDataSetProcessInformationDataSetInformation(
+                common_uuid=proc_uuid,
+                name=dataset_name,
+                classification_information=classification_info,
+                common_general_comment=_as_multilang_list(comment_entries or process_desc),
+            )
+            quantitative_reference = ProcessDataSetProcessInformationQuantitativeReference(
+                type="Reference flow(s)",
+                reference_to_reference_flow=reference_internal_id or "1",
+                functional_unit_or_other=_as_multilang_list(functional_unit_entries or functional_unit),
+            )
+            time_info = ProcessDataSetProcessInformationTime(
+                common_reference_year=int(datetime.now(timezone.utc).strftime("%Y"))
+            )
+            location = ProcessInformationGeographyLocationOfOperationSupplyOrProduction(location="GLO")
+            geography = ProcessDataSetProcessInformationGeography(
+                location_of_operation_supply_or_production=location
+            )
+            process_info_kwargs = {
+                "data_set_information": data_set_information,
+                "quantitative_reference": quantitative_reference,
+                "time": time_info,
+                "geography": geography,
             }
+            if tech_entries or tech_text:
+                process_info_kwargs["technology"] = ProcessDataSetProcessInformationTechnology(
+                    technology_description_and_included_processes=_as_multilang_list(tech_entries or tech_text)
+                )
+            process_information = ProcessesProcessDataSetProcessInformation(**process_info_kwargs)
 
-            entity = create_process(dataset_payload, validate=False)
+            exchanges = ProcessesProcessDataSetExchanges(exchange=exchange_items)
+            modelling_and_validation = ProcessesProcessDataSetModellingAndValidation(
+                lci_method_and_allocation=ProcessDataSetModellingAndValidationLCIMethodAndAllocation(
+                    type_of_data_set="Unit process, single operation"
+                ),
+                data_sources_treatment_and_representativeness=(
+                    ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(
+                        reference_to_data_source=_entry_level_compliance_reference()
+                    )
+                ),
+                validation=ProcessDataSetModellingAndValidationValidation(
+                    review=ModellingAndValidationValidationReview(type="Not reviewed")
+                ),
+                compliance_declarations=_compliance_declarations(),
+            )
+            administrative_information = ProcessesProcessDataSetAdministrativeInformation(
+                common_commissioner_and_goal=ProcessDataSetAdministrativeInformationCommonCommissionerAndGoal(
+                    common_reference_to_commissioner=_contact_reference()
+                ),
+                data_entry_by=ProcessDataSetAdministrativeInformationDataEntryBy(
+                    common_time_stamp=default_timestamp(),
+                    common_reference_to_data_set_format=_dataset_format_reference(),
+                    common_reference_to_person_or_entity_entering_the_data=_contact_reference(),
+                ),
+                publication_and_ownership=ProcessDataSetAdministrativeInformationPublicationAndOwnership(
+                    common_data_set_version=version,
+                    common_permanent_data_set_uri=build_portal_uri("process", proc_uuid, version),
+                    common_reference_to_ownership_of_data_set=_contact_reference(),
+                    common_copyright="false",
+                    common_license_type="Free of charge for all users and uses",
+                ),
+            )
+            process_dataset = ProcessesProcessDataSet(
+                xmlns="http://lca.jrc.it/ILCD/Process",
+                xmlns_common="http://lca.jrc.it/ILCD/Common",
+                xmlns_xsi="http://www.w3.org/2001/XMLSchema-instance",
+                version="1.1",
+                locations="../ILCDLocations.xml",
+                xsi_schema_location="http://lca.jrc.it/ILCD/Process ../../schemas/ILCD_ProcessDataSet.xsd",
+                process_information=process_information,
+                exchanges=exchanges,
+                modelling_and_validation=modelling_and_validation,
+                administrative_information=administrative_information,
+            )
+            process_model = Processes(process_data_set=process_dataset)
+
+            validated_on_init = False
             try:
-                validated_model = type(entity.model).model_validate(entity.to_json(by_alias=True, exclude_none=False))
-                object.__setattr__(entity, "_model", validated_model)
+                entity = create_process(process_model, validate=True)
+                validated_on_init = True
             except Exception as exc:  # pylint: disable=broad-except
-                LOGGER.warning("process_from_flow.process_validation_coercion_failed", process_id=process_id, error=str(exc))
+                LOGGER.warning("process_from_flow.process_validation_failed", process_id=process_id, error=str(exc))
+                entity = create_process(process_model, validate=False)
 
-            valid = entity.validate(mode="pydantic")
-            if not valid:
+            if validated_on_init:
                 errors = entity.last_validation_error()
-                LOGGER.warning("process_from_flow.process_not_valid", process_id=process_id, error=str(errors))
+                if errors:
+                    LOGGER.warning("process_from_flow.process_not_valid", process_id=process_id, error=str(errors))
+            else:
+                valid = entity.validate(mode="pydantic")
+                if not valid:
+                    errors = entity.last_validation_error()
+                    LOGGER.warning("process_from_flow.process_not_valid", process_id=process_id, error=str(errors))
             results.append(entity.model.model_dump(mode="json", by_alias=True, exclude_none=True))
 
         return {"process_datasets": results}
@@ -664,6 +868,7 @@ class ProcessFromFlowService:
     settings: Settings | None = None
     flow_search_fn: FlowSearchFn | None = None
     selector: CandidateSelector | None = None
+    translator: Translator | None = None
 
     def run(
         self,
@@ -688,6 +893,7 @@ class ProcessFromFlowService:
             settings=settings,
             flow_search_fn=flow_search_fn,
             selector=selector,
+            translator=self.translator,
         )
         initial: ProcessFromFlowState = {"flow_path": str(flow_path), "operation": operation}
         if stop_after:

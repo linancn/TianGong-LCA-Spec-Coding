@@ -25,7 +25,7 @@
 - split_processes：调用 `PROCESS_SPLIT_PROMPT` 拆分多个过程并标记参考流过程。
 - generate_exchanges：调用 `EXCHANGES_PROMPT` 产出各过程的输入/输出交换（生产用 Output，处置/处理用 Input 作为参考流）。
 - match_flows：对每个交换执行 flow 搜索（最多保留前 10 个），用 LLM 选择器挑选最合适的候选，并记录决策理由与未匹配项。
-- build_process_datasets：组合前述信息生成 ILCD process 数据集（参考流方向随 operation 调整）：
+- build_process_datasets：组合前述信息生成 ILCD process 数据集（参考流方向随 operation 调整，若提供 Translator 则补充中文多语字段）：
   - 使用 `ProcessClassifier` 进行分类，失败时落到默认 Manufacturing。
   - 根据匹配结果引用真实 flow；缺失时创建占位 flow 引用。
   - 强制存在参考流交换；空量值回退为 `"1.0"`。
@@ -33,8 +33,10 @@
 
 ## 产出与调试
 - 正常运行返回完整状态，其中 `process_datasets` 为生成结果（可直接写出或继续处理）。
+- CLI 默认会写入清晰 I/O 目录：`io/process_from_flow/<run_id>/input|output`（并保存 `input_manifest.json` 与 `process_from_flow_state.json`）。
 - 调试时可配合 `stop_after` 查看中间态，例如设置为 `"matches"` 只跑到流匹配阶段。
 
 ## 使用建议
 - 确保 LLM 配置正确；未配置 LLM 时不应运行该流程。
 - 在自定义 `flow_search_fn` 或选择器时保持返回/入参协议一致（`FlowQuery` → `(candidates, unmatched)`，候选含 uuid/base_name 等字段）。
+- CLI 默认会补充中文翻译（可用 `--no-translate-zh` 跳过；`--io-root` 可指定 I/O 根目录）。
