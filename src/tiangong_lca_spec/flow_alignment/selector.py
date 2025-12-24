@@ -73,6 +73,23 @@ class SimilarityCandidateSelector:
         return SequenceMatcher(None, left, right).ratio()
 
 
+class NoFallbackCandidateSelector:
+    """Disable fallback selection when LLM cannot decide."""
+
+    def select(
+        self,
+        query: FlowQuery,
+        exchange: dict[str, Any],
+        candidates: Sequence[FlowCandidate],
+    ) -> SelectorDecision:
+        return SelectorDecision(
+            candidate=None,
+            score=None,
+            reasoning="LLM selection required; no fallback applied.",
+            strategy="llm_no_fallback",
+        )
+
+
 class LLMCandidateSelector:
     """Leverage an LLM to pick the best candidate, with similarity fallback."""
 
@@ -97,6 +114,9 @@ class LLMCandidateSelector:
         "\n"
         "Respond with `best_index: null` if no candidate is appropriate. Prefer candidates whose flow "
         "name, geography, classification, and general comments best align with the exchange details. "
+        "The exchange may include a `flow_type` hint (product/elementary/waste/service) and `search_hints` aliases; use them. "
+        "Candidates include `name_parts` (baseName, treatmentStandardsRoutes, mixAndLocationTypes, flowProperties) and "
+        "`flow_type`.\n"
         "Return strict JSON with keys:\n"
         "- `best_index`: integer index into the candidates array (0-based) or null.\n"
         "- `confidence`: number between 0 and 1 estimating confidence (optional).\n"
@@ -174,14 +194,25 @@ class LLMCandidateSelector:
                 "description": query.description,
                 "direction": exchange.get("exchangeDirection") or exchange.get("direction"),
                 "general_comment": self._stringify_comment(exchange),
+                "flow_type": exchange.get("flow_type"),
+                "search_hints": exchange.get("search_hints") or [],
             },
             "candidates": [
                 {
                     "index": idx,
                     "base_name": candidate.base_name,
+                    "name_parts": {
+                        "base_name": candidate.base_name,
+                        "treatment_standards_routes": candidate.treatment_standards_routes,
+                        "mix_and_location_types": candidate.mix_and_location_types,
+                        "flow_properties": candidate.flow_properties,
+                    },
                     "uuid": candidate.uuid,
+                    "flow_type": candidate.flow_type,
+                    "version": candidate.version,
                     "geography": candidate.geography,
                     "classification": candidate.classification,
+                    "classification_path": self._classification_path(candidate.classification),
                     "general_comment": candidate.general_comment,
                     "flow_property_short_descriptions": self._flow_property_short_descriptions(candidate.flow_properties),
                 }
@@ -225,6 +256,19 @@ class LLMCandidateSelector:
                 collected.extend(LLMCandidateSelector._flow_property_short_descriptions(value))
             return collected
         return [str(raw)]
+
+    @staticmethod
+    def _classification_path(classification: Any) -> list[str]:
+        if not isinstance(classification, list):
+            return []
+        path: list[str] = []
+        for item in classification:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("#text") or item.get("text")
+            if isinstance(text, str) and text.strip():
+                path.append(text.strip())
+        return path
 
     @staticmethod
     def _parse_response(raw_response: Any) -> dict[str, Any]:

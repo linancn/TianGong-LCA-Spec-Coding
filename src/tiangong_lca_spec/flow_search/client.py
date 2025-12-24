@@ -152,13 +152,15 @@ class FlowSearchClient:
         if not base_name:
             return None
         geography = _extract_geography(info.get("geography"))
-        flow_properties = _preferred_language_text(name_block.get("flowProperties")) or _preferred_language_text(name_block.get("functionalUnitFlowProperties"))
+        flow_properties = _preferred_language_text(name_block.get("flowProperties"))
+        flow_type = _normalize_flow_type(flow.get("modellingAndValidation", {}).get("LCIMethod", {}).get("typeOfDataSet"))
         return {
             "uuid": data_info.get("common:UUID") or flow.get("@uuid"),
             "base_name": base_name,
             "treatment_standards_routes": _preferred_language_text(name_block.get("treatmentStandardsRoutes")),
             "mix_and_location_types": _preferred_language_text(name_block.get("mixAndLocationTypes")),
             "flow_properties": flow_properties,
+            "flow_type": flow_type,
             "version": flow.get("administrativeInformation", {}).get("publicationAndOwnership", {}).get("common:dataSetVersion"),
             "general_comment": _preferred_language_text(data_info.get("common:generalComment")),
             "geography": geography,
@@ -189,6 +191,23 @@ def _preferred_language_text(value: Any) -> str | None:
     if chinese:
         return chinese
     return _first_text(value)
+
+
+def _normalize_flow_type(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if "product" in text:
+        return "product"
+    if "elementary" in text:
+        return "elementary"
+    if "waste" in text:
+        return "waste"
+    if "service" in text:
+        return "service"
+    return text
 
 
 def _find_language_text(value: Any, language_keys: tuple[str, ...]) -> str | None:
