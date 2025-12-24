@@ -3,7 +3,8 @@
 
 This command is a human-in-the-loop helper:
 - Step 1: list plausible technology/process routes from the reference flow.
-- Step 2: for each route, split into 1..N unit processes (ordered; last process produces/treats the reference flow; structured fields include inputs/outputs, exchange keywords, and standardized name_parts with quantitative_reference).
+- Step 2: for each route, split into 1..N unit processes (ordered; last process produces/treats the reference flow;
+  structured fields include inputs/outputs, exchange keywords, and standardized name_parts with quantitative_reference).
 - Step 3: derive per-process input/output exchanges.
 - Step 4: match exchanges to Tiangong flows via MCP flow_search.
 - Step 5: generate TIDAS/ILCD process datasets via tidas-sdk.
@@ -63,10 +64,6 @@ except ModuleNotFoundError:  # pragma: no cover
         generate_run_id,
         load_secrets,
     )
-
-from tiangong_lca_spec.process_from_flow import ProcessFromFlowService
-from tiangong_lca_spec.publishing import ProcessPublisher
-from tiangong_lca_spec.utils.translate import Translator
 
 DEFAULT_FLOW_PATH = Path("artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json")
 LATEST_RUN_ID_PATH = Path("artifacts/.latest_process_from_flow_run_id")
@@ -272,6 +269,8 @@ def _load_process_datasets(io_root: Path, run_id: str) -> list[dict[str, Any]]:
 
 
 def _publish_processes(datasets: list[dict[str, Any]], *, commit: bool) -> None:
+    from tiangong_lca_spec.publishing import ProcessPublisher
+
     publishable = [item for item in datasets if isinstance(item, dict)]
     if not publishable:
         raise SystemExit("No valid process datasets found for publishing.")
@@ -287,6 +286,9 @@ def _publish_processes(datasets: list[dict[str, Any]], *, commit: bool) -> None:
 
 
 def main() -> None:
+    from tiangong_lca_spec.process_from_flow import ProcessFromFlowService
+    from tiangong_lca_spec.utils.translate import Translator
+
     args = parse_args()
     if args.cleanup_only:
         if args.retain_runs is None:

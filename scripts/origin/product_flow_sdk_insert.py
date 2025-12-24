@@ -194,7 +194,9 @@ def build_dataset(
                 "You provide two ILCD fields for a product flow:\n"
                 "- treatmentStandardsRoutes: technical qualifiers (treatment received, standard fulfilled, product quality, use info, production route name), comma-separated.\n"
                 "- mixAndLocationTypes: production/consumption mix and delivery point (e.g., at plant / at farm gate / at forest roadside / at landing site / to consumer), comma-separated.\n"
-                "Select ONLY from the given options; do not invent new text. If the flow is a finished manufactured product, prefer 'Finished product, manufactured' + 'Production mix, at plant'.\n"
+                "Select ONLY from the given options; do not invent new text. "
+                "If the flow is a finished manufactured product, prefer "
+                "'Finished product, manufactured' + 'Production mix, at plant'.\n"
                 "If the flow is clearly agricultural/livestock/forestry/fish, pick the matching farm gate / forest roadside / landing site + corresponding treatment. Otherwise keep plant.\n"
                 'Respond strict JSON: {"treatment_en": <option>, "mix_en": <option>} with no extra keys.\n'
                 f"class_id: {code}\n"

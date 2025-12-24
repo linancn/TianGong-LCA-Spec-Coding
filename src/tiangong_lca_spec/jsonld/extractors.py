@@ -30,6 +30,7 @@ from tiangong_lca_spec.process_extraction.extractors import (
     ProductFlowClassifier,
 )
 from tiangong_lca_spec.process_extraction.tidas_mapping import build_tidas_process_dataset
+from tiangong_lca_spec.process_extraction.validators import is_placeholder_value
 from tiangong_lca_spec.tidas import get_schema_repository
 from tiangong_lca_spec.tidas.flow_classification_registry import ensure_valid_product_flow_classification
 from tiangong_lca_spec.workflow.artifacts import DEFAULT_DATA_SET_VERSION, flow_compliance_declarations
