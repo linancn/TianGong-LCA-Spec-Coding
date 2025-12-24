@@ -23,16 +23,26 @@ class FakeLLM:
                 "assumptions": ["No quantitative inventory; placeholders only."],
                 "scope": "Generic scope",
             }
-        if prompt.startswith("You are decomposing a technical process description"):
+        if prompt.startswith("You are selecting/using the route options") or prompt.startswith(
+            "You are decomposing a technical process description"
+        ):
             return {
-                "processes": [
+                "selected_route_id": "R1",
+                "routes": [
                     {
-                        "process_id": "P1",
-                        "name": "Production of test flow",
-                        "description": "Foreground process producing the reference flow.",
-                        "is_reference_flow_process": True,
+                        "route_id": "R1",
+                        "route_name": "Test route",
+                        "processes": [
+                            {
+                                "process_id": "P1",
+                                "reference_flow_name": "Test flow",
+                                "name": "Production of test flow",
+                                "description": "Foreground process producing the reference flow.",
+                                "is_reference_flow_process": True,
+                            }
+                        ],
                     }
-                ]
+                ],
             }
         if prompt.startswith("You are defining the inventory exchanges"):
             return {
