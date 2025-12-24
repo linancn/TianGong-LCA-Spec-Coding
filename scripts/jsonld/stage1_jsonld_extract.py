@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib.resources as resources
 import json
 import re
-import importlib.resources as resources
 import sys
 from collections import deque
 from copy import deepcopy

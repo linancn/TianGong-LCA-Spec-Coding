@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import tomllib
 from datetime import datetime, timezone
-import re
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -196,7 +196,7 @@ def build_dataset(
                 "- mixAndLocationTypes: production/consumption mix and delivery point (e.g., at plant / at farm gate / at forest roadside / at landing site / to consumer), comma-separated.\n"
                 "Select ONLY from the given options; do not invent new text. If the flow is a finished manufactured product, prefer 'Finished product, manufactured' + 'Production mix, at plant'.\n"
                 "If the flow is clearly agricultural/livestock/forestry/fish, pick the matching farm gate / forest roadside / landing site + corresponding treatment. Otherwise keep plant.\n"
-                "Respond strict JSON: {\"treatment_en\": <option>, \"mix_en\": <option>} with no extra keys.\n"
+                'Respond strict JSON: {"treatment_en": <option>, "mix_en": <option>} with no extra keys.\n'
                 f"class_id: {code}\n"
                 f"leaf_name: {base_en}\n"
                 f"description: {desc_en or 'N/A'}\n"
@@ -342,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         entries = [e for e in entries if str(e.get("class_id")) in set(args.class_id)]
     else:
         end_idx = len(entries) if args.limit is None else args.start_index + args.limit
-        entries = entries[args.start_index:end_idx]
+        entries = entries[args.start_index : end_idx]
 
     if not entries:
         print("No entries to process.")
@@ -363,10 +363,10 @@ def main(argv: list[str] | None = None) -> int:
                 flow_uuid, dataset = build_dataset(
                     entry,
                     class_nav,
-                llm_model=args.llm_model,
-                translator=translator,
-                llm_suggestions=llm_suggestions,
-            )
+                    llm_model=args.llm_model,
+                    translator=translator,
+                    llm_suggestions=llm_suggestions,
+                )
                 flow = create_flow({"flowDataSet": dataset}, validate=True)
                 payload = flow.to_json(by_alias=True, exclude_none=True)
 

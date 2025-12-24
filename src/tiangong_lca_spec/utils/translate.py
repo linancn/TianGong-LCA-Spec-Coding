@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from typing import Any, Protocol
 
-import tomllib
 from openai import OpenAI
 
 from tiangong_lca_spec.core.json_utils import parse_json_response
@@ -12,7 +12,7 @@ from tiangong_lca_spec.core.json_utils import parse_json_response
 TRANSLATION_PROMPT = (
     "You are a professional translator for LCA datasets. Translate the provided text into the requested "
     "target language. Use Simplified Chinese when target_lang is 'zh'. Preserve technical terms, units, and "
-    "proper nouns. Return strict JSON: {\"translation\": \"...\"}."
+    'proper nouns. Return strict JSON: {"translation": "..."}.'
 )
 
 CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")

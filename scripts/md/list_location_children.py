@@ -62,9 +62,7 @@ def get_children(
 
 
 def main(argv: List[str]) -> int:
-    default_schema = Path(
-        resources.files("tidas_tools.tidas.schemas") / "tidas_locations_category.json"
-    )
+    default_schema = Path(resources.files("tidas_tools.tidas.schemas") / "tidas_locations_category.json")
 
     parser = argparse.ArgumentParser(
         description="List the next level of location codes from the TIDAS schema.",

@@ -249,6 +249,7 @@ def _load_elementary_flow_hints(exports_dir: Path) -> list[dict[str, Any]]:
             return [item for item in payload if isinstance(item, dict)]
     return []
 
+
 def _load_substitution_log(log_path: Path) -> list[dict[str, Any]]:
     if not log_path.exists():
         return []
@@ -257,6 +258,7 @@ def _load_substitution_log(log_path: Path) -> list[dict[str, Any]]:
     except Exception:  # noqa: BLE001
         return []
     return payload if isinstance(payload, list) else []
+
 
 def _merge_substitution_logs(
     existing: list[dict[str, Any]],
@@ -930,11 +932,7 @@ def main() -> None:
     logs_dir = exports_dir.parent / "logs"
     substitution_log_path = logs_dir / "elementary_flow_substitution_log.json"
     existing_substitution_records = _load_substitution_log(substitution_log_path)
-    success_flow_ids = {
-        record.get("original_flow_id")
-        for record in existing_substitution_records
-        if isinstance(record, dict) and record.get("status") == "SUCCESS"
-    }
+    success_flow_ids = {record.get("original_flow_id") for record in existing_substitution_records if isinstance(record, dict) and record.get("status") == "SUCCESS"}
     if success_flow_ids and hints:
         before = len(hints)
         hints = [item for item in hints if item.get("original_uuid") not in success_flow_ids]
