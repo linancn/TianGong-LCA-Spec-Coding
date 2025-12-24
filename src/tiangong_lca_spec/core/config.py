@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     flow_search_service_name: str = "tiangong_lca_remote"
     flow_search_tool_name: str = "Search_Flows_Tool"
     flow_search_max_parallel: int = 1
+    flow_search_state_code: int | None = 100
 
     request_timeout: float = 30.0
     flow_search_timeout: float | None = None
