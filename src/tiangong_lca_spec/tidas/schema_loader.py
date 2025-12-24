@@ -6,6 +6,7 @@ import copy
 import importlib.resources as resources
 import json
 from dataclasses import dataclass
+import importlib.resources as resources
 from pathlib import Path
 from typing import Any
 
