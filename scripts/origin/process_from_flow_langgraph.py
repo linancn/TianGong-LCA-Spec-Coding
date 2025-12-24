@@ -2,8 +2,8 @@
 """Build ILCD process dataset(s) from a reference flow using LangGraph.
 
 This command is a human-in-the-loop helper:
-- Step 1: derive a technical description from the reference flow.
-- Step 2: split into 1..N processes.
+- Step 1: list plausible technology/process routes from the reference flow.
+- Step 2: for each route, split into 1..N unit processes (ordered; last process produces/treats the reference flow; structured fields include inputs/outputs, exchange keywords, and standardized name_parts with quantitative_reference).
 - Step 3: derive per-process input/output exchanges.
 - Step 4: match exchanges to Tiangong flows via MCP flow_search.
 - Step 5: generate TIDAS/ILCD process datasets via tidas-sdk.
@@ -100,10 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--retain-runs",
         type=int,
-        help=(
-            "Manually clean process_from_flow run directories, keeping only the most recent N runs "
-            "under artifacts/ and io/process_from_flow/."
-        ),
+        help=("Manually clean process_from_flow run directories, keeping only the most recent N runs " "under artifacts/ and io/process_from_flow/."),
     )
     parser.add_argument(
         "--cleanup-only",

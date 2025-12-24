@@ -1,33 +1,44 @@
 # Process From Flow 工作流说明
 
-本文件说明 `src/tiangong_lca_spec/process_from_flow/service.py` 中的 LangGraph 工作流，帮助在不做多余动作的前提下清晰复用或扩展。
+本文件说明 `src/tiangong_lca_spec/process_from_flow/service.py` 中的 LangGraph 工作流，聚焦按步骤优化输出结构与约束。
 
 ## 目标与输入
-- 目标：从一份参考 flow 数据集（ILCD JSON）推导出对应的 process 数据集（ILCD 格式），必要时用占位符补齐缺失信息。
+- 目标：从参考 flow 数据集（ILCD JSON）推导对应的 process 数据集（ILCD 格式），exchange 里的 flow uuid/shortDescription 必须来自 `search_flows` 结果，未命中时才用占位符。
 - 核心入口：`ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`。
-- 依赖：LLM 为必选，用于技术描述、过程拆分、交换生成与候选选择；同时依赖 flow 搜索函数 `search_flows`（可注入自定义）与候选选择器（建议 LLM 版本）。
+- 依赖：LLM 为必选，用于技术路径识别、单元过程拆分、交换生成与候选选择；同时依赖 flow 搜索函数 `search_flows`（可注入自定义）与候选选择器（建议 LLM 版本）。
 - `stop_after` 支持 `"tech"|"processes"|"exchanges"|"matches"`，用于调试时提前终止。
 
 ## 状态字段
 工作流以状态字典传递数据，关键字段：
 - `flow_path`：输入文件路径。
 - `flow_dataset` / `flow_summary`：解析后的原始 flow 与摘要（名称、分类、注释、UUID、版本）。
-- `technical_description` / `assumptions` / `scope`：技术路线描述。
-- `processes`：过程拆分计划（process_id、名称、描述、是否参考流过程）。
+- `technical_description` / `assumptions` / `scope`：技术路径与约束（来自选定路径的摘要与假设）。
+- `technology_routes`：第一步输出的多条技术路径（route_id/route_name/route_summary/关键输入输出等）。
+- `process_routes` / `selected_route_id`：第二步按路径拆分的单元过程列表与选定路径。
+- `processes`：单元过程计划（来自选定路径；有序列表，含 `reference_flow_name`、`name_parts`、结构化字段与 exchange 关键词）。
 - `process_exchanges`：每个过程的交换清单（仅结构，无匹配信息）。
-- `matched_process_exchanges`：为每个交换附上 flow 搜索结果与已选候选。
+- `matched_process_exchanges`：为每个交换附上 flow 搜索结果与已选候选，并回填 uuid/shortDescription。
 - `process_datasets`：最终生成的 ILCD process 数据集。
+- `step_markers`：阶段标记（step1/step2/step3），用于人工查阅。
 
 ## 节点顺序与行为
 各节点会首先检查相应字段是否已存在，避免重复工作。
-- load_flow：读取 `flow_path` JSON，生成 `flow_summary`（多语言名称、分类、通用注释等）。
-- describe_technology：调用 `TECH_DESCRIPTION_PROMPT` 生成技术描述/假设/范围。
-- split_processes：调用 `PROCESS_SPLIT_PROMPT` 拆分多个过程并标记参考流过程。
-- generate_exchanges：调用 `EXCHANGES_PROMPT` 产出各过程的输入/输出交换（生产用 Output，处置/处理用 Input 作为参考流）。
-- match_flows：对每个交换执行 flow 搜索（最多保留前 10 个），用 LLM 选择器挑选最合适的候选，并记录决策理由与未匹配项。
-- build_process_datasets：组合前述信息生成 ILCD process 数据集（参考流方向随 operation 调整，若提供 Translator 则补充中文多语字段）：
+- 0) load_flow：读取 `flow_path` JSON，生成 `flow_summary`（多语言名称、分类、通用注释等）；该 flow 作为 reference flow。
+- 1) 识别技术路径（Step 1）：基于 reference flow 输出所有可能的技术/工艺路径（route1/route2...），每条路径给出 route_summary、关键输入/输出、关键单元过程、假设与范围。
+- 2) 路径内拆分单元过程（Step 2）：针对每条路径输出单元过程列表，并保证链式顺序（第 i 个过程的 `reference_flow_name` 必须作为第 i+1 个过程的 exchange input，最后一个过程直接生产/处置 `load_flow`）。每个过程输出结构化字段：
+  - 结构化字段：`technology` / `inputs` / `outputs` / `boundary` / `assumptions`。
+  - `inputs`/`outputs` 每行以 `f1:`/`f2:` 标记独立 flow（链式中间流在相邻过程输入输出中应一致）。
+  - 交换关键词：`exchange_keywords.inputs` / `exchange_keywords.outputs`（用于 flow 搜索）。
+  - 名称模块：`name_parts` 包含 `base_name` / `treatment_and_route` / `mix_and_location` / `quantitative_reference`。
+  - 量纲表达：`quantitative_reference` 必须为数值表达（如 `1 kg of <reference_flow_name>` / `1 unit of <reference_flow_name>`）。
+  - 显式主输出：`reference_flow_name` 为该过程主输出流名称，并与链式输入严格一致。
+- 3) generate_exchanges：调用 `EXCHANGES_PROMPT` 产出各过程的输入/输出交换（每个过程必须标记 `is_reference_flow` 对应 `reference_flow_name`；生产用 Output，处置/处理用 Input 作为参考流）。exchangeName 需可搜索，禁止复合流（能量/排放/人工/辅料需拆分为具体项）；补充 unit 与 amount（未知时用占位符）。
+  - 对排放类 exchange 自动补充介质标签（`to air` / `to water` / `to soil`），降低检索歧义。
+  - 为 exchange 增加 `flow_type`（product/elementary/waste/service）与 `search_hints` 别名。
+- 4) match_flows：对每个交换执行 flow 搜索（最多保留前 10 个候选并列为 list），用 LLM 选择器挑选最合适的候选，不使用相似度兜底；必须记录决策理由与未匹配项；exchange 的 flow uuid/shortDescription 必须来自已选候选。
+- 5) build_process_datasets：组合前述信息生成 ILCD process 数据集（参考流方向随 operation 调整，若提供 Translator 则补充中文多语字段）：
   - 使用 `ProcessClassifier` 进行分类，失败时落到默认 Manufacturing。
-  - 根据匹配结果引用真实 flow；缺失时创建占位 flow 引用。
+  - 根据 `match_flows` 结果引用真实 flow；缺失时创建占位 flow 引用，禁止凭空生成 uuid/shortDescription。
   - 强制存在参考流交换；空量值回退为 `"1.0"`。
   - 自动填充功能单位、时间/地域、合规声明、数据录入与版权块；使用 `tidas_sdk.create_process` 进行模型校验（失败仅记录警告）。
 
