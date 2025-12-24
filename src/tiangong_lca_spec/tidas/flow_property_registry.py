@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Mapping
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "tidas" / "schemas"
+SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 MAPPING_PATH = SCHEMA_DIR / "flowproperty_unitgroup_mapping.json"
 
 FLOW_PROPERTY_VERSION_OVERRIDES: Mapping[str, str] = {

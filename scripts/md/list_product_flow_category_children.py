@@ -13,10 +13,7 @@ from _level_hierarchy_cli import run_cli
 
 
 def main(argv: list[str]) -> int:
-    default_schema = Path(
-        resources.files("tidas_tools.tidas.schemas")
-        / "tidas_flows_product_category.json"
-    )
+    default_schema = Path(resources.files("tidas_tools.tidas.schemas") / "tidas_flows_product_category.json")
     return run_cli(argv, default_schema)
 
 

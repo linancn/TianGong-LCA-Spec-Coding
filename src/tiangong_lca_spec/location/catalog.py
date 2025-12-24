@@ -11,9 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 # Schema is provided by the installed tidas_tools package
-DEFAULT_SCHEMA_PATH = Path(
-    resources.files("tidas_tools.tidas.schemas") / "tidas_locations_category.json"
-)
+DEFAULT_SCHEMA_PATH = Path(resources.files("tidas_tools.tidas.schemas") / "tidas_locations_category.json")
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
 
 

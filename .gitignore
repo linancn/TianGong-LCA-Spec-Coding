@@ -169,3 +169,20 @@ test/data/json_ld
 inline_prompt_jsonld.txt
 
 input_data/
+io/
+
+/artifacts/
+
+test.md
+/temp/
+
+/inline_prompt.txt
+
+.secrets/secrets.toml.bak
+.secrets/secret_key.md
+
+test/data/json_ld
+
+inline_prompt_jsonld.txt
+
+input_data/

@@ -20,6 +20,7 @@ class FlowCandidate:
     treatment_standards_routes: str | None = None
     mix_and_location_types: str | None = None
     flow_properties: str | None = None
+    flow_type: str | None = None
     version: str | None = None
     general_comment: str | None = None
     geography: Mapping[str, Any] | None = None

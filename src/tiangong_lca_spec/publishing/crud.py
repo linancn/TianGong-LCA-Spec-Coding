@@ -705,6 +705,39 @@ class DatabaseCrudClient:
             }
         )
 
+    def select_flow(self, flow_uuid: str) -> dict[str, Any] | None:
+        uuid_value = _coerce_text(flow_uuid)
+        if not uuid_value:
+            return None
+        raw = self._invoke({"operation": "select", "table": "flows", "id": uuid_value})
+        if isinstance(raw, dict):
+            if isinstance(raw.get("flowDataSet"), dict):
+                return raw.get("flowDataSet")
+            data = raw.get("data")
+            if isinstance(data, list) and data:
+                record = data[0] if isinstance(data[0], dict) else None
+                if isinstance(record, dict):
+                    for key in ("json_ordered", "json"):
+                        payload = record.get(key)
+                        if isinstance(payload, dict) and isinstance(payload.get("flowDataSet"), dict):
+                            return payload.get("flowDataSet")
+        return None
+
+    def select_flow_record(self, flow_uuid: str) -> dict[str, Any] | None:
+        uuid_value = _coerce_text(flow_uuid)
+        if not uuid_value:
+            return None
+        raw = self._invoke({"operation": "select", "table": "flows", "id": uuid_value})
+        if isinstance(raw, dict):
+            data = raw.get("data")
+            if isinstance(data, list) and data:
+                record = data[0]
+                if isinstance(record, dict):
+                    return record
+            if isinstance(raw.get("flowDataSet"), dict):
+                return {"json": {"flowDataSet": raw.get("flowDataSet")}}
+        return None
+
     def insert_process(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
         root_key = "processDataSet" if "processDataSet" in dataset else None
         process_root = _resolve_dataset_root(dataset, root_key=root_key, dataset_kind="process")

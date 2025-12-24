@@ -51,6 +51,7 @@ def hydrate_candidate(candidate: dict[str, Any]) -> FlowCandidate:
         treatment_standards_routes=candidate.get("treatment_standards_routes"),
         mix_and_location_types=candidate.get("mix_and_location_types"),
         flow_properties=candidate.get("flow_properties"),
+        flow_type=candidate.get("flow_type") or candidate.get("flowType"),
         version=candidate.get("version"),
         general_comment=candidate.get("general_comment"),
         geography=candidate.get("geography"),
