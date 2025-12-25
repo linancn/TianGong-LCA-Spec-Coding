@@ -34,11 +34,11 @@
 2. 编辑 `.secrets/secrets.toml`：
    - `[openai]`：`api_key`, `model`（默认 `gpt-5` 可覆盖）。
    - `[tiangong_lca_remote]`：`url`, `service_name`, `tool_name`, `api_key`。
-   - 如需连接额外的 MCP 服务，可额外添加配置块（如 `[tiangong_kb_remote]`），包含 `transport`、`service_name`、`url`、`api_key` 以及可选的 `timeout`；所有符合该格式的块都会加载到 `mcp_connections`，`MCPToolClient` 可以同时对接多端点。
+   - 如需连接额外的 MCP 服务，可额外添加配置块（如 `[tiangong_kb_remote]`、`[tavily_web_mcp]`），包含 `transport`、`service_name`、`url`、`api_key` 以及可选的 `timeout`、`api_key_header`、`api_key_prefix`（用于覆盖默认 `Authorization: Bearer` 头）；所有符合该格式的块都会加载到 `mcp_connections`，`MCPToolClient` 可以同时对接多端点。
    - `[kb]`：`base_url`, `dataset_id`, `api_key` 以及可选 `timeout`/`metadata_fields`（默认包含 `meta` 与 `category` 两个字段）。
    - `[kb.pipeline]`：`datasource_type`, `start_node_id`, `is_published`, `response_mode` 与可选 `inputs`，用于驱动 RAG pipeline。`start_node_id` 需从可视化编排器中复制。
    - `[minio]`：配置解析产物所在的 MinIO 桶，需提供 `endpoint`, `access_key`, `secret_key`, `bucket_name`, `prefix`，可选 `secure`（若 `endpoint` 含协议则按协议判断；未写协议时默认 `https`）与 `session_token`。
-3. `api_key` 字段直接写入明文 token，框架会自动带上 `Bearer` 前缀。
+3. `api_key` 字段直接写入明文 token，框架默认使用 `Authorization: Bearer <token>`；如需自定义请求头或前缀，请填写 `api_key_header`/`api_key_prefix`。
 4. 建议在跑 Stage 3 前，先用 1~2 个样例交换调用 `FlowSearchService` 进行连通性自测（可参考工作流提示文档中的 Python 片段）。
 - 若运维已预先配置 `.secrets/secrets.toml`，Codex 默认直接使用，无需在执行前反复确认。仅当脚本报出缺少凭据或连接失败时，再检查本地配置。
 

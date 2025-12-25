@@ -15,10 +15,24 @@ from .models import SettingsProfile
 DEFAULT_SECRETS_PATH = Path(".secrets/secrets.toml")
 
 
-def _authorization_header(api_key: str | None) -> dict[str, str]:
+def _authorization_header(
+    api_key: str | None,
+    header_name: str | None = None,
+    prefix: str | None = None,
+) -> dict[str, str]:
     if not api_key:
         return {}
-    return {"Authorization": f"Bearer {api_key}"}
+    header = (header_name or "Authorization").strip()
+    if not header:
+        return {}
+    if prefix is None:
+        prefix = "Bearer"
+    prefix = prefix.strip()
+    if prefix:
+        value = f"{prefix} {api_key}".strip()
+    else:
+        value = api_key
+    return {header: value}
 
 
 class Settings(BaseSettings):
@@ -155,12 +169,18 @@ def _extract_section(data: dict[str, Any], *candidates: str) -> dict[str, Any] |
     return None
 
 
-def _sanitize_api_key(value: str | None) -> str | None:
+def _sanitize_api_key(value: str | None, prefix: str | None = None) -> str | None:
     if not value:
         return None
     token = value.strip()
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
+    if prefix is None:
+        prefix_text = "Bearer"
+    elif isinstance(prefix, str):
+        prefix_text = prefix.strip()
+    else:
+        prefix_text = ""
+    if prefix_text and token.lower().startswith(f"{prefix_text.lower()} "):
+        token = token[len(prefix_text) + 1 :].strip()
     return token or None
 
 
@@ -177,6 +197,22 @@ def _coerce_float(value: Any) -> float | None:
             return float(text)
         except ValueError:
             return None
+
+
+def _coerce_header_name(value: Any, default: str) -> str:
+    if isinstance(value, str):
+        name = value.strip()
+        if name:
+            return name
+    return default
+
+
+def _coerce_prefix(value: Any, default: str) -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip()
+    return default
 
 
 def _extract_mcp_connections(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -203,7 +239,13 @@ def _build_mcp_config(section: dict[str, Any], defaults: dict[str, Any]) -> dict
         "transport": transport,
         "url": url,
     }
-    headers = _authorization_header(_sanitize_api_key(section.get("api_key") or section.get("authorization")))
+    header_name = _coerce_header_name(
+        section.get("api_key_header"),
+        _coerce_header_name(defaults.get("mcp_api_key_header"), "Authorization"),
+    )
+    prefix = _coerce_prefix(section.get("api_key_prefix"), _coerce_prefix(defaults.get("mcp_api_key_prefix"), "Bearer"))
+    api_key = _sanitize_api_key(section.get("api_key") or section.get("authorization"), prefix)
+    headers = _authorization_header(api_key, header_name, prefix)
     if headers:
         config["headers"] = headers
     timeout_value = _coerce_float(section.get("timeout"))
