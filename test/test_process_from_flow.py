@@ -23,9 +23,7 @@ class FakeLLM:
                 "assumptions": ["No quantitative inventory; placeholders only."],
                 "scope": "Generic scope",
             }
-        if prompt.startswith("You are selecting/using the route options") or prompt.startswith(
-            "You are decomposing a technical process description"
-        ):
+        if prompt.startswith("You are selecting/using the route options") or prompt.startswith("You are decomposing a technical process description"):
             return {
                 "selected_route_id": "R1",
                 "routes": [

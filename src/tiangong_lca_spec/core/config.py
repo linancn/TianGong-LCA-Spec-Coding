@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     mcp_base_url: HttpUrl = "https://lcamcp.tiangong.earth/mcp"
     mcp_api_key: str | None = None
     mcp_transport: Literal["streamable_http"] = "streamable_http"
+    mcp_connections: dict[str, dict[str, Any]] | None = None
     flow_search_service_name: str = "tiangong_lca_remote"
     flow_search_tool_name: str = "Search_Flows_Tool"
     flow_search_max_parallel: int = 1
@@ -87,8 +88,10 @@ class Settings(BaseSettings):
 
     def mcp_service_configs(self) -> dict[str, dict[str, Any]]:
         """Return a mapping of MCP service names to their configuration blocks."""
+        configs: dict[str, dict[str, Any]] = dict(self.mcp_connections or {})
         flow_service_name = self.flow_search_service_name or "tiangong_lca_remote"
-        return {flow_service_name: self.flow_search_mcp_config()}
+        configs.setdefault(flow_service_name, self.flow_search_mcp_config())
+        return configs
 
 
 @lru_cache(maxsize=1)
@@ -130,6 +133,10 @@ def _load_settings_overrides(secrets_path: Path = DEFAULT_SECRETS_PATH) -> dict[
         if timeout_value is not None:
             overrides["flow_search_timeout"] = timeout_value
 
+    connections = _extract_mcp_connections(data, overrides)
+    if connections:
+        overrides["mcp_connections"] = connections
+
     general_cfg = data.get("lca") or {}
     overrides.update({key: value for key, value in general_cfg.items() if key in Settings.model_fields})
     return {key: value for key, value in overrides.items() if value is not None}
@@ -170,3 +177,46 @@ def _coerce_float(value: Any) -> float | None:
             return float(text)
         except ValueError:
             return None
+
+
+def _extract_mcp_connections(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Collect all MCP service blocks from the secrets file."""
+    connections: dict[str, dict[str, Any]] = {}
+    skip_keys = {"openai", "kb", "minio", "lca"}
+    for section_name, section in data.items():
+        if section_name in skip_keys or not isinstance(section, dict):
+            continue
+        config = _build_mcp_config(section, defaults)
+        if not config:
+            continue
+        service_name = _coerce_service_name(section.get("service_name"), section_name)
+        connections[service_name] = config
+    return connections
+
+
+def _build_mcp_config(section: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any] | None:
+    transport = section.get("transport") or defaults.get("mcp_transport") or "streamable_http"
+    url = section.get("url") or defaults.get("mcp_base_url")
+    if not url:
+        return None
+    config: dict[str, Any] = {
+        "transport": transport,
+        "url": url,
+    }
+    headers = _authorization_header(_sanitize_api_key(section.get("api_key") or section.get("authorization")))
+    if headers:
+        config["headers"] = headers
+    timeout_value = _coerce_float(section.get("timeout"))
+    if timeout_value is None:
+        timeout_value = _coerce_float(defaults.get("request_timeout"))
+    if timeout_value is not None:
+        config["timeout"] = float(timeout_value)
+    return config
+
+
+def _coerce_service_name(candidate: Any, default: str) -> str:
+    if isinstance(candidate, str):
+        name = candidate.strip()
+        if name:
+            return name
+    return default

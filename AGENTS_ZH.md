@@ -34,6 +34,7 @@
 2. 编辑 `.secrets/secrets.toml`：
    - `[openai]`：`api_key`, `model`（默认 `gpt-5` 可覆盖）。
    - `[tiangong_lca_remote]`：`url`, `service_name`, `tool_name`, `api_key`。
+   - 如需连接额外的 MCP 服务，可额外添加配置块（如 `[tiangong_kb_remote]`），包含 `transport`、`service_name`、`url`、`api_key` 以及可选的 `timeout`；所有符合该格式的块都会加载到 `mcp_connections`，`MCPToolClient` 可以同时对接多端点。
    - `[kb]`：`base_url`, `dataset_id`, `api_key` 以及可选 `timeout`/`metadata_fields`（默认包含 `meta` 与 `category` 两个字段）。
    - `[kb.pipeline]`：`datasource_type`, `start_node_id`, `is_published`, `response_mode` 与可选 `inputs`，用于驱动 RAG pipeline。`start_node_id` 需从可视化编排器中复制。
    - `[minio]`：配置解析产物所在的 MinIO 桶，需提供 `endpoint`, `access_key`, `secret_key`, `bucket_name`, `prefix`，可选 `secure`（若 `endpoint` 含协议则按协议判断；未写协议时默认 `https`）与 `session_token`。

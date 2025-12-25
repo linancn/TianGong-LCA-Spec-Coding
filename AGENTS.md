@@ -34,6 +34,7 @@ This guide focuses on general conventions for engineering collaboration, helping
 2. Edit `.secrets/secrets.toml`:
    - `[openai]`: `api_key`, `model` (default `gpt-5`, override as needed).
    - `[tiangong_lca_remote]`: `url`, `service_name`, `tool_name`, `api_key`.
+   - Additional MCP services: add extra tables (e.g., `[tiangong_kb_remote]`) with `transport`, `service_name`, `url`, `api_key`, and optional `timeout`; all such blocks are loaded into `mcp_connections` so `MCPToolClient` can talk to multiple servers concurrently.
    - `[kb]`: `base_url`, `dataset_id`, `api_key`, optional `timeout`, and `metadata_fields` (defaults already set to the `meta` and `category` fields).
    - `[kb.pipeline]`: `datasource_type`, `start_node_id`, `is_published`, `response_mode`, and optional `inputs` for the RAG pipeline runner. The pipeline node ID is available from the dataset’s pipeline designer.
    - `[minio]`: `endpoint`, `access_key`, `secret_key`, `bucket_name`, and `prefix` for the KB bundle bucket; optional `secure` (defaults to the endpoint scheme when present, otherwise `https`) and `session_token` are supported for custom deployments.
