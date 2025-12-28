@@ -73,16 +73,29 @@ from tiangong_lca_spec.process_extraction.tidas_mapping import (
 from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 from tiangong_lca_spec.utils.translate import Translator
 
-from .prompts import EXCHANGES_PROMPT, PROCESS_SPLIT_PROMPT, TECH_DESCRIPTION_PROMPT
+from .prompts import EXCHANGES_PROMPT, PROCESS_SPLIT_PROMPT, REFERENCE_CLUSTER_PROMPT, TECH_DESCRIPTION_PROMPT
 
 LOGGER = get_logger(__name__)
+SCIENTIFIC_REFERENCE_TOP_K = 10
+SCIENTIFIC_REFERENCE_FULLTEXT_TOP_K = 1
+SCIENTIFIC_REFERENCE_FULLTEXT_EXT_K = 200
+REFERENCE_CLUSTER_MAX_CHARS = 1200
+REFERENCE_CLUSTER_MAX_RECORDS = 2
+
+REFERENCE_SEARCH_KEY = "step_1a_reference_search"
+REFERENCE_FULLTEXT_KEY = "step_1b_reference_fulltext"
+REFERENCE_CLUSTERS_KEY = "step_1c_reference_clusters"
 
 
 def _search_scientific_references(
     query: str,
     *,
     mcp_client: MCPToolClient | None = None,
-    top_k: int = 5,
+    top_k: int = SCIENTIFIC_REFERENCE_TOP_K,
+    filters: dict[str, Any] | None = None,
+    ext_k: int | None = None,
+    limit: int | None = None,
+    keep_all: bool = False,
 ) -> list[dict[str, Any]]:
     """Search scientific literature using tiangong_kb_remote search_Sci_Tool.
 
@@ -90,6 +103,10 @@ def _search_scientific_references(
         query: Search query string describing the technical context
         mcp_client: Optional MCP client instance; creates new one if None
         top_k: Maximum number of references to return
+        filters: Optional filter payload passed to the search tool
+        ext_k: Optional extK parameter for retrieving extended content
+        limit: Optional max results to keep (defaults to top_k)
+        keep_all: Whether to keep all returned records without trimming
 
     Returns:
         List of reference dictionaries with keys like 'content', 'metadata', 'score'
@@ -103,13 +120,19 @@ def _search_scientific_references(
         should_close_client = True
 
     try:
+        arguments: dict[str, Any] = {
+            "query": query.strip(),
+            "topK": top_k,
+        }
+        if filters:
+            arguments["filter"] = filters
+        if ext_k is not None:
+            arguments["extK"] = ext_k
+
         result = mcp_client.invoke_json_tool(
             server_name="TianGong_KB_Remote",
             tool_name="Search_Sci_Tool",
-            arguments={
-                "query": query.strip(),
-                "topK": top_k,
-            },
+            arguments=arguments,
         )
 
         if not result:
@@ -130,7 +153,18 @@ def _search_scientific_references(
             query_preview=query[:100],
             count=len(references),
         )
-        return references[:top_k]
+        trimmed = references
+        max_keep = top_k if limit is None else limit
+        if not keep_all and max_keep is not None:
+            trimmed = references[:max_keep]
+        numbered = [
+            {
+                **item,
+                "no": idx,
+            }
+            for idx, item in enumerate(trimmed, start=1)
+        ]
+        return numbered
 
     except Exception as exc:
         LOGGER.warning(
@@ -170,9 +204,10 @@ def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
                 entry_parts.append(f"Source: {meta_str}")
 
         if content:
-            # Truncate very long content
-            content_preview = content[:500] + "..." if len(content) > 500 else content
-            entry_parts.append(f"Content: {content_preview}")
+            content_text = content if isinstance(content, str) else str(content)
+            content_text = content_text.strip()
+            if content_text:
+                entry_parts.append(f"Content: {content_text}")
 
         lines.append(" ".join(entry_parts))
         lines.append("")  # Empty line between references
@@ -180,8 +215,365 @@ def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _first_nonempty(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _compact_text(value: str, *, limit: int = 160) -> str:
+    text = str(value).strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    trimmed = text[:limit].rsplit(" ", 1)[0]
+    return trimmed or text[:limit]
+
+
+def _extract_doi_from_text(value: str) -> str | None:
+    if not value:
+        return None
+    match = _DOI_PATTERN.search(value)
+    if not match:
+        return None
+    doi = match.group(0).strip()
+    doi = doi.rstrip(").,;")
+    return doi or None
+
+
+def _extract_reference_doi(reference: dict[str, Any]) -> str | None:
+    if not isinstance(reference, dict):
+        return None
+    for key in ("doi", "DOI"):
+        value = reference.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("source", "content", "text"):
+        value = reference.get(key)
+        if isinstance(value, str):
+            doi = _extract_doi_from_text(value)
+            if doi:
+                return doi
+    metadata = reference.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("doi", "DOI"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        meta_text = metadata.get("meta")
+        if isinstance(meta_text, str):
+            doi = _extract_doi_from_text(meta_text)
+            if doi:
+                return doi
+    segment = reference.get("segment")
+    if isinstance(segment, dict):
+        doi = _extract_reference_doi(segment)
+        if doi:
+            return doi
+    return None
+
+
+def _group_references_by_doi(
+    references: list[dict[str, Any]],
+) -> tuple[dict[str, list[dict[str, Any]]], list[int]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    missing: list[int] = []
+    for idx, ref in enumerate(references, start=1):
+        if not isinstance(ref, dict):
+            continue
+        doi = _extract_reference_doi(ref)
+        if not doi:
+            ref_no = ref.get("no")
+            missing.append(ref_no if isinstance(ref_no, int) else idx)
+            continue
+        grouped.setdefault(doi, []).append(ref)
+    return grouped, missing
+
+
+def _build_fulltext_query(doi: str, references: list[dict[str, Any]], fallback: str) -> str:
+    chunks: list[str] = []
+    for ref in references:
+        for key in ("content", "text"):
+            value = ref.get(key)
+            if isinstance(value, str) and value.strip():
+                chunks.append(value.strip())
+                break
+    merged = " ".join(chunks)
+    merged = re.sub(r"\s+", " ", merged).strip()
+    query = _compact_text(merged, limit=200)
+    if not query:
+        query = _compact_text(fallback or "", limit=200)
+    if not query:
+        query = f"doi {doi}"
+    return query
+
+
+def _fetch_fulltext_references(
+    references: list[dict[str, Any]],
+    *,
+    mcp_client: MCPToolClient | None = None,
+    fallback_query: str = "",
+    top_k: int = SCIENTIFIC_REFERENCE_FULLTEXT_TOP_K,
+    ext_k: int = SCIENTIFIC_REFERENCE_FULLTEXT_EXT_K,
+) -> tuple[list[dict[str, Any]], list[int]]:
+    doi_groups, missing = _group_references_by_doi(references)
+    entries: list[dict[str, Any]] = []
+    for doi, refs in doi_groups.items():
+        query = _build_fulltext_query(doi, refs, fallback_query)
+        records = _search_scientific_references(
+            query,
+            mcp_client=mcp_client,
+            top_k=top_k,
+            ext_k=ext_k,
+            filters={"doi": [doi]},
+            keep_all=True,
+        )
+        source_refs = [ref.get("no") for ref in refs if isinstance(ref.get("no"), int)]
+        entries.append(
+            {
+                "doi": doi,
+                "query": query,
+                "source_refs": source_refs,
+                "records": records,
+            }
+        )
+    return entries, missing
+
+
+def _extract_record_text(record: dict[str, Any]) -> str:
+    for key in ("content", "text"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    segment = record.get("segment")
+    if isinstance(segment, dict):
+        for key in ("content", "text"):
+            value = segment.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _collect_article_text(
+    records: list[dict[str, Any]],
+    *,
+    max_chars: int = REFERENCE_CLUSTER_MAX_CHARS,
+    max_records: int = REFERENCE_CLUSTER_MAX_RECORDS,
+) -> str:
+    chunks: list[str] = []
+    for record in records:
+        if max_records and len(chunks) >= max_records:
+            break
+        if not isinstance(record, dict):
+            continue
+        text = _extract_record_text(record)
+        if text:
+            chunks.append(text)
+    combined = "\n\n".join(chunks).strip()
+    if max_chars and len(combined) > max_chars:
+        combined = combined[:max_chars]
+    return combined
+
+
+def _reference_usability_map(state: ProcessFromFlowState) -> dict[str, dict[str, Any]]:
+    usability = state.get("scientific_references", {}).get("usability")
+    if not isinstance(usability, dict):
+        return {}
+    results = usability.get("results")
+    if not isinstance(results, list):
+        return {}
+    mapping: dict[str, dict[str, Any]] = {}
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        doi = str(item.get("doi") or "").strip()
+        if not doi:
+            continue
+        mapping[doi] = item
+    return mapping
+
+
+def _reference_clusters(scientific_references: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(scientific_references, dict):
+        return None
+    value = scientific_references.get(REFERENCE_CLUSTERS_KEY)
+    return value if isinstance(value, dict) else None
+
+
+def _build_reference_cluster_summaries(
+    fulltext_entries: list[dict[str, Any]],
+    *,
+    usability_map: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    usability_map = usability_map or {}
+    for entry in fulltext_entries:
+        if not isinstance(entry, dict):
+            continue
+        doi = str(entry.get("doi") or "").strip()
+        records = entry.get("records") or []
+        records_list = [item for item in records if isinstance(item, dict)]
+        snippet = _collect_article_text(records_list)
+        usability = usability_map.get(doi) if doi else None
+        summaries.append(
+            {
+                "doi": doi,
+                "supported_steps": usability.get("supported_steps") if isinstance(usability, dict) else [],
+                "decision": usability.get("decision") if isinstance(usability, dict) else None,
+                "reason": usability.get("reason") if isinstance(usability, dict) else None,
+                "evidence": usability.get("evidence") if isinstance(usability, dict) else None,
+                "snippet": snippet,
+            }
+        )
+    return summaries
+
+
+def _normalize_steps(value: Any) -> list[str]:
+    if not value:
+        return []
+    raw = value if isinstance(value, list) else [value]
+    cleaned: list[str] = []
+    for item in raw:
+        text = str(item).strip().lower().replace(" ", "").replace("-", "")
+        if text in {"step1", "s1", "1"}:
+            cleaned.append("step1")
+        elif text in {"step2", "s2", "2"}:
+            cleaned.append("step2")
+        elif text in {"step3", "s3", "3"}:
+            cleaned.append("step3")
+    return sorted(set(cleaned))
+
+
+def _cluster_scientific_references(
+    *,
+    llm: LanguageModelProtocol,
+    state: ProcessFromFlowState,
+    fulltext_entries: list[dict[str, Any]],
+    flow_summary: dict[str, Any],
+    operation: str,
+) -> dict[str, Any] | None:
+    summaries = _build_reference_cluster_summaries(
+        fulltext_entries,
+        usability_map=_reference_usability_map(state),
+    )
+    summaries = [item for item in summaries if item.get("doi")]
+    if not summaries:
+        return None
+
+    payload = {
+        "prompt": REFERENCE_CLUSTER_PROMPT,
+        "context": {
+            "operation": operation,
+            "flow": flow_summary,
+            "reference_summaries": summaries,
+        },
+        "response_format": {"type": "json_object"},
+    }
+    raw = llm.invoke(payload)
+    data = _ensure_dict(raw)
+
+    clusters_raw = data.get("clusters")
+    clusters: list[dict[str, Any]] = []
+    if isinstance(clusters_raw, list):
+        for idx, cluster in enumerate(clusters_raw, start=1):
+            if not isinstance(cluster, dict):
+                continue
+            cluster_id = str(cluster.get("cluster_id") or f"C{idx}").strip()
+            dois = [str(item).strip() for item in (cluster.get("dois") or []) if str(item).strip()]
+            if not dois:
+                continue
+            clusters.append(
+                {
+                    "cluster_id": cluster_id,
+                    "dois": dois,
+                    "system_boundary": str(cluster.get("system_boundary") or "unspecified").strip(),
+                    "granularity": str(cluster.get("granularity") or "unknown").strip(),
+                    "key_process_chain": [str(item).strip() for item in (cluster.get("key_process_chain") or []) if str(item).strip()],
+                    "key_intermediate_flows": [
+                        str(item).strip() for item in (cluster.get("key_intermediate_flows") or []) if str(item).strip()
+                    ],
+                    "supported_steps": _normalize_steps(cluster.get("supported_steps")),
+                    "recommendation": str(cluster.get("recommendation") or "supplement").strip(),
+                    "reason": str(cluster.get("reason") or "").strip(),
+                }
+            )
+
+    if not clusters:
+        all_dois = [item.get("doi") for item in summaries if item.get("doi")]
+        clusters = [
+            {
+                "cluster_id": "C1",
+                "dois": all_dois,
+                "system_boundary": "unspecified",
+                "granularity": "unknown",
+                "key_process_chain": [],
+                "key_intermediate_flows": [],
+                "supported_steps": [],
+                "recommendation": "primary",
+                "reason": "Fallback: unable to cluster references reliably.",
+            }
+        ]
+
+    primary_cluster_id = str(data.get("primary_cluster_id") or clusters[0]["cluster_id"]).strip()
+    selection_guidance = str(data.get("selection_guidance") or "").strip()
+
+    return {
+        "source_step": REFERENCE_FULLTEXT_KEY,
+        "input_dois": [item.get("doi") for item in summaries if item.get("doi")],
+        "clusters": clusters,
+        "primary_cluster_id": primary_cluster_id,
+        "selection_guidance": selection_guidance,
+    }
+
+def _classification_terms(classification: list[dict[str, Any]] | None, *, max_items: int = 3) -> str:
+    if not classification:
+        return ""
+    texts = [str(item.get("#text") or "").strip() for item in classification if isinstance(item, dict)]
+    texts = [item for item in texts if item]
+    if not texts:
+        return ""
+    if len(texts) > max_items:
+        texts = texts[-max_items:]
+    return " ".join(texts)
+
+
+def _flow_reference_context(flow_summary: dict[str, Any], *, include_comment: bool = True) -> str:
+    treatment = _first_nonempty(flow_summary.get("treatment_en"), flow_summary.get("treatment_zh"))
+    mix = _first_nonempty(flow_summary.get("mix_en"), flow_summary.get("mix_zh"))
+    general = ""
+    if include_comment:
+        general = _first_nonempty(flow_summary.get("general_comment_en"), flow_summary.get("general_comment_zh"))
+    classification = _classification_terms(flow_summary.get("classification"))
+    parts = [treatment, mix, general, classification]
+    cleaned = [_compact_text(item, limit=160) for item in parts if item]
+    return " ".join(cleaned)
+
+
+def _update_scientific_references(
+    state: ProcessFromFlowState,
+    *,
+    step: str,
+    query: str,
+    references: list[dict[str, Any]],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    existing = state.get("scientific_references")
+    updated: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    payload: dict[str, Any] = {
+        "query": query,
+        "references": references,
+    }
+    if extra:
+        payload.update(extra)
+    updated[step] = payload
+    return updated
+
+
 FlowSearchFn = Callable[[FlowQuery], tuple[list[FlowCandidate], list[object]]]
 
+_DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\])>,;\"']+", re.IGNORECASE)
 _FLOW_LABEL_PATTERN = re.compile(r"^f\\d+\\s*[:\\-]\\s*", re.IGNORECASE)
 _FLOW_NAME_FIELDS = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
 _FLOW_QUALIFIER_FIELDS = ("flowProperties",)
@@ -223,6 +615,7 @@ class ProcessFromFlowState(TypedDict, total=False):
     matched_process_exchanges: list[dict[str, Any]]
     process_datasets: list[dict[str, Any]]
     step_markers: dict[str, bool]
+    scientific_references: dict[str, Any]
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:
@@ -925,17 +1318,62 @@ def _build_langgraph(
         # Search for scientific references before invoking LLM
         flow_summary = state.get("flow_summary") or {}
         flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
-        operation = state.get("operation") or "produce"
+        operation = str(state.get("operation") or "produce").strip()
 
         # Build search query for scientific literature
         search_query = f"{operation} {flow_name} technology process route LCA life cycle assessment"
-        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=5)
+        flow_context = _flow_reference_context(flow_summary, include_comment=True)
+        if flow_context:
+            search_query = f"{search_query} {flow_context}"
+        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
         references_text = _format_references_for_prompt(references)
+        scientific_references = _update_scientific_references(
+            state,
+            step=REFERENCE_SEARCH_KEY,
+            query=search_query,
+            references=references,
+        )
+        fulltext_entries: list[dict[str, Any]] = []
+        if references:
+            fulltext_entries, missing_doi = _fetch_fulltext_references(
+                references,
+                mcp_client=use_mcp_client,
+                fallback_query=search_query,
+            )
+            scientific_references = _update_scientific_references(
+                {"scientific_references": scientific_references},
+                step=REFERENCE_FULLTEXT_KEY,
+                query=search_query,
+                references=fulltext_entries,
+                extra={"missing_doi": missing_doi} if missing_doi else None,
+            )
+        if llm is not None and fulltext_entries:
+            if not _reference_clusters(scientific_references):
+                cluster_result = _cluster_scientific_references(
+                    llm=llm,
+                    state={"scientific_references": scientific_references},
+                    fulltext_entries=fulltext_entries,
+                    flow_summary=flow_summary,
+                    operation=operation,
+                )
+                if cluster_result:
+                    scientific_references = dict(scientific_references)
+                    scientific_references[REFERENCE_CLUSTERS_KEY] = cluster_result
+        stop_after = str(state.get("stop_after") or "").strip().lower()
+        if stop_after in {"references", "reference", "refs", "papers", "sci"}:
+            return {
+                "scientific_references": scientific_references,
+                "step_markers": _update_step_markers(state, "step1"),
+            }
 
         # Build prompt with references
         enhanced_prompt = TECH_DESCRIPTION_PROMPT
         if references_text:
-            enhanced_prompt = f"{TECH_DESCRIPTION_PROMPT}\n\n" f"Use the following scientific references to inform your analysis:\n" f"{references_text}\n"
+            enhanced_prompt = (
+                f"{TECH_DESCRIPTION_PROMPT}\n\n"
+                f"Use the following scientific references as primary evidence for technology routes:\n"
+                f"{references_text}\n"
+            )
 
         payload = {
             "prompt": enhanced_prompt,
@@ -980,6 +1418,7 @@ def _build_langgraph(
                 "assumptions": primary.get("assumptions") or [],
                 "scope": primary.get("scope") or "",
                 "technology_routes": cleaned_routes,
+                "scientific_references": scientific_references,
                 "step_markers": _update_step_markers(state, "step1"),
             }
         technical_description = str(data.get("technical_description") or "").strip()
@@ -1000,6 +1439,7 @@ def _build_langgraph(
             "assumptions": assumptions,
             "scope": scope,
             "technology_routes": [fallback_route],
+            "scientific_references": scientific_references,
             "step_markers": _update_step_markers(state, "step1"),
         }
 
@@ -1069,13 +1509,24 @@ def _build_langgraph(
             tech_preview = tech_desc[:100].strip()
             search_query = f"{search_query} {tech_preview}"
 
-        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=5)
+        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
         references_text = _format_references_for_prompt(references)
+        scientific_references = _update_scientific_references(
+            state,
+            step="step2",
+            query=search_query,
+            references=references,
+        )
+        reference_clusters = _reference_clusters(scientific_references)
 
         # Build enhanced prompt with references
         enhanced_prompt = PROCESS_SPLIT_PROMPT
         if references_text:
-            enhanced_prompt = f"{PROCESS_SPLIT_PROMPT}\n\n" f"Use the following scientific references to inform your process decomposition:\n" f"{references_text}\n"
+            enhanced_prompt = (
+                f"{PROCESS_SPLIT_PROMPT}\n\n"
+                f"Use the following scientific references to identify and split unit processes:\n"
+                f"{references_text}\n"
+            )
 
         payload = {
             "prompt": enhanced_prompt,
@@ -1084,6 +1535,7 @@ def _build_langgraph(
                 "technical_description": tech_desc,
                 "routes": state.get("technology_routes") or [],
                 "operation": operation,
+                "step_1c_reference_clusters": reference_clusters or {},
             },
             "response_format": {"type": "json_object"},
         }
@@ -1159,6 +1611,7 @@ def _build_langgraph(
                 "process_routes": cleaned_routes,
                 "selected_route_id": selected_route_id,
                 "processes": processes,
+                "scientific_references": scientific_references,
                 "step_markers": _update_step_markers(state, "step2"),
             }
             if selected_summary and not state.get("technical_description"):
@@ -1189,7 +1642,11 @@ def _build_langgraph(
             cleaned[0]["is_reference_flow_process"] = True
             for proc in cleaned[1:]:
                 proc["is_reference_flow_process"] = False
-        return {"processes": cleaned, "step_markers": _update_step_markers(state, "step2")}
+        return {
+            "processes": cleaned,
+            "scientific_references": scientific_references,
+            "step_markers": _update_step_markers(state, "step2"),
+        }
 
     def generate_exchanges(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if state.get("process_exchanges"):
@@ -1220,23 +1677,39 @@ def _build_langgraph(
         flow_summary = state.get("flow_summary") or {}
         flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
         tech_desc = state.get("technical_description") or ""
-        operation = state.get("operation") or "produce"
+        operation = str(state.get("operation") or "produce").strip()
         processes = state.get("processes") or []
 
         # Build search query focusing on inventory exchanges, inputs, outputs
         search_query = f"{flow_name} {operation} inventory exchanges inputs outputs emissions resources LCA"
+        if tech_desc:
+            search_query = f"{search_query} {_compact_text(tech_desc, limit=200)}"
+        flow_context = _flow_reference_context(flow_summary, include_comment=False)
+        if flow_context:
+            search_query = f"{search_query} {flow_context}"
         if processes and isinstance(processes, list):
             # Add process names to search context
             process_names = " ".join([str(p.get("name") or "")[:50] for p in processes[:3] if isinstance(p, dict)])
             search_query = f"{search_query} {process_names}"
 
-        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=5)
+        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
         references_text = _format_references_for_prompt(references)
+        scientific_references = _update_scientific_references(
+            state,
+            step="step3",
+            query=search_query,
+            references=references,
+        )
+        reference_clusters = _reference_clusters(scientific_references)
 
         # Build enhanced prompt with references
         enhanced_prompt = EXCHANGES_PROMPT
         if references_text:
-            enhanced_prompt = f"{EXCHANGES_PROMPT}\n\n" f"Use the following scientific references to identify accurate inventory exchanges:\n" f"{references_text}\n"
+            enhanced_prompt = (
+                f"{EXCHANGES_PROMPT}\n\n"
+                f"Use the following scientific references to confirm exchange flow names and amounts:\n"
+                f"{references_text}\n"
+            )
 
         payload = {
             "prompt": enhanced_prompt,
@@ -1245,6 +1718,7 @@ def _build_langgraph(
                 "technical_description": tech_desc,
                 "processes": processes,
                 "operation": operation,
+                "step_1c_reference_clusters": reference_clusters or {},
             },
             "response_format": {"type": "json_object"},
         }
@@ -1339,6 +1813,7 @@ def _build_langgraph(
             cleaned_processes.append({"process_id": process_id, "exchanges": cleaned_exchanges})
         return {
             "process_exchanges": cleaned_processes,
+            "scientific_references": scientific_references,
             "step_markers": _update_step_markers(state, "step3"),
         }
 
@@ -1714,7 +2189,9 @@ def _build_langgraph(
     graph.add_edge("load_flow", "describe_technology")
     graph.add_conditional_edges(
         "describe_technology",
-        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "tech") else "split_processes",
+        lambda state: END
+        if str(state.get("stop_after") or "").strip().lower() in {"tech", "references", "reference", "refs", "papers", "sci"}
+        else "split_processes",
     )
     graph.add_conditional_edges(
         "split_processes",

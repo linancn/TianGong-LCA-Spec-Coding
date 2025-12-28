@@ -6,7 +6,7 @@
 - 目标：从参考 flow 数据集（ILCD JSON）推导对应的 process 数据集（ILCD 格式），exchange 里的 flow uuid/shortDescription 必须来自 `search_flows` 结果，未命中时才用占位符。
 - 核心入口：`ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`。
 - 依赖：LLM 为必选，用于技术路径识别、单元过程拆分、交换生成与候选选择；同时依赖 flow 搜索函数 `search_flows`（可注入自定义）与候选选择器（建议 LLM 版本）。
-- `stop_after` 支持 `"tech"|"processes"|"exchanges"|"matches"`，用于调试时提前终止。
+- `stop_after` 支持 `"references"|"tech"|"processes"|"exchanges"|"matches"`，用于调试时提前终止。
 
 ## 状态字段
 工作流以状态字典传递数据，关键字段：
@@ -44,24 +44,28 @@
 
 ## 产出与调试
 - 正常运行返回完整状态，其中 `process_datasets` 为生成结果（可直接写出或继续处理）。
-- CLI 默认会写入清晰 I/O 目录：`io/process_from_flow/<run_id>/input|output`（并保存 `input_manifest.json` 与 `process_from_flow_state.json`）。
+- CLI 仅写入 `artifacts/process_from_flow/<run_id>/`，包含 `input/`、`cache/` 与 `exports/`，其中状态文件保存在 `cache/process_from_flow_state.json`。
 - 调试时可配合 `stop_after` 查看中间态，例如设置为 `"matches"` 只跑到流匹配阶段。
 
 ## 科学文献集成（Scientific References Integration）
 
-从 2025-12-26 版本开始，工作流集成了 `tiangong_kb_remote` 的 `Search_Sci_Tool`，在 Step 1-3 之前自动检索相关科学文献，让 LLM 基于真实的科学参考资料而非仅凭 common sense 做出决策。
+从 2025-12-26 版本开始，工作流集成了 `tiangong_kb_remote` 的 `Search_Sci_Tool`，在 Step 1a/1b/1c 阶段自动检索相关科学文献，让 LLM 基于真实的科学参考资料而非仅凭 common sense 做出决策。
 
 ### 功能特点
 
 **自动检索时机：**
-- **Step 1 (describe_technology)**：检索技术工艺路径相关文献
-- **Step 2 (split_processes)**：检索单元过程分解与清单文献
-- **Step 3 (generate_exchanges)**：检索库存数据和排放因子文献
+- **Step 1a (reference search)**：检索技术工艺路径相关文献（topK=10），写入 `scientific_references.step_1a_reference_search`
+- **Step 1b (fulltext fetch)**：基于 Step 1a 返回的 `source` 里的 DOI 合并去重，使用 DOI 过滤检索全文并写入 `scientific_references.step_1b_reference_fulltext`
+- **Step 1c (reference clustering)**：基于 Step 1b 的全文与可用性筛选结果，按系统边界/主流程/中间流一致性聚类 DOI，输出主干候选与可补充集合（写入 `scientific_references.step_1c_reference_clusters`）
+- **Step 2 (split_processes)**：检索单元过程分解与清单文献，用于识别/拆分单元过程
+- **Step 3 (generate_exchanges)**：检索库存数据和排放因子文献，用于确认 exchange 的 flow 名称与数值
 
 **查询构建策略：**
 - 基于 flow 名称、操作类型（produce/treat）和技术描述构建搜索查询
-- 每次检索默认返回 top 5 篇最相关文献
-- 文献内容截断到 500 字符以控制 prompt 大小
+- 每次检索默认返回 top 10 篇最相关文献
+- Step 1b 通过 `filter: {"doi": [...]}` + `topK=1` + `extK` 拉取全文（默认 `extK=200`）
+- `query` 不能为空，可使用合并后的 content 或简短 summary；无可用内容时可退回到基础查询或 `doi <id>`
+- Step 1c 使用 LLM 输出 `clusters` + `primary_cluster_id` + `selection_guidance`，用于 Step 2/Step 3 的证据选择与融合
 
 **资源管理：**
 - MCP 客户端在 LLM 可用时自动创建
@@ -93,7 +97,8 @@ timeout = 180
 ### 性能影响
 
 - 每次文献检索约 1-2 秒
-- 完整工作流增加约 3-6 秒
+- Step 1b 的 DOI 全文拉取耗时与 DOI 数量和 extK 相关
+- 完整工作流增加约 3-6 秒（不含额外全文抓取时长）
 - 不影响工作流可靠性
 
 ### 测试
@@ -103,6 +108,13 @@ timeout = 180
 ```bash
 uv run python test/test_scientific_references.py
 ```
+
+### 文献可用性筛选（Reference Usability Screening）
+
+- 可选步骤：针对 Step 1b 的 DOI 全文结果，判断是否足以支撑 Step 1c 的技术路径/过程拆分/交换清单需求。
+- Prompt 模板：`src/tiangong_lca_spec/process_from_flow/prompts.py` 中的 `REFERENCE_USABILITY_PROMPT`。
+- 脚本：`uv run python scripts/origin/process_from_flow_reference_usability.py --run-id <run_id>`。
+- 输出位置：`process_from_flow_state.json` 的 `scientific_references.usability`。
 
 ## 使用建议
 - 确保 LLM 配置正确；未配置 LLM 时不应运行该流程。

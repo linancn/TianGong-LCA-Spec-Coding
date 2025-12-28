@@ -14,8 +14,7 @@ Typical usage (demo flow):
     --flow artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json
 
 Outputs (by default):
-  - artifacts/<run_id>/exports/processes
-  - io/process_from_flow/<run_id>/output/processes
+  - artifacts/process_from_flow/<run_id>/exports/processes
 
 Manual cleanup (keep latest 3 runs):
   uv run python scripts/origin/process_from_flow_langgraph.py --cleanup-only --retain-runs 3
@@ -25,7 +24,7 @@ Publish latest run (commit to DB):
 
 Checkpoint flow (edit cache JSON, then resume):
   uv run python scripts/origin/process_from_flow_langgraph.py --stop-after exchanges
-  # edit artifacts/<run_id>/cache/process_from_flow_state.json
+  # edit artifacts/process_from_flow/<run_id>/cache/process_from_flow_state.json
   uv run python scripts/origin/process_from_flow_langgraph.py --resume
 """
 
@@ -50,8 +49,6 @@ try:
     from scripts.md._workflow_common import (  # type: ignore
         OpenAIResponsesLLM,
         dump_json,
-        ensure_run_cache_dir,
-        ensure_run_exports_dir,
         generate_run_id,
         load_secrets,
     )
@@ -59,16 +56,13 @@ except ModuleNotFoundError:  # pragma: no cover
     from _workflow_common import (  # type: ignore
         OpenAIResponsesLLM,
         dump_json,
-        ensure_run_cache_dir,
-        ensure_run_exports_dir,
         generate_run_id,
         load_secrets,
     )
 
 DEFAULT_FLOW_PATH = Path("artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json")
-LATEST_RUN_ID_PATH = Path("artifacts/.latest_process_from_flow_run_id")
-DEFAULT_IO_ROOT = Path("io/process_from_flow")
-LATEST_IO_RUN_ID_PATH = DEFAULT_IO_ROOT / ".latest_run_id"
+PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
+LATEST_RUN_ID_PATH = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / ".latest_run_id"
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,27 +71,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--operation", choices=("produce", "treat"), default="produce", help="Whether the process produces or treats/disposes the reference flow.")
     parser.add_argument(
         "--run-id",
-        help="Run identifier for artifacts/<run_id> output. Defaults to a new id when not resuming.",
+        help="Run identifier under artifacts/process_from_flow/<run_id>. Defaults to a new id when not resuming.",
     )
-    parser.add_argument("--resume", action="store_true", help="Resume from artifacts/<run_id>/cache/process_from_flow_state.json.")
+    parser.add_argument("--resume", action="store_true", help="Resume from artifacts/process_from_flow/<run_id>/cache/process_from_flow_state.json.")
     parser.add_argument(
         "--stop-after",
-        choices=("tech", "processes", "exchanges", "matches", "datasets"),
+        choices=("references", "tech", "processes", "exchanges", "matches", "datasets"),
         help="Stop after a stage, writing state to cache for manual editing.",
     )
     parser.add_argument("--secrets", type=Path, default=Path(".secrets/secrets.toml"), help="Secrets file containing OpenAI credentials.")
     parser.add_argument("--no-llm", action="store_true", help="Run without an LLM (uses minimal deterministic fallbacks).")
     parser.add_argument("--no-translate-zh", action="store_true", help="Skip adding Chinese translations to multi-language fields.")
     parser.add_argument(
-        "--io-root",
-        type=Path,
-        default=DEFAULT_IO_ROOT,
-        help="Base directory for clean input/output copies (will create <io-root>/<run-id>/input|output).",
-    )
-    parser.add_argument(
         "--retain-runs",
         type=int,
-        help=("Manually clean process_from_flow run directories, keeping only the most recent N runs " "under artifacts/ and io/process_from_flow/."),
+        help="Manually clean process_from_flow run directories, keeping only the most recent N runs under artifacts/process_from_flow/.",
     )
     parser.add_argument(
         "--cleanup-only",
@@ -149,14 +137,34 @@ def _extract_process_version(process_payload: dict[str, Any]) -> str:
     return "01.01.000"
 
 
-def _ensure_io_dirs(io_root: Path, run_id: str) -> tuple[Path, Path, Path]:
-    run_root = io_root / run_id
+def _ensure_run_root(run_id: str) -> Path:
+    run_root = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id
+    run_root.mkdir(parents=True, exist_ok=True)
+    return run_root
+
+
+def ensure_run_cache_dir(run_id: str) -> Path:
+    run_root = _ensure_run_root(run_id)
+    cache_dir = run_root / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def ensure_run_exports_dir(run_id: str, *, clean: bool = False) -> Path:
+    run_root = _ensure_run_root(run_id)
+    export_root = run_root / "exports"
+    if clean and export_root.exists():
+        shutil.rmtree(export_root)
+    for name in ("processes", "flows", "sources"):
+        (export_root / name).mkdir(parents=True, exist_ok=True)
+    return export_root
+
+
+def _ensure_run_input_dir(run_id: str) -> Path:
+    run_root = _ensure_run_root(run_id)
     input_dir = run_root / "input"
-    output_dir = run_root / "output"
-    process_dir = output_dir / "processes"
     input_dir.mkdir(parents=True, exist_ok=True)
-    process_dir.mkdir(parents=True, exist_ok=True)
-    return input_dir, output_dir, process_dir
+    return input_dir
 
 
 def _find_runs(base_dir: Path, marker: Path) -> list[Path]:
@@ -178,19 +186,16 @@ def _parse_run_id(run_id: str) -> datetime | None:
         return None
 
 
-def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = None) -> None:
+def _cleanup_runs(*, retain: int, current_run_id: str | None = None) -> None:
     if retain <= 0:
         raise SystemExit("--retain-runs must be >= 1")
 
-    artifacts_root = Path("artifacts")
+    artifacts_root = PROCESS_FROM_FLOW_ARTIFACTS_ROOT
     artifacts_marker = Path("cache/process_from_flow_state.json")
-    io_marker = Path("output/process_from_flow_state.json")
 
     artifacts_runs = _find_runs(artifacts_root, artifacts_marker)
-    io_runs = _find_runs(io_root, io_marker)
     artifacts_index = {path.name: path for path in artifacts_runs}
-    io_index = {path.name: path for path in io_runs}
-    all_run_ids = set(artifacts_index) | set(io_index)
+    all_run_ids = set(artifacts_index)
     if not all_run_ids:
         print("No process_from_flow runs found for cleanup.", file=sys.stderr)
         return
@@ -199,7 +204,7 @@ def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = No
         parsed = _parse_run_id(run_id)
         if parsed is not None:
             return (0, parsed)
-        entry = io_index.get(run_id) or artifacts_index.get(run_id)
+        entry = artifacts_index.get(run_id)
         if entry is None:
             return (2, datetime.min.replace(tzinfo=timezone.utc))
         try:
@@ -227,12 +232,8 @@ def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = No
     for run_id in sorted_run_ids:
         if run_id in keep:
             continue
-        if run_id in artifacts_index:
-            if _safe_remove(artifacts_root, run_id):
-                removed += 1
-        if run_id in io_index:
-            if _safe_remove(io_root, run_id):
-                removed += 1
+        if run_id in artifacts_index and _safe_remove(artifacts_root, run_id):
+            removed += 1
 
     print(
         f"Cleanup complete: kept {len(keep)} run(s), removed {removed} directory(s).",
@@ -240,22 +241,18 @@ def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = No
     )
 
 
-def _resolve_io_run_id(run_id: str | None) -> str:
+def _resolve_run_id(run_id: str | None) -> str:
     if run_id:
         return run_id
-    if LATEST_IO_RUN_ID_PATH.exists():
-        latest = LATEST_IO_RUN_ID_PATH.read_text(encoding="utf-8").strip()
-        if latest:
-            return latest
     if LATEST_RUN_ID_PATH.exists():
         latest = LATEST_RUN_ID_PATH.read_text(encoding="utf-8").strip()
         if latest:
             return latest
-    raise SystemExit("Missing --run-id and no latest run marker found in io/process_from_flow or artifacts.")
+    raise SystemExit("Missing --run-id and no latest run marker found in artifacts/process_from_flow.")
 
 
-def _load_process_datasets(io_root: Path, run_id: str) -> list[dict[str, Any]]:
-    process_dir = io_root / run_id / "output" / "processes"
+def _load_process_datasets(run_id: str) -> list[dict[str, Any]]:
+    process_dir = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "exports" / "processes"
     if not process_dir.exists():
         raise SystemExit(f"Process output directory not found: {process_dir}")
     datasets: list[dict[str, Any]] = []
@@ -293,11 +290,11 @@ def main() -> None:
     if args.cleanup_only:
         if args.retain_runs is None:
             raise SystemExit("--cleanup-only requires --retain-runs")
-        _cleanup_runs(io_root=args.io_root, retain=args.retain_runs)
+        _cleanup_runs(retain=args.retain_runs)
         return
     if args.publish_only:
-        run_id = _resolve_io_run_id(args.run_id)
-        datasets = _load_process_datasets(args.io_root, run_id)
+        run_id = _resolve_run_id(args.run_id)
+        datasets = _load_process_datasets(run_id)
         _publish_processes(datasets, commit=args.commit)
         return
 
@@ -314,7 +311,7 @@ def main() -> None:
     cache_dir = ensure_run_cache_dir(run_id)
     exports_dir = ensure_run_exports_dir(run_id)
     state_path = cache_dir / "process_from_flow_state.json"
-    input_dir, output_dir, io_process_dir = _ensure_io_dirs(args.io_root, run_id)
+    input_dir = _ensure_run_input_dir(run_id)
     try:
         shutil.copy2(args.flow, input_dir / args.flow.name)
     except FileNotFoundError:
@@ -355,7 +352,6 @@ def main() -> None:
     )
 
     dump_json(result_state, state_path)
-    dump_json(result_state, output_dir / "process_from_flow_state.json")
 
     if args.stop_after and args.stop_after != "datasets":
         print(f"Stopped after stage '{args.stop_after}'. Edit state and resume with: --resume --run-id {run_id}", file=sys.stderr)
@@ -369,7 +365,6 @@ def main() -> None:
         return
 
     written: list[Path] = []
-    io_written: list[Path] = []
     for payload in datasets:
         if not isinstance(payload, dict):
             continue
@@ -379,19 +374,13 @@ def main() -> None:
         target = exports_dir / "processes" / filename
         dump_json(payload, target)
         written.append(target)
-        io_target = io_process_dir / filename
-        dump_json(payload, io_target)
-        io_written.append(io_target)
 
     LATEST_RUN_ID_PATH.write_text(run_id, encoding="utf-8")
-    LATEST_IO_RUN_ID_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LATEST_IO_RUN_ID_PATH.write_text(run_id, encoding="utf-8")
     print(f"Wrote {len(written)} process dataset(s) to {exports_dir / 'processes'}", file=sys.stderr)
-    print(f"Wrote {len(io_written)} process dataset(s) to {io_process_dir}", file=sys.stderr)
     if args.publish:
         _publish_processes(datasets, commit=args.commit)
     if args.retain_runs:
-        _cleanup_runs(io_root=args.io_root, retain=args.retain_runs, current_run_id=run_id)
+        _cleanup_runs(retain=args.retain_runs, current_run_id=run_id)
 
 
 if __name__ == "__main__":  # pragma: no cover

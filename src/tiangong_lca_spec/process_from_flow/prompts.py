@@ -7,6 +7,7 @@ TECH_DESCRIPTION_PROMPT = (
     "\n"
     "Rules:\n"
     "- Base your answer strictly on the provided flow context (name, classification, general comment, treatment/mix fields).\n"
+    "- If scientific references are provided, use them as primary evidence for the route descriptions and assumptions.\n"
     "- Do NOT invent numeric quantities.\n"
     "- Output 1..4 routes; if multiple routes are plausible (e.g., different production technologies), include them as separate routes.\n"
     "- Keep each route concise but specific enough to derive unit processes and exchanges later.\n"
@@ -33,6 +34,7 @@ PROCESS_SPLIT_PROMPT = (
     "Input context includes the reference flow summary, the route options from Step 1, and any technical description.\n"
     "\n"
     "Rules:\n"
+    "- If scientific references are provided, use them to identify and split unit processes; avoid adding steps without evidence and capture gaps in assumptions.\n"
     "- Output 1..4 routes, each with 1..6 processes.\n"
     "- For each route, processes must be ordered from upstream to downstream (P1 -> P2 -> ...).\n"
     "- If multiple processes in a route, the reference flow of process i must be an input exchange for process i+1; "
@@ -47,6 +49,9 @@ PROCESS_SPLIT_PROMPT = (
     "- quantitative_reference must be a numeric expression like '1 kg of <reference_flow_name>' or '1 unit of <reference_flow_name>'. If unit is unknown, use 'unit'.\n"
     "- Ensure chain consistency: the reference_flow_name of process i must appear verbatim in process i+1 inputs and exchange_keywords.inputs.\n"
     "- Provide inputs/outputs as clean flow names (no f1/f2 labels); labels are added in post-processing.\n"
+    "- If step_1c_reference_clusters are provided in the context, prioritize the primary cluster and only use supplementary clusters "
+    "when they do not change the main process chain or system boundary.\n"
+    "- Do NOT mix clusters with incompatible system boundaries or granularity.\n"
     "\n"
     "Return strict JSON:\n"
     "{\n"
@@ -93,6 +98,10 @@ EXCHANGES_PROMPT = (
     "Rules:\n"
     "- Provide plausible exchange names that can be searched in a flow catalogue (prefer English names).\n"
     "- If process provides structured fields (structure/inputs/outputs) or exchange_keywords, use them as primary candidates.\n"
+    "- Use scientific references (if provided) to confirm each exchange flow name and amount; only use numeric amounts explicitly supported by references.\n"
+    "- If step_1c_reference_clusters are provided in the context, only use exchange evidence from the primary cluster; "
+    "use supplementary clusters only when consistent with the main chain and boundary.\n"
+    "- If an exchange amount is not supported by references, use '1' and note the assumption in generalComment.\n"
     "- Preserve chain naming: when process i outputs intermediate flow name X, process i+1 must include X as an input with the exact same string.\n"
     "- Inputs/outputs may be labeled like 'f1: <name>'; strip the label and use only the flow name for exchangeName.\n"
     "- Do NOT use composite exchange names (e.g., 'energy and machinery', 'air emissions', 'auxiliary materials'). Split into specific flows.\n"
@@ -130,5 +139,55 @@ EXCHANGES_PROMPT = (
     "      ]\n"
     "    }\n"
     "  ]\n"
+    "}\n"
+)
+
+REFERENCE_CLUSTER_PROMPT = (
+    "You are clustering scientific references into consistent process systems for process_from_flow.\n"
+    "\n"
+    "Goal:\n"
+    "- Group DOIs that share the same system boundary, main process chain, and key intermediate flow names.\n"
+    "- Prefer a self-contained chain that covers Step1+Step2+Step3 when available.\n"
+    "- If chains conflict in boundary or granularity, keep them separate (do NOT merge).\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "clusters": [\n'
+    "    {\n"
+    '      "cluster_id": "C1",\n'
+    '      "dois": ["..."],\n'
+    '      "system_boundary": "cradle-to-gate|gate-to-gate|gate-to-grave|unspecified",\n'
+    '      "granularity": "coarse|medium|fine|unknown",\n'
+    '      "key_process_chain": ["..."],\n'
+    '      "key_intermediate_flows": ["..."],\n'
+    '      "supported_steps": ["step1", "step2", "step3"],\n'
+    '      "recommendation": "primary|supplement|exclude",\n'
+    '      "reason": "..."\n'
+    "    }\n"
+    "  ],\n"
+    '  "primary_cluster_id": "C1",\n'
+    '  "selection_guidance": "..."'
+    "}\n"
+)
+
+REFERENCE_USABILITY_PROMPT = (
+    "You are screening a scientific article for usefulness in the process_from_flow workflow.\n"
+    "\n"
+    "The workflow needs evidence for:\n"
+    "- Step 1 (technology routes): concrete descriptions of production/treatment routes or major process stages.\n"
+    "- Step 2 (unit process split): explicit unit operations, process sequences, or intermediate products.\n"
+    "- Step 3 (exchanges): inventory inputs/outputs, emissions, resources, or quantified exchanges.\n"
+    "\n"
+    "Decision rules:\n"
+    "- Mark 'usable' only if the article provides process-level or inventory details that can support at least one step above.\n"
+    "- Mark 'unusable' if it is background-only (policy, market, nutrition/health, generic LCA discussion) without process/inventory detail.\n"
+    "- If evidence is weak or indirect, choose 'unusable' and explain the gap.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "decision": "usable|unusable",\n'
+    '  "supported_steps": ["step1", "step2", "step3"],\n'
+    '  "reason": "...",\n'
+    '  "evidence": ["..."]\n'
     "}\n"
 )
