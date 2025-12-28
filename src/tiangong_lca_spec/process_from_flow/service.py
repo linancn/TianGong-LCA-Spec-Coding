@@ -53,6 +53,7 @@ from tiangong_lca_spec.core.constants import (
 )
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.core.logging import get_logger
+from tiangong_lca_spec.core.mcp_client import MCPToolClient
 from tiangong_lca_spec.core.models import FlowCandidate, FlowQuery
 from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
 from tiangong_lca_spec.flow_alignment.selector import (
@@ -75,6 +76,109 @@ from tiangong_lca_spec.utils.translate import Translator
 from .prompts import EXCHANGES_PROMPT, PROCESS_SPLIT_PROMPT, TECH_DESCRIPTION_PROMPT
 
 LOGGER = get_logger(__name__)
+
+
+def _search_scientific_references(
+    query: str,
+    *,
+    mcp_client: MCPToolClient | None = None,
+    top_k: int = 5,
+) -> list[dict[str, Any]]:
+    """Search scientific literature using tiangong_kb_remote search_Sci_Tool.
+
+    Args:
+        query: Search query string describing the technical context
+        mcp_client: Optional MCP client instance; creates new one if None
+        top_k: Maximum number of references to return
+
+    Returns:
+        List of reference dictionaries with keys like 'content', 'metadata', 'score'
+    """
+    if not query or not query.strip():
+        return []
+
+    should_close_client = False
+    if mcp_client is None:
+        mcp_client = MCPToolClient()
+        should_close_client = True
+
+    try:
+        result = mcp_client.invoke_json_tool(
+            server_name="TianGong_KB_Remote",
+            tool_name="Search_Sci_Tool",
+            arguments={
+                "query": query.strip(),
+                "topK": top_k,
+            },
+        )
+
+        if not result:
+            return []
+
+        # Extract references from result structure
+        references: list[dict[str, Any]] = []
+        if isinstance(result, dict):
+            # Handle different possible response structures
+            records = result.get("records") or result.get("results") or result.get("data") or []
+            if isinstance(records, list):
+                references = [item for item in records if isinstance(item, dict)]
+        elif isinstance(result, list):
+            references = [item for item in result if isinstance(item, dict)]
+
+        LOGGER.info(
+            "process_from_flow.search_references",
+            query_preview=query[:100],
+            count=len(references),
+        )
+        return references[:top_k]
+
+    except Exception as exc:
+        LOGGER.warning(
+            "process_from_flow.search_references_failed",
+            query_preview=query[:100],
+            error=str(exc),
+        )
+        return []
+    finally:
+        if should_close_client and mcp_client:
+            mcp_client.close()
+
+
+def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
+    """Format scientific references into a readable string for LLM prompts.
+
+    Args:
+        references: List of reference dictionaries from search_Sci_Tool
+
+    Returns:
+        Formatted string with numbered references
+    """
+    if not references:
+        return ""
+
+    lines = ["Scientific References:"]
+    for idx, ref in enumerate(references, start=1):
+        # Extract content and metadata
+        content = ref.get("content") or ref.get("text") or ref.get("segment", {}).get("content") or ""
+        metadata = ref.get("metadata") or {}
+
+        # Build reference entry
+        entry_parts = [f"[{idx}]"]
+        if isinstance(metadata, dict):
+            meta_str = metadata.get("meta") or ""
+            if meta_str:
+                entry_parts.append(f"Source: {meta_str}")
+
+        if content:
+            # Truncate very long content
+            content_preview = content[:500] + "..." if len(content) > 500 else content
+            entry_parts.append(f"Content: {content_preview}")
+
+        lines.append(" ".join(entry_parts))
+        lines.append("")  # Empty line between references
+
+    return "\n".join(lines)
+
 
 FlowSearchFn = Callable[[FlowQuery], tuple[list[FlowCandidate], list[object]]]
 
@@ -764,8 +868,11 @@ def _build_langgraph(
     flow_search_fn: FlowSearchFn,
     selector: CandidateSelector,
     translator: Translator | None,
+    mcp_client: MCPToolClient | None = None,
 ) -> Any:
     graph = StateGraph(ProcessFromFlowState)
+    # Create or use provided MCP client for scientific literature search
+    use_mcp_client = mcp_client
 
     def load_flow(state: ProcessFromFlowState) -> ProcessFromFlowState:
         path = Path(state["flow_path"])
@@ -815,11 +922,26 @@ def _build_langgraph(
                 "technology_routes": [route],
                 "step_markers": _update_step_markers(state, "step1"),
             }
+        # Search for scientific references before invoking LLM
+        flow_summary = state.get("flow_summary") or {}
+        flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
+        operation = state.get("operation") or "produce"
+
+        # Build search query for scientific literature
+        search_query = f"{operation} {flow_name} technology process route LCA life cycle assessment"
+        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=5)
+        references_text = _format_references_for_prompt(references)
+
+        # Build prompt with references
+        enhanced_prompt = TECH_DESCRIPTION_PROMPT
+        if references_text:
+            enhanced_prompt = f"{TECH_DESCRIPTION_PROMPT}\n\n" f"Use the following scientific references to inform your analysis:\n" f"{references_text}\n"
+
         payload = {
-            "prompt": TECH_DESCRIPTION_PROMPT,
+            "prompt": enhanced_prompt,
             "context": {
-                "operation": state.get("operation") or "produce",
-                "flow": state.get("flow_summary") or {},
+                "operation": operation,
+                "flow": flow_summary,
             },
             "response_format": {"type": "json_object"},
         }
@@ -934,13 +1056,34 @@ def _build_langgraph(
                 "selected_route_id": "R1",
                 "step_markers": _update_step_markers(state, "step2"),
             }
+        # Search for scientific references for process splitting
+        flow_summary = state.get("flow_summary") or {}
+        flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
+        tech_desc = state.get("technical_description") or ""
+        operation = state.get("operation") or "produce"
+
+        # Build search query focusing on unit processes and process decomposition
+        search_query = f"{flow_name} {operation} unit process decomposition inventory LCA"
+        if tech_desc:
+            # Add key technical terms from description
+            tech_preview = tech_desc[:100].strip()
+            search_query = f"{search_query} {tech_preview}"
+
+        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=5)
+        references_text = _format_references_for_prompt(references)
+
+        # Build enhanced prompt with references
+        enhanced_prompt = PROCESS_SPLIT_PROMPT
+        if references_text:
+            enhanced_prompt = f"{PROCESS_SPLIT_PROMPT}\n\n" f"Use the following scientific references to inform your process decomposition:\n" f"{references_text}\n"
+
         payload = {
-            "prompt": PROCESS_SPLIT_PROMPT,
+            "prompt": enhanced_prompt,
             "context": {
-                "flow": state.get("flow_summary") or {},
-                "technical_description": state.get("technical_description") or "",
+                "flow": flow_summary,
+                "technical_description": tech_desc,
                 "routes": state.get("technology_routes") or [],
-                "operation": state.get("operation") or "produce",
+                "operation": operation,
             },
             "response_format": {"type": "json_object"},
         }
@@ -1073,13 +1216,35 @@ def _build_langgraph(
                 ],
                 "step_markers": _update_step_markers(state, "step3"),
             }
+        # Search for scientific references for exchange generation
+        flow_summary = state.get("flow_summary") or {}
+        flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
+        tech_desc = state.get("technical_description") or ""
+        operation = state.get("operation") or "produce"
+        processes = state.get("processes") or []
+
+        # Build search query focusing on inventory exchanges, inputs, outputs
+        search_query = f"{flow_name} {operation} inventory exchanges inputs outputs emissions resources LCA"
+        if processes and isinstance(processes, list):
+            # Add process names to search context
+            process_names = " ".join([str(p.get("name") or "")[:50] for p in processes[:3] if isinstance(p, dict)])
+            search_query = f"{search_query} {process_names}"
+
+        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=5)
+        references_text = _format_references_for_prompt(references)
+
+        # Build enhanced prompt with references
+        enhanced_prompt = EXCHANGES_PROMPT
+        if references_text:
+            enhanced_prompt = f"{EXCHANGES_PROMPT}\n\n" f"Use the following scientific references to identify accurate inventory exchanges:\n" f"{references_text}\n"
+
         payload = {
-            "prompt": EXCHANGES_PROMPT,
+            "prompt": enhanced_prompt,
             "context": {
-                "flow": state.get("flow_summary") or {},
-                "technical_description": state.get("technical_description") or "",
-                "processes": state.get("processes") or [],
-                "operation": state.get("operation") or "produce",
+                "flow": flow_summary,
+                "technical_description": tech_desc,
+                "processes": processes,
+                "operation": operation,
             },
             "response_format": {"type": "json_object"},
         }
@@ -1577,6 +1742,7 @@ class ProcessFromFlowService:
     flow_search_fn: FlowSearchFn | None = None
     selector: CandidateSelector | None = None
     translator: Translator | None = None
+    mcp_client: MCPToolClient | None = None
 
     def run(
         self,
@@ -1596,16 +1762,35 @@ class ProcessFromFlowService:
         else:
             selector = SimilarityCandidateSelector()
 
-        app = _build_langgraph(
-            llm=self.llm,
-            settings=settings,
-            flow_search_fn=flow_search_fn,
-            selector=selector,
-            translator=self.translator,
-        )
-        initial: ProcessFromFlowState = {"flow_path": str(flow_path), "operation": operation}
-        if stop_after:
-            initial["stop_after"] = stop_after
-        if initial_state:
-            initial.update({k: v for k, v in initial_state.items() if k not in {"flow_path", "operation"}})
-        return app.invoke(initial)
+        # Create MCP client if not provided and we want to use scientific references
+        mcp_client = self.mcp_client
+        should_close_mcp = False
+        if mcp_client is None and self.llm is not None:
+            # Only create MCP client when LLM is available (scientific references only useful with LLM)
+            try:
+                mcp_client = MCPToolClient(settings)
+                should_close_mcp = True
+                LOGGER.info("process_from_flow.mcp_client_created", service="TianGong_KB_Remote")
+            except Exception as exc:
+                LOGGER.warning("process_from_flow.mcp_client_creation_failed", error=str(exc))
+                mcp_client = None
+
+        try:
+            app = _build_langgraph(
+                llm=self.llm,
+                settings=settings,
+                flow_search_fn=flow_search_fn,
+                selector=selector,
+                translator=self.translator,
+                mcp_client=mcp_client,
+            )
+            initial: ProcessFromFlowState = {"flow_path": str(flow_path), "operation": operation}
+            if stop_after:
+                initial["stop_after"] = stop_after
+            if initial_state:
+                initial.update({k: v for k, v in initial_state.items() if k not in {"flow_path", "operation"}})
+            return app.invoke(initial)
+        finally:
+            if should_close_mcp and mcp_client:
+                mcp_client.close()
+                LOGGER.info("process_from_flow.mcp_client_closed")

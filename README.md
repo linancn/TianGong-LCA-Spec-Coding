@@ -161,3 +161,7 @@ uv run python scripts/jsonld/run_pipeline.py \
 
 去掉 `--dry-run-publish` 即可在 Stage 3 真正提交至 `Database_CRUD_Tool`。
 
+### 更新日志
+
+项目的所有重要变更记录在 [CHANGELOG.md](CHANGELOG.md) 中。
+
