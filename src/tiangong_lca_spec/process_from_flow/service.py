@@ -402,6 +402,40 @@ def _reference_clusters(scientific_references: dict[str, Any] | None) -> dict[st
     return value if isinstance(value, dict) else None
 
 
+def _has_reference_entries(scientific_references: dict[str, Any], key: str) -> bool:
+    block = scientific_references.get(key)
+    if not isinstance(block, dict):
+        return False
+    references = block.get("references")
+    return isinstance(references, list) and len(references) > 0
+
+
+def _references_usable(scientific_references: dict[str, Any] | None) -> bool:
+    if not isinstance(scientific_references, dict):
+        return False
+    if not _has_reference_entries(scientific_references, REFERENCE_SEARCH_KEY):
+        return False
+    if not _has_reference_entries(scientific_references, REFERENCE_FULLTEXT_KEY):
+        return False
+    clusters = _reference_clusters(scientific_references)
+    if not isinstance(clusters, dict):
+        return False
+    cluster_list = clusters.get("clusters")
+    if not isinstance(cluster_list, list) or not cluster_list:
+        return False
+    usability = scientific_references.get("usability")
+    if isinstance(usability, dict):
+        results = usability.get("results")
+        if isinstance(results, list):
+            usable_found = any(
+                isinstance(item, dict) and str(item.get("decision") or "").strip().lower() == "usable"
+                for item in results
+            )
+            if not usable_found:
+                return False
+    return True
+
+
 def _build_reference_cluster_summaries(
     fulltext_entries: list[dict[str, Any]],
     *,
@@ -1326,7 +1360,7 @@ def _build_langgraph(
         if flow_context:
             search_query = f"{search_query} {flow_context}"
         references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
-        references_text = _format_references_for_prompt(references)
+        references_text = ""
         scientific_references = _update_scientific_references(
             state,
             step=REFERENCE_SEARCH_KEY,
@@ -1359,6 +1393,9 @@ def _build_langgraph(
                 if cluster_result:
                     scientific_references = dict(scientific_references)
                     scientific_references[REFERENCE_CLUSTERS_KEY] = cluster_result
+        use_references = _references_usable(scientific_references)
+        if use_references:
+            references_text = _format_references_for_prompt(references)
         stop_after = str(state.get("stop_after") or "").strip().lower()
         if stop_after in {"references", "reference", "refs", "papers", "sci"}:
             return {
@@ -1509,15 +1546,20 @@ def _build_langgraph(
             tech_preview = tech_desc[:100].strip()
             search_query = f"{search_query} {tech_preview}"
 
-        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
-        references_text = _format_references_for_prompt(references)
-        scientific_references = _update_scientific_references(
-            state,
-            step="step2",
-            query=search_query,
-            references=references,
-        )
-        reference_clusters = _reference_clusters(scientific_references)
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        use_references = _references_usable(scientific_references)
+        references: list[dict[str, Any]] = []
+        references_text = ""
+        if use_references:
+            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+            references_text = _format_references_for_prompt(references)
+            scientific_references = _update_scientific_references(
+                state,
+                step="step2",
+                query=search_query,
+                references=references,
+            )
+        reference_clusters = _reference_clusters(scientific_references) if use_references else None
 
         # Build enhanced prompt with references
         enhanced_prompt = PROCESS_SPLIT_PROMPT
@@ -1692,15 +1734,20 @@ def _build_langgraph(
             process_names = " ".join([str(p.get("name") or "")[:50] for p in processes[:3] if isinstance(p, dict)])
             search_query = f"{search_query} {process_names}"
 
-        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
-        references_text = _format_references_for_prompt(references)
-        scientific_references = _update_scientific_references(
-            state,
-            step="step3",
-            query=search_query,
-            references=references,
-        )
-        reference_clusters = _reference_clusters(scientific_references)
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        use_references = _references_usable(scientific_references)
+        references: list[dict[str, Any]] = []
+        references_text = ""
+        if use_references:
+            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+            references_text = _format_references_for_prompt(references)
+            scientific_references = _update_scientific_references(
+                state,
+                step="step3",
+                query=search_query,
+                references=references,
+            )
+        reference_clusters = _reference_clusters(scientific_references) if use_references else None
 
         # Build enhanced prompt with references
         enhanced_prompt = EXCHANGES_PROMPT
