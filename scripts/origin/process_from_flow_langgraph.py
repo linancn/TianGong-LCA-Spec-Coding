@@ -9,9 +9,9 @@ This command is a human-in-the-loop helper:
 - Step 4: match exchanges to Tiangong flows via MCP flow_search.
 - Step 5: generate TIDAS/ILCD process datasets via tidas-sdk.
 
-Typical usage (demo flow):
-  uv run python scripts/origin/process_from_flow_langgraph.py \\
-    --flow artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json
+Usage:
+  See .github/prompts/process_from_flow.prompt.md (English) or
+  .github/prompts/process_from_flow.zh.prompt.md (Chinese) for workflow details.
 
 Outputs (by default):
   - artifacts/process_from_flow/<run_id>/exports/processes
