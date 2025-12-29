@@ -29,7 +29,28 @@ PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
 DEFAULT_STEP_KEY = "step_1b_reference_fulltext"
 DEFAULT_MAX_CHARS = 12000
 DEFAULT_MAX_RECORDS = 6
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
+SI_STRONG_HINTS = (
+    "supporting information",
+    "supplementary information",
+    "supplementary material",
+    "supplementary data",
+    "supplemental material",
+    "supplemental data",
+    "electronic supplementary",
+    "supplementary table",
+    "supplementary tables",
+    "supporting data",
+)
+SI_WEAK_HINTS = (
+    "appendix",
+    "appendices",
+    "additional file",
+    "online resource",
+    "supplementary",
+    "supplemental",
+    "esm",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,6 +120,29 @@ def _normalize_decision(value: Any) -> str:
     return "unusable"
 
 
+def _normalize_si_hint(value: Any) -> str:
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"likely", "yes", "y", "true", "high", "\u6709", "\u5f88\u53ef\u80fd"}:
+            return "likely"
+        if text in {"possible", "maybe", "unclear", "medium", "low", "\u53ef\u80fd"}:
+            return "possible"
+        if text in {"none", "no", "n", "false", "absent", "\u65e0", "\u4e0d\u786e\u5b9a"}:
+            return "none"
+    return "none"
+
+
+def _detect_si_hint(text: str) -> tuple[str, str]:
+    lower = text.lower()
+    for phrase in SI_STRONG_HINTS:
+        if phrase in lower:
+            return "likely", f"Mentions '{phrase}'."
+    for phrase in SI_WEAK_HINTS:
+        if phrase in lower:
+            return "possible", f"Mentions '{phrase}'."
+    return "none", ""
+
+
 def _normalize_steps(value: Any) -> list[str]:
     if value is None:
         return []
@@ -150,6 +194,8 @@ def main() -> None:
                     "supported_steps": [],
                     "reason": "No usable content returned from kb search.",
                     "evidence": [],
+                    "si_hint": "none",
+                    "si_reason": "",
                     "records_count": len(records_list),
                     "content_chars": 0,
                     "source_refs": entry.get("source_refs") or [],
@@ -182,6 +228,13 @@ def main() -> None:
         if not isinstance(evidence, list):
             evidence = [str(evidence)]
         evidence = [str(item).strip() for item in evidence if str(item).strip()]
+        si_hint = _normalize_si_hint(parsed.get("si_hint") or parsed.get("siHint"))
+        si_reason = str(parsed.get("si_reason") or parsed.get("siReason") or "").strip()
+        if si_hint == "none" and not si_reason:
+            auto_hint, auto_reason = _detect_si_hint(content)
+            if auto_hint != "none":
+                si_hint = auto_hint
+                si_reason = auto_reason
         results.append(
             {
                 "doi": doi,
@@ -189,6 +242,8 @@ def main() -> None:
                 "supported_steps": supported_steps,
                 "reason": reason,
                 "evidence": evidence,
+                "si_hint": si_hint,
+                "si_reason": si_reason,
                 "records_count": len(records_list),
                 "content_chars": len(content),
                 "source_refs": entry.get("source_refs") or [],

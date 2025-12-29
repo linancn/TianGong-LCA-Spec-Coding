@@ -180,7 +180,11 @@ REFERENCE_USABILITY_PROMPT = (
     "\n"
     "Decision rules:\n"
     "- Mark 'usable' only if the article provides process-level or inventory details that can support at least one step above.\n"
+    "- Mark 'unusable' if it only reports LCIA impact indicators (ADP/AP/GWP/EP/PED/RI) or impact units like 'kg CO2 eq' "
+    "without any LCI inventory tables/rows showing physical flows (kg, g, t, m2, m3, pcs, kWh, MJ as inventory).\n"
     "- Mark 'unusable' if it is background-only (policy, market, nutrition/health, generic LCA discussion) without process/inventory detail.\n"
+    "- Record si_hint as likely/possible/none when the text points to supporting information, supplementary material, or appendices "
+    "that may contain inventory tables; keep decision=unusable unless the main text itself includes LCI tables.\n"
     "- If evidence is weak or indirect, choose 'unusable' and explain the gap.\n"
     "\n"
     "Return strict JSON:\n"
@@ -188,6 +192,8 @@ REFERENCE_USABILITY_PROMPT = (
     '  "decision": "usable|unusable",\n'
     '  "supported_steps": ["step1", "step2", "step3"],\n'
     '  "reason": "...",\n'
-    '  "evidence": ["..."]\n'
+    '  "evidence": ["..."],\n'
+    '  "si_hint": "none|possible|likely",\n'
+    '  "si_reason": "..."\n'
     "}\n"
 )

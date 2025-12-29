@@ -26,8 +26,8 @@ Each node checks if its target fields already exist to avoid rework.
 - 0) load_flow: read `flow_path` JSON and build `flow_summary` (multi-language names, classification, general comment); this flow is the reference flow.
 - 1a) reference_search: search technology-route literature (topK=10), write to `scientific_references.step_1a_reference_search`.
 - 1b) reference_fulltext: dedupe DOIs from Step 1a and fetch full text via DOI filter, write to `scientific_references.step_1b_reference_fulltext` (`filter: {"doi": [...]}` + `topK=1` + `extK`).
-- 1b-optional) reference_usability: optional screening step to determine whether Step 1b full text is sufficient to support process split and exchange generation; output to `scientific_references.usability`.
-- 1c) reference_clusters: cluster DOIs by boundary, main chain, and key intermediate flows using Step 1b full text and usability, write to `scientific_references.step_1c_reference_clusters`.
+- 1b-optional) reference_usability: optional screening step to determine whether Step 1b full text is sufficient to support process split and exchange generation; mark a reference as unusable when it only reports LCIA impact indicators or lacks any quantitative LCI table rows; also flag `si_hint` when the text points to Supporting Information/Appendix that may contain inventory tables; output to `scientific_references.usability`.
+- 1c) reference_clusters: cluster DOIs by boundary, main chain, and key intermediate flows using Step 1b full text and usability, write to `scientific_references.step_1c_reference_clusters` (include `reference_summaries` with `si_hint`/`si_reason` for later SI triage).
 - If any of Step 1a/1b/1c lacks usable references (including usability results all marked unusable), Steps 1-3 fall back to common sense: do not use literature evidence, and Steps 2/3 do not issue retrievals.
 - 1) Describe technology (Step 1): output plausible technology/process routes (route1/route2...), each with route_summary, key inputs/outputs, key unit processes, assumptions, and scope; if references exist, prefer the Step 1c primary cluster.
 - 2) Split into unit processes (Step 2): output ordered unit processes per route; the reference flow of process i must appear as an input of process i+1, and the last process produces/treats `load_flow`. Each process outputs:
@@ -102,6 +102,8 @@ uv run python test/test_scientific_references.py
 ### Reference Usability Screening
 
 - Optional step: evaluate whether Step 1b fulltext is sufficient to support Step 1c process split/exchange generation.
+- Mark `unusable` when the fulltext only reports LCIA impacts (e.g., ADP/AP/GWP/EP/PED/RI) or impact units like `kg CO2 eq`, `kg SO2 eq`, `kg Sb eq`, `kg PO4 eq`, and does not provide any LCI table rows with physical flows/units (kg, g, t, m2, m3, pcs, kWh, MJ as inventory).
+- Record `si_hint` (`likely|possible|none`) and `si_reason` when the article points to Supporting Information, supplementary material, or appendices that may contain LCI tables; keep `decision=unusable` unless the main text itself provides LCI tables.
 - Prompt template: `src/tiangong_lca_spec/process_from_flow/prompts.py` `REFERENCE_USABILITY_PROMPT`.
 - Script: `uv run python scripts/origin/process_from_flow_reference_usability.py --run-id <run_id>`.
 - Output: `scientific_references.usability` in `process_from_flow_state.json`.

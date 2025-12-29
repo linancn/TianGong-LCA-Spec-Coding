@@ -26,8 +26,8 @@
 - 0) load_flow：读取 `flow_path` JSON，生成 `flow_summary`（多语言名称、分类、通用注释等）；该 flow 作为 reference flow。
 - 1a) reference_search：检索技术工艺路径相关文献（topK=10），写入 `scientific_references.step_1a_reference_search`。
 - 1b) reference_fulltext：基于 Step 1a 返回的 DOI 合并去重，使用 DOI 过滤检索全文并写入 `scientific_references.step_1b_reference_fulltext`（`filter: {"doi": [...]}` + `topK=1` + `extK`）。
-- 1b-optional) reference_usability：可选筛选步骤，判断 Step 1b 的 DOI 全文是否足以支撑后续过程拆分与交换生成，输出 `scientific_references.usability`。
-- 1c) reference_clusters：基于 Step 1b 全文与可用性筛选结果，按系统边界/主流程/中间流一致性聚类 DOI，输出主干候选与可补充集合（写入 `scientific_references.step_1c_reference_clusters`）。
+- 1b-optional) reference_usability：可选筛选步骤，判断 Step 1b 的 DOI 全文是否足以支撑后续过程拆分与交换生成；若仅有 LCIA 影响指标或缺少任何 LCI 定量表格行，则判为不可用并输出 `scientific_references.usability`；同时记录 `si_hint` 用于标记全文是否提示 Supporting Information/Appendix 可能包含清单表。
+- 1c) reference_clusters：基于 Step 1b 全文与可用性筛选结果，按系统边界/主流程/中间流一致性聚类 DOI，输出主干候选与可补充集合（写入 `scientific_references.step_1c_reference_clusters`，并保留 `reference_summaries` 的 `si_hint`/`si_reason` 以便后续 SI 筛选）。
 - 若 Step 1a/1b/1c 任一没有可用参考文献（包含可用性筛选结果全部为不可用的情况），则 Step 1-3 进入 common sense 模式：不再使用文献证据，Step 2/Step 3 不再发起检索。
 - 1) 识别技术路径（Step 1）：基于 reference flow 输出所有可能的技术/工艺路径（route1/route2...），每条路径给出 route_summary、关键输入/输出、关键单元过程、假设与范围；有文献时优先使用 Step 1c 的主干候选。
 - 2) 路径内拆分单元过程（Step 2）：针对每条路径输出单元过程列表，并保证链式顺序（第 i 个过程的 `reference_flow_name` 必须作为第 i+1 个过程的 exchange input，最后一个过程直接生产/处置 `load_flow`）。每个过程输出结构化字段：
@@ -104,6 +104,8 @@ uv run python test/test_scientific_references.py
 ### 文献可用性筛选（Reference Usability Screening）
 
 - 可选步骤：针对 Step 1b 的 DOI 全文结果，判断是否足以支撑 Step 1c 的技术路径/过程拆分/交换清单需求。
+- 若全文仅包含 LCIA 影响指标（如 ADP/AP/GWP/EP/PED/RI）或单位为 `kg CO2 eq`/`kg SO2 eq`/`kg Sb eq`/`kg PO4 eq` 等，而没有任何 LCI 物理清单行（kg、g、t、m2、m3、pcs、kWh、MJ 作为清单单位），一律标记为 `unusable`。
+- 当正文提示 Supporting Information/补充材料/Appendix 可能包含清单表时，记录 `si_hint`（`likely|possible|none`）与 `si_reason` 以便后续决定是否下载 SI；若正文本身没有 LCI 表，仍保持 `decision=unusable`。
 - Prompt 模板：`src/tiangong_lca_spec/process_from_flow/prompts.py` 中的 `REFERENCE_USABILITY_PROMPT`。
 - 脚本：`uv run python scripts/origin/process_from_flow_reference_usability.py --run-id <run_id>`。
 - 输出位置：`process_from_flow_state.json` 的 `scientific_references.usability`。

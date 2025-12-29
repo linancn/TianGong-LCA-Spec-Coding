@@ -458,6 +458,8 @@ def _build_reference_cluster_summaries(
                 "decision": usability.get("decision") if isinstance(usability, dict) else None,
                 "reason": usability.get("reason") if isinstance(usability, dict) else None,
                 "evidence": usability.get("evidence") if isinstance(usability, dict) else None,
+                "si_hint": usability.get("si_hint") if isinstance(usability, dict) else None,
+                "si_reason": usability.get("si_reason") if isinstance(usability, dict) else None,
                 "snippet": snippet,
             }
         )
@@ -556,6 +558,7 @@ def _cluster_scientific_references(
     return {
         "source_step": REFERENCE_FULLTEXT_KEY,
         "input_dois": [item.get("doi") for item in summaries if item.get("doi")],
+        "reference_summaries": summaries,
         "clusters": clusters,
         "primary_cluster_id": primary_cluster_id,
         "selection_guidance": selection_guidance,
