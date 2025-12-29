@@ -344,9 +344,7 @@ def main() -> None:
                     doi_entry["downloads"].append({"url": candidate.url, "status": "error", "error": str(exc)})
                     continue
                 if download.status_code >= 400:
-                    doi_entry["downloads"].append(
-                        {"url": candidate.url, "status": "error", "error": f"HTTP {download.status_code}"}
-                    )
+                    doi_entry["downloads"].append({"url": candidate.url, "status": "error", "error": f"HTTP {download.status_code}"})
                     continue
                 download_type = download.headers.get("content-type")
                 ext = _guess_extension(str(download.url), download_type)

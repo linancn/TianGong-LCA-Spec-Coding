@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# ruff: noqa: E402
 """Screen scientific references for process_from_flow usability."""
 
 from __future__ import annotations

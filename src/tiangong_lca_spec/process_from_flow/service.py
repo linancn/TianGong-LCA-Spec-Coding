@@ -427,10 +427,7 @@ def _references_usable(scientific_references: dict[str, Any] | None) -> bool:
     if isinstance(usability, dict):
         results = usability.get("results")
         if isinstance(results, list):
-            usable_found = any(
-                isinstance(item, dict) and str(item.get("decision") or "").strip().lower() == "usable"
-                for item in results
-            )
+            usable_found = any(isinstance(item, dict) and str(item.get("decision") or "").strip().lower() == "usable" for item in results)
             if not usable_found:
                 return False
     return True
@@ -527,9 +524,7 @@ def _cluster_scientific_references(
                     "system_boundary": str(cluster.get("system_boundary") or "unspecified").strip(),
                     "granularity": str(cluster.get("granularity") or "unknown").strip(),
                     "key_process_chain": [str(item).strip() for item in (cluster.get("key_process_chain") or []) if str(item).strip()],
-                    "key_intermediate_flows": [
-                        str(item).strip() for item in (cluster.get("key_intermediate_flows") or []) if str(item).strip()
-                    ],
+                    "key_intermediate_flows": [str(item).strip() for item in (cluster.get("key_intermediate_flows") or []) if str(item).strip()],
                     "supported_steps": _normalize_steps(cluster.get("supported_steps")),
                     "recommendation": str(cluster.get("recommendation") or "supplement").strip(),
                     "reason": str(cluster.get("reason") or "").strip(),
@@ -563,6 +558,7 @@ def _cluster_scientific_references(
         "primary_cluster_id": primary_cluster_id,
         "selection_guidance": selection_guidance,
     }
+
 
 def _classification_terms(classification: list[dict[str, Any]] | None, *, max_items: int = 3) -> str:
     if not classification:
@@ -1409,11 +1405,7 @@ def _build_langgraph(
         # Build prompt with references
         enhanced_prompt = TECH_DESCRIPTION_PROMPT
         if references_text:
-            enhanced_prompt = (
-                f"{TECH_DESCRIPTION_PROMPT}\n\n"
-                f"Use the following scientific references as primary evidence for technology routes:\n"
-                f"{references_text}\n"
-            )
+            enhanced_prompt = f"{TECH_DESCRIPTION_PROMPT}\n\n" f"Use the following scientific references as primary evidence for technology routes:\n" f"{references_text}\n"
 
         payload = {
             "prompt": enhanced_prompt,
@@ -1567,11 +1559,7 @@ def _build_langgraph(
         # Build enhanced prompt with references
         enhanced_prompt = PROCESS_SPLIT_PROMPT
         if references_text:
-            enhanced_prompt = (
-                f"{PROCESS_SPLIT_PROMPT}\n\n"
-                f"Use the following scientific references to identify and split unit processes:\n"
-                f"{references_text}\n"
-            )
+            enhanced_prompt = f"{PROCESS_SPLIT_PROMPT}\n\n" f"Use the following scientific references to identify and split unit processes:\n" f"{references_text}\n"
 
         payload = {
             "prompt": enhanced_prompt,
@@ -1755,11 +1743,7 @@ def _build_langgraph(
         # Build enhanced prompt with references
         enhanced_prompt = EXCHANGES_PROMPT
         if references_text:
-            enhanced_prompt = (
-                f"{EXCHANGES_PROMPT}\n\n"
-                f"Use the following scientific references to confirm exchange flow names and amounts:\n"
-                f"{references_text}\n"
-            )
+            enhanced_prompt = f"{EXCHANGES_PROMPT}\n\n" f"Use the following scientific references to confirm exchange flow names and amounts:\n" f"{references_text}\n"
 
         payload = {
             "prompt": enhanced_prompt,
@@ -2239,9 +2223,7 @@ def _build_langgraph(
     graph.add_edge("load_flow", "describe_technology")
     graph.add_conditional_edges(
         "describe_technology",
-        lambda state: END
-        if str(state.get("stop_after") or "").strip().lower() in {"tech", "references", "reference", "refs", "papers", "sci"}
-        else "split_processes",
+        lambda state: END if str(state.get("stop_after") or "").strip().lower() in {"tech", "references", "reference", "refs", "papers", "sci"} else "split_processes",
     )
     graph.add_conditional_edges(
         "split_processes",

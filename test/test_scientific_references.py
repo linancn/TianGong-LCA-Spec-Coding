@@ -5,14 +5,47 @@ This script demonstrates how the enhanced ProcessFromFlowService now uses
 scientific literature from tiangong_kb_remote to inform LLM decisions.
 """
 
+import json
 from pathlib import Path
+
+import pytest
+
+from tiangong_lca_spec.core.config import get_settings
+from tiangong_lca_spec.core.mcp_client import MCPToolClient
 from tiangong_lca_spec.process_from_flow.service import (
     ProcessFromFlowService,
-    _search_scientific_references,
     _format_references_for_prompt,
+    _search_scientific_references,
 )
-from tiangong_lca_spec.core.mcp_client import MCPToolClient
-from tiangong_lca_spec.core.config import get_settings
+
+
+@pytest.fixture
+def flow_path(tmp_path: Path) -> Path:
+    flow_path = tmp_path / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "flowDataSet": {
+                    "flowInformation": {
+                        "dataSetInformation": {
+                            "common:UUID": "00000000-0000-0000-0000-000000000001",
+                            "name": {
+                                "baseName": [{"@xml:lang": "en", "#text": "Test flow"}],
+                                "treatmentStandardsRoutes": [{"@xml:lang": "en", "#text": "Finished product, manufactured"}],
+                                "mixAndLocationTypes": [{"@xml:lang": "en", "#text": "Production mix, at plant"}],
+                                "flowProperties": [],
+                            },
+                            "classificationInformation": {"common:classification": {"common:class": [{"@level": "0", "@classId": "0", "#text": "Test"}]}},
+                            "common:generalComment": [{"@xml:lang": "en", "#text": "Test flow general comment."}],
+                        }
+                    },
+                    "administrativeInformation": {"publicationAndOwnership": {"common:dataSetVersion": "01.01.000"}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return flow_path
 
 
 def test_search_references():
@@ -75,9 +108,7 @@ def test_process_from_flow_with_references(flow_path: Path):
     except Exception as e:
         print(f"\nLLM not configured or error: {e}")
         print("Skipping full workflow test.")
-        print(
-            "\nTo test the full workflow, ensure .secrets/secrets.toml is properly configured."
-        )
+        print("\nTo test the full workflow, ensure .secrets/secrets.toml is properly configured.")
         return
 
     # Create service with LLM

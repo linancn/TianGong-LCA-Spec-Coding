@@ -23,6 +23,36 @@ class FakeLLM:
                 "assumptions": ["No quantitative inventory; placeholders only."],
                 "scope": "Generic scope",
             }
+        if prompt.startswith("You are clustering scientific references into consistent process systems for process_from_flow."):
+            context = input_data.get("context") or {}
+            summaries = context.get("reference_summaries") or []
+            dois: list[str] = []
+            if isinstance(summaries, list):
+                for item in summaries:
+                    if not isinstance(item, dict):
+                        continue
+                    doi = str(item.get("doi") or "").strip()
+                    if doi:
+                        dois.append(doi)
+            if not dois:
+                return {"clusters": [], "primary_cluster_id": "C1", "selection_guidance": "No DOI data in test."}
+            return {
+                "clusters": [
+                    {
+                        "cluster_id": "C1",
+                        "dois": dois,
+                        "system_boundary": "unspecified",
+                        "granularity": "unknown",
+                        "key_process_chain": [],
+                        "key_intermediate_flows": [],
+                        "supported_steps": ["step1"],
+                        "recommendation": "primary",
+                        "reason": "Test cluster.",
+                    }
+                ],
+                "primary_cluster_id": "C1",
+                "selection_guidance": "Use primary cluster C1.",
+            }
         if prompt.startswith("You are selecting/using the route options") or prompt.startswith("You are decomposing a technical process description"):
             return {
                 "selected_route_id": "R1",
