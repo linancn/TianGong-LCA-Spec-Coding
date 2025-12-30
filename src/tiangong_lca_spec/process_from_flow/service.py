@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypedDict
-from uuid import UUID, uuid4
+from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
+from zipfile import ZipFile
+
+import xml.etree.ElementTree as ET
 
 from langgraph.graph import END, StateGraph
-from tidas_sdk import create_process
+from tidas_sdk import create_process, create_source
 from tidas_sdk.core.multilang import MultiLangList
 from tidas_sdk.entities.utils import default_timestamp
-from tidas_sdk.generated.tidas_data_types import GlobalReferenceTypeVariant0
+from tidas_sdk.generated.tidas_data_types import GlobalReferenceTypeVariant0, GlobalReferenceTypeVariant1Item
 from tidas_sdk.generated.tidas_processes import (
     CommonClassItemOption0,
     ComplianceDeclarationsComplianceOption0,
     DataSetInformationClassificationInformationCommonClassification,
+    ExchangeItemReferencesToDataSource,
     ExchangesExchangeItem,
     ModellingAndValidationValidationReview,
     ProcessDataSetAdministrativeInformationCommonCommissionerAndGoal,
@@ -43,6 +48,19 @@ from tidas_sdk.generated.tidas_processes import (
     ProcessInformationDataSetInformationName,
     ProcessInformationGeographyLocationOfOperationSupplyOrProduction,
 )
+from tidas_sdk.generated.tidas_sources import (
+    ClassificationInformationCommonClassificationCommonClass as SourceClassificationCommonClass,
+    DataSetInformationClassificationInformationCommonClassification as SourceClassificationInformationCommonClassification,
+    SourceDataSetAdministrativeInformationDataEntryBy,
+    SourceDataSetAdministrativeInformationPublicationAndOwnership,
+    SourceDataSetSourceInformationDataSetInformation,
+    SourceInformationDataSetInformationClassificationInformation,
+    SourceInformationDataSetInformationReferenceToDigitalFile,
+    Sources,
+    SourcesSourceDataSet,
+    SourcesSourceDataSetAdministrativeInformation,
+    SourcesSourceDataSetSourceInformation,
+)
 
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.constants import (
@@ -53,6 +71,7 @@ from tiangong_lca_spec.core.constants import (
 )
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.core.logging import get_logger
+from tiangong_lca_spec.core.mcp_client import MCPToolClient
 from tiangong_lca_spec.core.models import FlowCandidate, FlowQuery
 from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
 from tiangong_lca_spec.flow_alignment.selector import (
@@ -72,12 +91,2005 @@ from tiangong_lca_spec.process_extraction.tidas_mapping import (
 from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 from tiangong_lca_spec.utils.translate import Translator
 
-from .prompts import EXCHANGES_PROMPT, PROCESS_SPLIT_PROMPT, TECH_DESCRIPTION_PROMPT
+from .prompts import (
+    EXCHANGE_VALUE_PROMPT,
+    EXCHANGES_PROMPT,
+    PROCESS_SPLIT_PROMPT,
+    REFERENCE_CLUSTER_PROMPT,
+    TECH_DESCRIPTION_PROMPT,
+)
 
 LOGGER = get_logger(__name__)
+SCIENTIFIC_REFERENCE_TOP_K = 10
+SCIENTIFIC_REFERENCE_FULLTEXT_TOP_K = 1
+SCIENTIFIC_REFERENCE_FULLTEXT_EXT_K = 200
+REFERENCE_CLUSTER_MAX_CHARS = 1200
+REFERENCE_CLUSTER_MAX_RECORDS = 2
+
+REFERENCE_SEARCH_KEY = "step_1a_reference_search"
+REFERENCE_FULLTEXT_KEY = "step_1b_reference_fulltext"
+REFERENCE_CLUSTERS_KEY = "step_1c_reference_clusters"
+
+STOP_RULE_PROCESS_COVERAGE = 0.5
+STOP_RULE_EXCHANGE_COVERAGE = 0.6
+STOP_RULE_MIN_DELTA = 0.1
+
+SI_SNIPPET_MAX_CHARS = 2000
+SI_SNIPPET_MAX_FILES = 3
+SI_SNIPPET_MAX_BLOCKS = 40
+SI_TABLE_MAX_ROWS = 80
+SI_TABLE_MAX_COLS = 12
+SI_DOCX_MAX_TABLES = 6
+SI_DOCX_MAX_PARAGRAPHS = 40
+SI_XLSX_MAX_SHEETS = 3
+
+
+def _search_scientific_references(
+    query: str,
+    *,
+    mcp_client: MCPToolClient | None = None,
+    top_k: int = SCIENTIFIC_REFERENCE_TOP_K,
+    filters: dict[str, Any] | None = None,
+    ext_k: int | None = None,
+    limit: int | None = None,
+    keep_all: bool = False,
+) -> list[dict[str, Any]]:
+    """Search scientific literature using tiangong_kb_remote search_Sci_Tool.
+
+    Args:
+        query: Search query string describing the technical context
+        mcp_client: Optional MCP client instance; creates new one if None
+        top_k: Maximum number of references to return
+        filters: Optional filter payload passed to the search tool
+        ext_k: Optional extK parameter for retrieving extended content
+        limit: Optional max results to keep (defaults to top_k)
+        keep_all: Whether to keep all returned records without trimming
+
+    Returns:
+        List of reference dictionaries with keys like 'content', 'metadata', 'score'
+    """
+    if not query or not query.strip():
+        return []
+
+    should_close_client = False
+    if mcp_client is None:
+        mcp_client = MCPToolClient()
+        should_close_client = True
+
+    try:
+        arguments: dict[str, Any] = {
+            "query": query.strip(),
+            "topK": top_k,
+        }
+        if filters:
+            arguments["filter"] = filters
+        if ext_k is not None:
+            arguments["extK"] = ext_k
+
+        result = mcp_client.invoke_json_tool(
+            server_name="TianGong_KB_Remote",
+            tool_name="Search_Sci_Tool",
+            arguments=arguments,
+        )
+
+        if not result:
+            return []
+
+        # Extract references from result structure
+        references: list[dict[str, Any]] = []
+        if isinstance(result, dict):
+            # Handle different possible response structures
+            records = result.get("records") or result.get("results") or result.get("data") or []
+            if isinstance(records, list):
+                references = [item for item in records if isinstance(item, dict)]
+        elif isinstance(result, list):
+            references = [item for item in result if isinstance(item, dict)]
+
+        LOGGER.info(
+            "process_from_flow.search_references",
+            query_preview=query[:100],
+            count=len(references),
+        )
+        trimmed = references
+        max_keep = top_k if limit is None else limit
+        if not keep_all and max_keep is not None:
+            trimmed = references[:max_keep]
+        numbered = [
+            {
+                **item,
+                "no": idx,
+            }
+            for idx, item in enumerate(trimmed, start=1)
+        ]
+        return numbered
+
+    except Exception as exc:
+        LOGGER.warning(
+            "process_from_flow.search_references_failed",
+            query_preview=query[:100],
+            error=str(exc),
+        )
+        return []
+    finally:
+        if should_close_client and mcp_client:
+            mcp_client.close()
+
+
+def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
+    """Format scientific references into a readable string for LLM prompts.
+
+    Args:
+        references: List of reference dictionaries from search_Sci_Tool
+
+    Returns:
+        Formatted string with numbered references
+    """
+    if not references:
+        return ""
+
+    lines = ["Scientific References:"]
+    for idx, ref in enumerate(references, start=1):
+        # Extract content and metadata
+        content = ref.get("content") or ref.get("text") or ref.get("segment", {}).get("content") or ""
+        metadata = ref.get("metadata") or {}
+
+        # Build reference entry
+        entry_parts = [f"[{idx}]"]
+        if isinstance(metadata, dict):
+            meta_str = metadata.get("meta") or ""
+            if meta_str:
+                entry_parts.append(f"Source: {meta_str}")
+
+        if content:
+            content_text = content if isinstance(content, str) else str(content)
+            content_text = content_text.strip()
+            if content_text:
+                entry_parts.append(f"Content: {content_text}")
+
+        lines.append(" ".join(entry_parts))
+        lines.append("")  # Empty line between references
+
+    return "\n".join(lines)
+
+
+def _first_nonempty(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _compact_text(value: str, *, limit: int = 160) -> str:
+    text = str(value).strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    trimmed = text[:limit].rsplit(" ", 1)[0]
+    return trimmed or text[:limit]
+
+
+def _extract_doi_from_text(value: str) -> str | None:
+    if not value:
+        return None
+    match = _DOI_PATTERN.search(value)
+    if not match:
+        return None
+    doi = match.group(0).strip()
+    doi = doi.rstrip(").,;")
+    return doi or None
+
+
+def _extract_reference_doi(reference: dict[str, Any]) -> str | None:
+    if not isinstance(reference, dict):
+        return None
+    for key in ("doi", "DOI"):
+        value = reference.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("source", "content", "text"):
+        value = reference.get(key)
+        if isinstance(value, str):
+            doi = _extract_doi_from_text(value)
+            if doi:
+                return doi
+    metadata = reference.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("doi", "DOI"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        meta_text = metadata.get("meta")
+        if isinstance(meta_text, str):
+            doi = _extract_doi_from_text(meta_text)
+            if doi:
+                return doi
+    segment = reference.get("segment")
+    if isinstance(segment, dict):
+        doi = _extract_reference_doi(segment)
+        if doi:
+            return doi
+    return None
+
+
+def _group_references_by_doi(
+    references: list[dict[str, Any]],
+) -> tuple[dict[str, list[dict[str, Any]]], list[int]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    missing: list[int] = []
+    for idx, ref in enumerate(references, start=1):
+        if not isinstance(ref, dict):
+            continue
+        doi = _extract_reference_doi(ref)
+        if not doi:
+            ref_no = ref.get("no")
+            missing.append(ref_no if isinstance(ref_no, int) else idx)
+            continue
+        grouped.setdefault(doi, []).append(ref)
+    return grouped, missing
+
+
+def _build_fulltext_query(doi: str, references: list[dict[str, Any]], fallback: str) -> str:
+    chunks: list[str] = []
+    for ref in references:
+        for key in ("content", "text"):
+            value = ref.get(key)
+            if isinstance(value, str) and value.strip():
+                chunks.append(value.strip())
+                break
+    merged = " ".join(chunks)
+    merged = re.sub(r"\s+", " ", merged).strip()
+    query = _compact_text(merged, limit=200)
+    if not query:
+        query = _compact_text(fallback or "", limit=200)
+    if not query:
+        query = f"doi {doi}"
+    return query
+
+
+def _fetch_fulltext_references(
+    references: list[dict[str, Any]],
+    *,
+    mcp_client: MCPToolClient | None = None,
+    fallback_query: str = "",
+    top_k: int = SCIENTIFIC_REFERENCE_FULLTEXT_TOP_K,
+    ext_k: int = SCIENTIFIC_REFERENCE_FULLTEXT_EXT_K,
+) -> tuple[list[dict[str, Any]], list[int]]:
+    doi_groups, missing = _group_references_by_doi(references)
+    entries: list[dict[str, Any]] = []
+    for doi, refs in doi_groups.items():
+        query = _build_fulltext_query(doi, refs, fallback_query)
+        records = _search_scientific_references(
+            query,
+            mcp_client=mcp_client,
+            top_k=top_k,
+            ext_k=ext_k,
+            filters={"doi": [doi]},
+            keep_all=True,
+        )
+        source_refs = [ref.get("no") for ref in refs if isinstance(ref.get("no"), int)]
+        entries.append(
+            {
+                "doi": doi,
+                "query": query,
+                "source_refs": source_refs,
+                "records": records,
+            }
+        )
+    return entries, missing
+
+
+def _extract_record_text(record: dict[str, Any]) -> str:
+    for key in ("content", "text"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    segment = record.get("segment")
+    if isinstance(segment, dict):
+        for key in ("content", "text"):
+            value = segment.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _collect_article_text(
+    records: list[dict[str, Any]],
+    *,
+    max_chars: int = REFERENCE_CLUSTER_MAX_CHARS,
+    max_records: int = REFERENCE_CLUSTER_MAX_RECORDS,
+) -> str:
+    chunks: list[str] = []
+    for record in records:
+        if max_records and len(chunks) >= max_records:
+            break
+        if not isinstance(record, dict):
+            continue
+        text = _extract_record_text(record)
+        if text:
+            chunks.append(text)
+    combined = "\n\n".join(chunks).strip()
+    if max_chars and len(combined) > max_chars:
+        combined = combined[:max_chars]
+    return combined
+
+
+def _reference_usability_map(state: ProcessFromFlowState) -> dict[str, dict[str, Any]]:
+    usability = state.get("scientific_references", {}).get("usability")
+    if not isinstance(usability, dict):
+        return {}
+    results = usability.get("results")
+    if not isinstance(results, list):
+        return {}
+    mapping: dict[str, dict[str, Any]] = {}
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        doi = str(item.get("doi") or "").strip()
+        if not doi:
+            continue
+        mapping[doi] = item
+    return mapping
+
+
+def _reference_clusters(scientific_references: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(scientific_references, dict):
+        return None
+    value = scientific_references.get(REFERENCE_CLUSTERS_KEY)
+    return value if isinstance(value, dict) else None
+
+
+def _primary_cluster_dois(scientific_references: dict[str, Any] | None) -> list[str]:
+    clusters = _reference_clusters(scientific_references)
+    if not isinstance(clusters, dict):
+        return []
+    primary_id = str(clusters.get("primary_cluster_id") or "").strip()
+    clusters_list = clusters.get("clusters")
+    if not isinstance(clusters_list, list) or not primary_id:
+        return []
+    for cluster in clusters_list:
+        if not isinstance(cluster, dict):
+            continue
+        cluster_id = str(cluster.get("cluster_id") or "").strip()
+        if cluster_id != primary_id:
+            continue
+        dois = [str(item).strip() for item in (cluster.get("dois") or []) if str(item).strip()]
+        return dois
+    return []
+
+
+def _has_reference_entries(scientific_references: dict[str, Any], key: str) -> bool:
+    block = scientific_references.get(key)
+    if not isinstance(block, dict):
+        return False
+    references = block.get("references")
+    return isinstance(references, list) and len(references) > 0
+
+
+def _references_usable(scientific_references: dict[str, Any] | None) -> bool:
+    if not isinstance(scientific_references, dict):
+        return False
+    if not _has_reference_entries(scientific_references, REFERENCE_SEARCH_KEY):
+        return False
+    if not _has_reference_entries(scientific_references, REFERENCE_FULLTEXT_KEY):
+        return False
+    clusters = _reference_clusters(scientific_references)
+    if not isinstance(clusters, dict):
+        return False
+    cluster_list = clusters.get("clusters")
+    if not isinstance(cluster_list, list) or not cluster_list:
+        return False
+    usability = scientific_references.get("usability")
+    if isinstance(usability, dict):
+        results = usability.get("results")
+        if isinstance(results, list):
+            usable_found = any(isinstance(item, dict) and str(item.get("decision") or "").strip().lower() == "usable" for item in results)
+            if not usable_found:
+                return False
+    return True
+
+
+def _parse_reference_source(value: str) -> tuple[str, str]:
+    text = value.strip()
+    if not text:
+        return "", ""
+    match = _MARKDOWN_LINK_PATTERN.search(text)
+    if match:
+        label = match.group(1).strip()
+        link = match.group(2).strip()
+        return label, link
+    link = _extract_reference_url(text)
+    return text, link
+
+
+def _extract_reference_url(value: str) -> str:
+    if not value:
+        return ""
+    match = _URL_PATTERN.search(value)
+    return match.group(0) if match else ""
+
+
+def _reference_key(
+    doi: str | None,
+    url: str | None,
+    citation: str | None,
+    title: str | None,
+    description: str | None,
+) -> str:
+    if doi:
+        return f"doi:{doi.lower()}"
+    if url:
+        return f"url:{url.lower()}"
+    if citation:
+        return f"citation:{citation.lower()}"
+    if title:
+        return f"title:{title.lower()}"
+    if description:
+        return f"desc:{description.lower()}"
+    return ""
+
+
+def _reference_title_from_citation(citation: str | None) -> str:
+    if not citation:
+        return ""
+    parts = re.split(r"\\.\\s+", citation.strip(), maxsplit=1)
+    candidate = parts[0].strip() if parts else citation.strip()
+    if len(candidate) < 8:
+        candidate = citation.strip()
+    return _compact_text(candidate, limit=160)
+
+
+def _reference_info_from_record(
+    record: dict[str, Any],
+    *,
+    origin_step: str | None = None,
+    doi_override: str | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(record, dict):
+        return None
+    doi = str(doi_override or _extract_reference_doi(record) or "").strip() or None
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    source_text = _first_nonempty(record.get("source"), metadata.get("meta"), metadata.get("citation"), metadata.get("source"))
+    citation, link = _parse_reference_source(source_text) if source_text else ("", "")
+    if not citation:
+        citation = _first_nonempty(metadata.get("meta"), metadata.get("citation"), metadata.get("title"), source_text)
+    url = _first_nonempty(link, metadata.get("url"), metadata.get("uri"), metadata.get("link"))
+    if not url:
+        url = _extract_reference_url(source_text or "")
+    if not url and doi:
+        url = f"https://doi.org/{doi}"
+    title = _first_nonempty(metadata.get("title"), metadata.get("paper_title"), metadata.get("name"), metadata.get("document_title"))
+    if not title:
+        title = _reference_title_from_citation(citation)
+    content = _extract_record_text(record)
+    description = _compact_text(content, limit=360)
+    if not citation and title:
+        citation = title
+    if not citation and doi:
+        citation = f"DOI {doi}"
+    if not any([doi, citation, title, description]):
+        return None
+    short_name = _compact_text(title or citation or (doi or "Reference source"), limit=180)
+    key = _reference_key(doi, url, citation, title, description)
+    if not key and short_name:
+        key = f"short:{short_name.lower()}"
+    return {
+        "key": key,
+        "doi": doi,
+        "url": url,
+        "citation": citation,
+        "title": title,
+        "short_name": short_name,
+        "description": description,
+        "origin_steps": [origin_step] if origin_step else [],
+    }
+
+
+def _merge_reference_info(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    if not target:
+        return incoming
+    for field in ("doi", "url"):
+        if not target.get(field) and incoming.get(field):
+            target[field] = incoming.get(field)
+    for field in ("citation", "title", "short_name", "description"):
+        incoming_value = incoming.get(field)
+        if not incoming_value:
+            continue
+        current = target.get(field)
+        if not current or len(str(incoming_value)) > len(str(current)):
+            target[field] = incoming_value
+    steps = set(target.get("origin_steps") or [])
+    steps.update(incoming.get("origin_steps") or [])
+    target["origin_steps"] = sorted(step for step in steps if step)
+    return target
+
+
+def _collect_reference_infos(scientific_references: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(scientific_references, dict):
+        return []
+    collected: dict[str, dict[str, Any]] = {}
+
+    def register(info: dict[str, Any] | None) -> None:
+        if not info:
+            return
+        key = str(info.get("key") or "").strip()
+        if not key:
+            key = f"ref:{len(collected) + 1}"
+            info["key"] = key
+        existing = collected.get(key)
+        if existing is None:
+            collected[key] = info
+        else:
+            collected[key] = _merge_reference_info(existing, info)
+
+    fulltext_entries = scientific_references.get(REFERENCE_FULLTEXT_KEY, {}).get("references", [])
+    if isinstance(fulltext_entries, list):
+        for entry in fulltext_entries:
+            if not isinstance(entry, dict):
+                continue
+            doi = str(entry.get("doi") or "").strip() or None
+            records = entry.get("records") or []
+            record = next((item for item in records if isinstance(item, dict)), None)
+            if record is None and doi:
+                record = {"doi": doi, "source": f"https://doi.org/{doi}"}
+            info = _reference_info_from_record(record or {}, origin_step=REFERENCE_FULLTEXT_KEY, doi_override=doi)
+            register(info)
+
+    for step_key in (REFERENCE_SEARCH_KEY, "step2", "step3"):
+        block = scientific_references.get(step_key)
+        if not isinstance(block, dict):
+            continue
+        references = block.get("references")
+        if not isinstance(references, list):
+            continue
+        for ref in references:
+            if not isinstance(ref, dict):
+                continue
+            info = _reference_info_from_record(ref, origin_step=step_key)
+            register(info)
+
+    return list(collected.values())
+
+
+def _build_reference_cluster_summaries(
+    fulltext_entries: list[dict[str, Any]],
+    *,
+    usability_map: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    usability_map = usability_map or {}
+    for entry in fulltext_entries:
+        if not isinstance(entry, dict):
+            continue
+        doi = str(entry.get("doi") or "").strip()
+        records = entry.get("records") or []
+        records_list = [item for item in records if isinstance(item, dict)]
+        snippet = _collect_article_text(records_list)
+        usability = usability_map.get(doi) if doi else None
+        supported_steps = _normalize_steps(usability.get("supported_steps") if isinstance(usability, dict) else None)
+        decision = usability.get("decision") if isinstance(usability, dict) else None
+        usage_tags = _usage_tags_from_supported_steps(supported_steps, decision)
+        summaries.append(
+            {
+                "doi": doi,
+                "supported_steps": supported_steps,
+                "decision": decision,
+                "reason": usability.get("reason") if isinstance(usability, dict) else None,
+                "evidence": usability.get("evidence") if isinstance(usability, dict) else None,
+                "si_hint": usability.get("si_hint") if isinstance(usability, dict) else None,
+                "si_reason": usability.get("si_reason") if isinstance(usability, dict) else None,
+                "usage_tags": usage_tags,
+                "snippet": snippet,
+            }
+        )
+    return summaries
+
+
+def _source_uuid_for_info(info: dict[str, Any]) -> str:
+    key = str(info.get("key") or "").strip()
+    if not key:
+        return str(uuid4())
+    return str(uuid5(NAMESPACE_URL, key))
+
+
+def _build_source_reference_payload(
+    *,
+    uuid_value: str,
+    version: str,
+    short_description: Any,
+) -> dict[str, Any]:
+    reference = _global_reference(
+        ref_type="source data set",
+        ref_object_id=uuid_value,
+        version=version,
+        uri=build_local_dataset_uri("source data set", uuid_value, version),
+        short_description=short_description,
+    )
+    return reference.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def _build_source_dataset(
+    info: dict[str, Any],
+    *,
+    translator: Translator | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if not info:
+        return None
+    uuid_value = _source_uuid_for_info(info)
+    version = "01.01.000"
+    short_name = str(info.get("short_name") or info.get("title") or info.get("citation") or info.get("doi") or "Source reference").strip()
+    citation = str(info.get("citation") or short_name or "Source reference").strip()
+    description = str(info.get("description") or "").strip()
+    origin_steps = [str(step).strip() for step in (info.get("origin_steps") or []) if str(step).strip()]
+    if origin_steps:
+        description = f"{description} Search steps: {', '.join(origin_steps)}.".strip() if description else f"Search steps: {', '.join(origin_steps)}."
+    if info.get("doi"):
+        description = f"{description} DOI: {info['doi']}.".strip() if description else f"DOI: {info['doi']}."
+    url = str(info.get("url") or "").strip()
+
+    short_entries = _build_multilang_entries(short_name, translator=translator)
+    description_entries = _build_multilang_entries(description, translator=translator) if description else []
+    classification_class = SourceClassificationCommonClass(level="0", class_id="C", text="Literature")
+    classification = SourceClassificationInformationCommonClassification(common_class=classification_class)
+    classification_info = SourceInformationDataSetInformationClassificationInformation(common_classification=classification)
+    reference_to_file = SourceInformationDataSetInformationReferenceToDigitalFile(uri=url) if url else None
+    publication_type = "Article in periodical" if info.get("doi") else "Other unpublished and grey literature"
+
+    data_info = SourceDataSetSourceInformationDataSetInformation(
+        common_uuid=uuid_value,
+        common_short_name=_as_multilang_list(short_entries or short_name),
+        classification_information=classification_info,
+        source_citation=citation,
+        publication_type=publication_type,
+        source_description_or_comment=_as_multilang_list(description_entries or description),
+        reference_to_digital_file=reference_to_file,
+        reference_to_contact=_contact_reference(),
+    )
+    source_information = SourcesSourceDataSetSourceInformation(data_set_information=data_info)
+    data_entry = SourceDataSetAdministrativeInformationDataEntryBy(
+        common_time_stamp=default_timestamp(),
+        common_reference_to_data_set_format=_dataset_format_reference(),
+    )
+    publication = SourceDataSetAdministrativeInformationPublicationAndOwnership(
+        common_data_set_version=version,
+        common_permanent_data_set_uri=build_portal_uri("source", uuid_value, version),
+        common_reference_to_ownership_of_data_set=_contact_reference(),
+    )
+    administrative_information = SourcesSourceDataSetAdministrativeInformation(
+        data_entry_by=data_entry,
+        publication_and_ownership=publication,
+    )
+    source_dataset = SourcesSourceDataSet(
+        xmlns="http://lca.jrc.it/ILCD/Source",
+        xmlns_common="http://lca.jrc.it/ILCD/Common",
+        xmlns_xsi="http://www.w3.org/2001/XMLSchema-instance",
+        version="1.1",
+        xsi_schema_location="http://lca.jrc.it/ILCD/Source ../../schemas/ILCD_SourceDataSet.xsd",
+        source_information=source_information,
+        administrative_information=administrative_information,
+    )
+    source_model = Sources(source_data_set=source_dataset)
+
+    validated_on_init = False
+    try:
+        entity = create_source(source_model, validate=True)
+        validated_on_init = True
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning("process_from_flow.source_validation_failed", source_key=info.get("key"), error=str(exc))
+        entity = create_source(source_model, validate=False)
+
+    if validated_on_init:
+        errors = entity.last_validation_error()
+        if errors:
+            LOGGER.warning("process_from_flow.source_not_valid", source_key=info.get("key"), error=str(errors))
+    else:
+        valid = entity.validate(mode="pydantic")
+        if not valid:
+            errors = entity.last_validation_error()
+            LOGGER.warning("process_from_flow.source_not_valid", source_key=info.get("key"), error=str(errors))
+
+    payload = entity.model.model_dump(mode="json", by_alias=True, exclude_none=True)
+    reference_payload = _build_source_reference_payload(
+        uuid_value=uuid_value,
+        version=version,
+        short_description=short_entries or short_name,
+    )
+    return payload, reference_payload
+
+
+def _build_source_datasets_from_references(
+    scientific_references: dict[str, Any] | None,
+    *,
+    translator: Translator | None = None,
+    reference_infos: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if reference_infos is not None:
+        infos = reference_infos
+    else:
+        if not isinstance(scientific_references, dict):
+            return [], []
+        infos = _collect_reference_infos(scientific_references)
+    source_datasets: list[dict[str, Any]] = []
+    source_references: list[dict[str, Any]] = []
+    for info in infos:
+        result = _build_source_dataset(info, translator=translator)
+        if not result:
+            continue
+        payload, reference = result
+        source_datasets.append(payload)
+        source_references.append(reference)
+    return source_datasets, source_references
+
+
+def _build_source_reference_entries(source_datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    for dataset in source_datasets:
+        if not isinstance(dataset, dict):
+            continue
+        source_data_set = dataset.get("sourceDataSet")
+        if not isinstance(source_data_set, dict):
+            continue
+        info = source_data_set.get("sourceInformation")
+        if not isinstance(info, dict):
+            continue
+        data_info = info.get("dataSetInformation")
+        if not isinstance(data_info, dict):
+            continue
+        uuid_value = str(data_info.get("common:UUID") or "").strip()
+        if not uuid_value:
+            continue
+        short_desc = data_info.get("common:shortName")
+        admin = source_data_set.get("administrativeInformation")
+        version = None
+        if isinstance(admin, dict):
+            publication = admin.get("publicationAndOwnership")
+            if isinstance(publication, dict):
+                version = publication.get("common:dataSetVersion")
+        version_text = str(version or "01.01.000").strip()
+        if not short_desc:
+            short_desc = [_language_entry("Source reference", "en")]
+        references.append(
+            {
+                "@type": "source data set",
+                "@refObjectId": uuid_value,
+                "@uri": build_local_dataset_uri("source data set", uuid_value, version_text),
+                "@version": version_text,
+                "common:shortDescription": short_desc,
+            }
+        )
+    return references
+
+
+def _coerce_global_reference_items(references: list[Any]) -> list[GlobalReferenceTypeVariant1Item]:
+    items: list[GlobalReferenceTypeVariant1Item] = []
+    for ref in references:
+        if isinstance(ref, GlobalReferenceTypeVariant1Item):
+            items.append(ref)
+            continue
+        if isinstance(ref, GlobalReferenceTypeVariant0):
+            items.append(
+                GlobalReferenceTypeVariant1Item(
+                    type=ref.type,
+                    ref_object_id=ref.ref_object_id,
+                    version=ref.version,
+                    uri=ref.uri,
+                    common_short_description=ref.common_short_description,
+                )
+            )
+            continue
+        if not isinstance(ref, dict):
+            continue
+        ref_type = ref.get("@type") or ref.get("type")
+        ref_id = ref.get("@refObjectId") or ref.get("refObjectId")
+        version = ref.get("@version") or ref.get("version") or "01.01.000"
+        uri = ref.get("@uri") or ref.get("uri") or ""
+        short_desc = ref.get("common:shortDescription") or ref.get("common_short_description") or ref.get("commonShortDescription")
+        if not ref_type or not ref_id:
+            continue
+        items.append(
+            GlobalReferenceTypeVariant1Item(
+                type=str(ref_type),
+                ref_object_id=str(ref_id),
+                version=str(version),
+                uri=str(uri),
+                common_short_description=_as_multilang_list(short_desc or "Source reference"),
+            )
+        )
+    return items
+
+
+def _reference_item_id(item: Any) -> str | None:
+    if isinstance(item, dict):
+        return str(item.get("@refObjectId") or item.get("refObjectId") or "").strip() or None
+    ref_object_id = getattr(item, "ref_object_id", None)
+    if ref_object_id:
+        return str(ref_object_id).strip() or None
+    ref_object_id = getattr(item, "refObjectId", None)
+    if ref_object_id:
+        return str(ref_object_id).strip() or None
+    return None
+
+
+def _normalize_reference_text(value: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip().lower()
+    return text
+
+
+def _normalize_reference_url(value: str) -> str:
+    text = value.strip().rstrip(").,;").lower()
+    return text
+
+
+def _collect_lang_values(value: Any) -> list[str]:
+    lang_map = _extract_lang_texts(value)
+    values: list[str] = []
+    for items in lang_map.values():
+        for item in items:
+            text = str(item).strip()
+            if text:
+                values.append(text)
+    return values
+
+
+def _build_source_reference_index(
+    source_datasets: list[dict[str, Any]],
+    source_references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    by_uuid: dict[str, dict[str, Any]] = {}
+    for ref in source_references:
+        if not isinstance(ref, dict):
+            continue
+        uuid_value = str(ref.get("@refObjectId") or "").strip()
+        if uuid_value:
+            by_uuid[uuid_value] = ref
+
+    doi_map: dict[str, dict[str, Any]] = {}
+    url_map: dict[str, dict[str, Any]] = {}
+    text_entries: list[tuple[str, dict[str, Any]]] = []
+
+    for dataset in source_datasets:
+        if not isinstance(dataset, dict):
+            continue
+        source_data_set = dataset.get("sourceDataSet")
+        if not isinstance(source_data_set, dict):
+            continue
+        info_block = source_data_set.get("sourceInformation")
+        if not isinstance(info_block, dict):
+            continue
+        data_info = info_block.get("dataSetInformation")
+        if not isinstance(data_info, dict):
+            continue
+        uuid_value = str(data_info.get("common:UUID") or "").strip()
+        if not uuid_value:
+            continue
+        ref = by_uuid.get(uuid_value)
+        if ref is None:
+            ref_candidates = _build_source_reference_entries([dataset])
+            ref = ref_candidates[0] if ref_candidates else None
+        if not isinstance(ref, dict):
+            continue
+
+        citation = data_info.get("sourceCitation")
+        short_name = data_info.get("common:shortName")
+        description = data_info.get("sourceDescriptionOrComment")
+        digital_file = data_info.get("referenceToDigitalFile")
+        url = None
+        if isinstance(digital_file, dict):
+            url = digital_file.get("@uri")
+
+        for text in [citation, short_name, description]:
+            for value in _collect_lang_values(text):
+                doi = _extract_doi_from_text(value)
+                if doi:
+                    doi_map[doi.lower()] = ref
+                text_key = _normalize_reference_text(value)
+                if text_key:
+                    text_entries.append((text_key, ref))
+
+        if isinstance(url, str) and url.strip():
+            url_key = _normalize_reference_url(url)
+            if url_key:
+                url_map[url_key] = ref
+            doi = _extract_doi_from_text(url)
+            if doi:
+                doi_map[doi.lower()] = ref
+
+    return {
+        "doi": doi_map,
+        "url": url_map,
+        "text_entries": text_entries,
+    }
+
+
+def _collect_exchange_citations(exchange: dict[str, Any]) -> list[str]:
+    evidence = _clean_evidence_list(exchange.get("evidence"))
+    data_source = exchange.get("data_source") or exchange.get("dataSource")
+    citations: list[str] = []
+    if isinstance(data_source, dict):
+        citations = _clean_evidence_list(data_source.get("citations"))
+    combined = []
+    for item in evidence + citations:
+        if item and item not in combined:
+            combined.append(item)
+    return combined
+
+
+def _match_source_references(
+    evidence: list[str],
+    reference_index: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not evidence:
+        return []
+    doi_map = reference_index.get("doi", {})
+    url_map = reference_index.get("url", {})
+    text_entries = reference_index.get("text_entries", [])
+
+    matched: dict[str, dict[str, Any]] = {}
+    for item in evidence:
+        text = str(item).strip()
+        if not text:
+            continue
+        doi = _extract_doi_from_text(text)
+        if doi:
+            ref = doi_map.get(doi.lower())
+            if isinstance(ref, dict):
+                ref_id = ref.get("@refObjectId")
+                if ref_id:
+                    matched[str(ref_id)] = ref
+                continue
+        url = _extract_reference_url(text)
+        if url:
+            url_key = _normalize_reference_url(url)
+            ref = url_map.get(url_key)
+            if ref is None and url_key.rstrip("/") != url_key:
+                ref = url_map.get(url_key.rstrip("/"))
+            if isinstance(ref, dict):
+                ref_id = ref.get("@refObjectId")
+                if ref_id:
+                    matched[str(ref_id)] = ref
+                continue
+            doi = _extract_doi_from_text(url_key)
+            if doi:
+                ref = doi_map.get(doi.lower())
+                if isinstance(ref, dict):
+                    ref_id = ref.get("@refObjectId")
+                    if ref_id:
+                        matched[str(ref_id)] = ref
+                    continue
+        norm = _normalize_reference_text(text)
+        if not norm:
+            continue
+        for key, ref in text_entries:
+            if len(key) < 12:
+                continue
+            if key in norm or norm in key:
+                ref_id = ref.get("@refObjectId") if isinstance(ref, dict) else None
+                if ref_id:
+                    matched[str(ref_id)] = ref
+    return list(matched.values())
+
+
+def _extract_mineru_text_blocks(payload: Any, *, max_blocks: int) -> list[str]:
+    texts: list[str] = []
+
+    def add_text(value: Any) -> None:
+        if not value:
+            return
+        text = str(value).strip()
+        if text:
+            texts.append(text)
+
+    def handle_item(item: Any) -> None:
+        if not isinstance(item, dict):
+            return
+        text = item.get("text") or item.get("content")
+        if text:
+            add_text(text)
+            return
+        blocks = item.get("blocks")
+        if isinstance(blocks, list):
+            for block in blocks:
+                if len(texts) >= max_blocks:
+                    return
+                if isinstance(block, dict):
+                    add_text(block.get("text") or block.get("content"))
+
+    if isinstance(payload, dict):
+        if "result" in payload:
+            payload = payload.get("result")
+        elif "pages" in payload:
+            payload = payload.get("pages")
+
+    if isinstance(payload, list):
+        for item in payload:
+            if len(texts) >= max_blocks:
+                break
+            handle_item(item)
+
+    return texts
+
+
+def _collect_snippet(texts: list[str], *, max_chars: int) -> str:
+    if not texts:
+        return ""
+    chunks: list[str] = []
+    total = 0
+    for text in texts:
+        if not text:
+            continue
+        if total + len(text) + 1 > max_chars:
+            break
+        chunks.append(text)
+        total += len(text) + 1
+    return "\n".join(chunks).strip()
+
+
+def _normalize_doi(value: str | None) -> str:
+    if not value:
+        return ""
+    return value.strip().lower().replace("_", "/")
+
+
+def _normalize_si_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _should_keep_si_paragraph(text: str) -> bool:
+    if re.search(r"\d", text):
+        return True
+    lowered = text.lower()
+    return any(token in lowered for token in ("table", "figure", "supplement", "appendix", "inventory", "input", "output"))
+
+
+def _format_table_rows(rows: list[list[str]], *, max_rows: int, max_cols: int) -> list[str]:
+    lines: list[str] = []
+    for idx, row in enumerate(rows):
+        if len(lines) >= max_rows:
+            break
+        cleaned = [_normalize_si_text(cell or "") for cell in row[:max_cols]]
+        while cleaned and not cleaned[-1]:
+            cleaned.pop()
+        if not cleaned:
+            continue
+        row_text = " | ".join(cleaned)
+        if idx == 0 or re.search(r"\d", row_text):
+            lines.append(row_text)
+    return lines
+
+
+def _extract_docx_table_rows(table: ET.Element) -> list[list[str]]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    rows: list[list[str]] = []
+    for row in table.findall(".//w:tr", ns):
+        cells: list[str] = []
+        for cell in row.findall(".//w:tc", ns):
+            cell_texts = [text.text or "" for text in cell.findall(".//w:t", ns)]
+            cell_text = _normalize_si_text("".join(cell_texts))
+            cells.append(cell_text)
+        while cells and not cells[-1]:
+            cells.pop()
+        if cells:
+            rows.append(cells)
+    return rows
+
+
+def _extract_docx_text(path: Path) -> str:
+    try:
+        with ZipFile(path) as zip_file:
+            xml_payload = zip_file.read("word/document.xml")
+    except (OSError, KeyError):
+        return ""
+    try:
+        root = ET.fromstring(xml_payload)
+    except ET.ParseError:
+        return ""
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    body = root.find("w:body", ns)
+    if body is None:
+        return ""
+    table_lines: list[str] = []
+    para_lines: list[str] = []
+    table_count = 0
+    para_count = 0
+    for child in body:
+        tag = child.tag.split("}")[-1]
+        if tag == "tbl" and table_count < SI_DOCX_MAX_TABLES:
+            rows = _extract_docx_table_rows(child)
+            if rows:
+                table_count += 1
+                table_lines.append(f"Table {table_count}:")
+                table_lines.extend(_format_table_rows(rows, max_rows=SI_TABLE_MAX_ROWS, max_cols=SI_TABLE_MAX_COLS))
+        elif tag == "p" and para_count < SI_DOCX_MAX_PARAGRAPHS:
+            texts = [text.text or "" for text in child.findall(".//w:t", ns)]
+            paragraph = _normalize_si_text("".join(texts))
+            if not paragraph:
+                continue
+            if _should_keep_si_paragraph(paragraph):
+                para_lines.append(paragraph)
+                para_count += 1
+    return "\n".join(table_lines + para_lines).strip()
+
+
+def _extract_delimited_text(path: Path, *, delimiter: str) -> str:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
+            reader = csv.reader(handle, delimiter=delimiter)
+            lines: list[str] = []
+            for row_idx, row in enumerate(reader):
+                if row_idx >= SI_TABLE_MAX_ROWS:
+                    break
+                cleaned = [_normalize_si_text(cell) for cell in row[:SI_TABLE_MAX_COLS]]
+                while cleaned and not cleaned[-1]:
+                    cleaned.pop()
+                if not cleaned:
+                    continue
+                row_text = " | ".join(cleaned)
+                if row_idx == 0 or re.search(r"\d", row_text):
+                    lines.append(row_text)
+            return "\n".join(lines).strip()
+    except OSError:
+        return ""
+
+
+def _column_index(cell_ref: str) -> int:
+    match = re.match(r"([A-Z]+)", cell_ref.upper())
+    if not match:
+        return 0
+    letters = match.group(1)
+    value = 0
+    for char in letters:
+        value = value * 26 + (ord(char) - ord("A") + 1)
+    return max(value - 1, 0)
+
+
+def _extract_xlsx_text(path: Path) -> str:
+    ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    try:
+        with ZipFile(path) as zip_file:
+            shared_strings: list[str] = []
+            try:
+                shared_root = ET.fromstring(zip_file.read("xl/sharedStrings.xml"))
+                for item in shared_root.findall("s:si", ns):
+                    texts = [node.text or "" for node in item.findall(".//s:t", ns)]
+                    shared_strings.append(_normalize_si_text("".join(texts)))
+            except KeyError:
+                shared_strings = []
+
+            sheet_names = sorted(
+                name for name in zip_file.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            )
+            lines: list[str] = []
+            for sheet_idx, sheet_name in enumerate(sheet_names[:SI_XLSX_MAX_SHEETS], start=1):
+                try:
+                    sheet_root = ET.fromstring(zip_file.read(sheet_name))
+                except ET.ParseError:
+                    continue
+                rows = sheet_root.findall(".//s:sheetData/s:row", ns)
+                if not rows:
+                    continue
+                lines.append(f"Sheet {sheet_idx}:")
+                for row_idx, row in enumerate(rows):
+                    if row_idx >= SI_TABLE_MAX_ROWS:
+                        break
+                    values: dict[int, str] = {}
+                    for cell in row.findall("s:c", ns):
+                        ref = cell.get("r") or ""
+                        col_idx = _column_index(ref)
+                        cell_type = cell.get("t")
+                        value = ""
+                        if cell_type == "s":
+                            index_text = cell.findtext("s:v", default="", namespaces=ns)
+                            try:
+                                index = int(index_text)
+                                if 0 <= index < len(shared_strings):
+                                    value = shared_strings[index]
+                            except ValueError:
+                                value = ""
+                        elif cell_type == "inlineStr":
+                            texts = [node.text or "" for node in cell.findall(".//s:t", ns)]
+                            value = _normalize_si_text("".join(texts))
+                        else:
+                            value = cell.findtext("s:v", default="", namespaces=ns).strip()
+                        value = _normalize_si_text(value)
+                        if value:
+                            values[col_idx] = value
+                    if not values:
+                        continue
+                    max_idx = min(max(values), SI_TABLE_MAX_COLS - 1)
+                    row_cells = [values.get(idx, "") for idx in range(max_idx + 1)]
+                    row_text = " | ".join(_normalize_si_text(cell) for cell in row_cells)
+                    if row_idx == 0 or re.search(r"\d", row_text):
+                        lines.append(row_text)
+    except OSError:
+        return ""
+    return "\n".join(lines).strip()
+
+
+def _si_source_rank(suffix: str) -> tuple[str, int]:
+    if suffix == ".docx":
+        return "docx", 0
+    if suffix in {".xlsx", ".csv", ".tsv"}:
+        return "tabular", 1
+    if suffix in {".txt", ".md", ".markdown"}:
+        return "text", 2
+    return "other", 9
+
+
+def _read_si_content(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".txt", ".md", ".markdown"}:
+        try:
+            return path.read_text(encoding="utf-8", errors="ignore").strip()
+        except OSError:
+            return ""
+    if suffix == ".docx":
+        return _extract_docx_text(path)
+    if suffix == ".csv":
+        return _extract_delimited_text(path, delimiter=",")
+    if suffix == ".tsv":
+        return _extract_delimited_text(path, delimiter="\t")
+    if suffix == ".xlsx":
+        return _extract_xlsx_text(path)
+    return ""
+
+
+def _iter_si_text_entries(scientific_references: dict[str, Any]) -> list[dict[str, Any]]:
+    downloads = scientific_references.get("si_downloads")
+    entries = downloads.get("entries") if isinstance(downloads, dict) else None
+    if not isinstance(entries, list):
+        return []
+    results: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        path_text = entry.get("path")
+        if not isinstance(path_text, str) or not path_text.strip():
+            continue
+        path = Path(path_text)
+        if not path.exists():
+            continue
+        content = _read_si_content(path)
+        if not content:
+            continue
+        snippet = content[:SI_SNIPPET_MAX_CHARS].strip()
+        if not snippet:
+            continue
+        source_type, source_rank = _si_source_rank(path.suffix.lower())
+        results.append(
+            {
+                "doi": entry.get("doi"),
+                "snippet": snippet,
+                "source_path": str(path),
+                "source_type": source_type,
+                "source_rank": source_rank,
+            }
+        )
+    return results
+
+
+def _load_si_snippets(scientific_references: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = scientific_references.get("si_mineru_outputs")
+    if not isinstance(entries, list):
+        entries = []
+    primary_dois: list[str] = []
+    clusters = scientific_references.get(REFERENCE_CLUSTERS_KEY)
+    if isinstance(clusters, dict):
+        primary_id = str(clusters.get("primary_cluster_id") or "").strip()
+        clusters_list = clusters.get("clusters")
+        if primary_id and isinstance(clusters_list, list):
+            for cluster in clusters_list:
+                if not isinstance(cluster, dict):
+                    continue
+                if str(cluster.get("cluster_id") or "").strip() == primary_id:
+                    primary_dois = [str(item).strip() for item in (cluster.get("dois") or []) if str(item).strip()]
+                    break
+    primary_set = {_normalize_doi(item) for item in primary_dois if item}
+    candidates: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    def add_candidate(
+        doi: str | None,
+        snippet: str,
+        source_path: str,
+        *,
+        source_type: str,
+        source_rank: int,
+    ) -> None:
+        norm_doi = _normalize_doi(doi)
+        key = (norm_doi, source_path)
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
+        candidates.append(
+            {
+                "doi": doi or None,
+                "normalized_doi": norm_doi,
+                "snippet": snippet,
+                "source_path": source_path,
+                "source_type": source_type,
+                "source_rank": source_rank,
+            }
+        )
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        output_path = entry.get("output_path")
+        if not isinstance(output_path, str) or not output_path.strip():
+            continue
+        path = Path(output_path)
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        blocks = _extract_mineru_text_blocks(payload, max_blocks=SI_SNIPPET_MAX_BLOCKS)
+        snippet = _collect_snippet(blocks, max_chars=SI_SNIPPET_MAX_CHARS)
+        if not snippet:
+            continue
+        doi = str(entry.get("doi") or "").strip() or None
+        add_candidate(doi, snippet, str(path), source_type="mineru", source_rank=3)
+
+    for entry in _iter_si_text_entries(scientific_references):
+        doi = str(entry.get("doi") or "").strip() or None
+        snippet = entry.get("snippet")
+        source_path = entry.get("source_path")
+        source_type = str(entry.get("source_type") or "text")
+        source_rank = int(entry.get("source_rank") or 2)
+        if not isinstance(snippet, str) or not isinstance(source_path, str):
+            continue
+        add_candidate(doi, snippet, source_path, source_type=source_type, source_rank=source_rank)
+
+    if primary_set:
+        candidates.sort(
+            key=lambda item: (
+                item.get("normalized_doi") not in primary_set,
+                item.get("source_rank", 9),
+                item.get("source_path") or "",
+            )
+        )
+    else:
+        candidates.sort(key=lambda item: (item.get("source_rank", 9), item.get("source_path") or ""))
+
+    snippets: list[dict[str, Any]] = []
+    seen_dois: set[str] = set()
+    for candidate in candidates:
+        if len(snippets) >= SI_SNIPPET_MAX_FILES:
+            break
+        norm_doi = candidate.get("normalized_doi") or ""
+        if norm_doi and norm_doi in seen_dois:
+            continue
+        snippets.append(
+            {
+                "doi": candidate.get("doi"),
+                "snippet": candidate.get("snippet"),
+                "source_path": candidate.get("source_path"),
+            }
+        )
+        if norm_doi:
+            seen_dois.add(norm_doi)
+    return snippets
+
+
+def _format_fulltext_entries_for_prompt(
+    fulltext_entries: list[dict[str, Any]],
+    *,
+    max_records: int = 2,
+    max_chars: int = 1600,
+) -> str:
+    if not fulltext_entries:
+        return ""
+    lines = ["Fulltext References:"]
+    for entry in fulltext_entries:
+        if not isinstance(entry, dict):
+            continue
+        doi = str(entry.get("doi") or "").strip()
+        records = entry.get("records") or []
+        records_list = [item for item in records if isinstance(item, dict)]
+        snippet = _collect_article_text(records_list, max_chars=max_chars, max_records=max_records)
+        if not snippet:
+            continue
+        label = f"[{doi}]" if doi else "[ref]"
+        lines.append(f"{label} {snippet}")
+    return "\n".join(lines)
+
+
+def _normalize_exchange_name(value: str | None) -> str:
+    if not value:
+        return ""
+    text = _strip_flow_label(str(value)).strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _coerce_amount_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_exchange_value_candidates(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for proc in raw:
+        if not isinstance(proc, dict):
+            continue
+        process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+        values = proc.get("exchanges") or proc.get("values") or []
+        if not isinstance(values, list):
+            continue
+        cleaned_values: list[dict[str, Any]] = []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            name = _strip_flow_label(str(item.get("exchangeName") or item.get("exchange_name") or item.get("name") or "").strip())
+            if not name:
+                continue
+            amount = _coerce_amount_text(item.get("amount"))
+            unit = str(item.get("unit") or "").strip()
+            source_type = _normalize_source_type(
+                item.get("source_type") or item.get("sourceType") or (item.get("data_source") or {}).get("source_type")
+            )
+            evidence = item.get("evidence") or item.get("citations") or []
+            if isinstance(evidence, str):
+                evidence_list = [evidence]
+            elif isinstance(evidence, list):
+                evidence_list = [str(entry).strip() for entry in evidence if str(entry).strip()]
+            else:
+                evidence_list = []
+            cleaned_values.append(
+                {
+                    "exchangeName": name,
+                    "amount": amount,
+                    "unit": unit,
+                    "source_type": source_type,
+                    "evidence": evidence_list,
+                }
+            )
+        if cleaned_values:
+            normalized.append({"process_id": process_id, "exchanges": cleaned_values})
+    return normalized
+
+
+def _apply_exchange_value_candidates(
+    process_exchanges: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not candidates:
+        return process_exchanges
+    candidate_map: dict[tuple[str, str], dict[str, Any]] = {}
+    for proc in candidates:
+        if not isinstance(proc, dict):
+            continue
+        process_id = str(proc.get("process_id") or "").strip()
+        for item in proc.get("exchanges") or []:
+            if not isinstance(item, dict):
+                continue
+            name = _normalize_exchange_name(item.get("exchangeName"))
+            if not name:
+                continue
+            key = (process_id, name)
+            if key not in candidate_map:
+                candidate_map[key] = item
+
+    updated: list[dict[str, Any]] = []
+    for proc in process_exchanges:
+        if not isinstance(proc, dict):
+            continue
+        process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+        exchanges = proc.get("exchanges") or []
+        cleaned: list[dict[str, Any]] = []
+        for exchange in exchanges:
+            if not isinstance(exchange, dict):
+                continue
+            name = _normalize_exchange_name(exchange.get("exchangeName"))
+            candidate = candidate_map.get((process_id, name))
+            if candidate:
+                amount = candidate.get("amount")
+                unit = candidate.get("unit")
+                source_type = candidate.get("source_type")
+                evidence = candidate.get("evidence") or []
+                if amount:
+                    exchange["amount"] = amount
+                if unit:
+                    exchange["unit"] = unit
+                if source_type:
+                    exchange["data_source"] = {"source_type": source_type, "citations": evidence}
+                if evidence:
+                    existing = exchange.get("evidence") or []
+                    if isinstance(existing, list):
+                        merged = existing + [item for item in evidence if item not in existing]
+                    else:
+                        merged = evidence
+                    exchange["evidence"] = merged
+            cleaned.append(exchange)
+        updated.append({"process_id": process_id, "exchanges": cleaned})
+    return updated
+
+
+def _normalize_steps(value: Any) -> list[str]:
+    if not value:
+        return []
+    raw = value if isinstance(value, list) else [value]
+    cleaned: list[str] = []
+    for item in raw:
+        text = str(item).strip().lower().replace(" ", "").replace("-", "")
+        if text in {"step1", "s1", "1"}:
+            cleaned.append("step1")
+        elif text in {"step2", "s2", "2"}:
+            cleaned.append("step2")
+        elif text in {"step3", "s3", "3"}:
+            cleaned.append("step3")
+    return sorted(set(cleaned))
+
+
+def _usage_tags_from_supported_steps(supported_steps: list[str], decision: str | None = None) -> list[str]:
+    tags: list[str] = []
+    normalized = {item.strip().lower() for item in supported_steps if str(item).strip()}
+    if "step1" in normalized:
+        tags.append("tech_route")
+    if "step2" in normalized:
+        tags.append("process_split")
+    if "step3" in normalized:
+        tags.append("exchange_values")
+    if not tags and decision and str(decision).strip().lower() == "unusable":
+        tags.append("background_only")
+    return tags
+
+
+_USAGE_TAGS_USED = {"tech_route", "process_split", "exchange_values"}
+_USAGE_TAGS_ALL = _USAGE_TAGS_USED | {"background_only"}
+
+
+def _normalize_usage_tags(value: Any) -> list[str]:
+    if not value:
+        return []
+    items = value if isinstance(value, list) else [value]
+    tags: list[str] = []
+    for item in items:
+        text = str(item).strip().lower()
+        if text in _USAGE_TAGS_ALL and text not in tags:
+            tags.append(text)
+    if "background_only" in tags and len(tags) > 1:
+        tags = [tag for tag in tags if tag != "background_only"]
+    return tags
+
+
+def _collect_usage_tag_map(scientific_references: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    doi_map: dict[str, set[str]] = {}
+    key_map: dict[str, set[str]] = {}
+    tagged_dois: set[str] = set()
+
+    def add_tags(*, doi: str | None, key: str | None, tags: list[str]) -> None:
+        if not tags:
+            return
+        if doi:
+            doi_map.setdefault(doi, set()).update(tags)
+        if key:
+            key_map.setdefault(key, set()).update(tags)
+
+    usage_tagging = scientific_references.get("usage_tagging")
+    results = usage_tagging.get("results") if isinstance(usage_tagging, dict) else None
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            doi = _normalize_doi(item.get("doi"))
+            key = str(item.get("key") or "").strip() or None
+            tags = _normalize_usage_tags(item.get("usage_tags") or item.get("usageTags"))
+            add_tags(doi=doi or None, key=key, tags=tags)
+            if doi:
+                tagged_dois.add(doi)
+
+    clusters = scientific_references.get(REFERENCE_CLUSTERS_KEY)
+    summaries = clusters.get("reference_summaries") if isinstance(clusters, dict) else None
+    if isinstance(summaries, list):
+        for summary in summaries:
+            if not isinstance(summary, dict):
+                continue
+            doi = _normalize_doi(summary.get("doi"))
+            if doi and doi in tagged_dois:
+                continue
+            tags = _normalize_usage_tags(summary.get("usage_tags") or summary.get("usageTags"))
+            add_tags(doi=doi or None, key=None, tags=tags)
+
+    usability = scientific_references.get("usability")
+    usability_results = usability.get("results") if isinstance(usability, dict) else None
+    if isinstance(usability_results, list):
+        for item in usability_results:
+            if not isinstance(item, dict):
+                continue
+            doi = _normalize_doi(item.get("doi"))
+            if doi and doi in tagged_dois:
+                continue
+            supported_steps = _normalize_steps(item.get("supported_steps"))
+            decision = item.get("decision")
+            tags = _usage_tags_from_supported_steps(supported_steps, decision)
+            add_tags(doi=doi or None, key=None, tags=tags)
+
+    return doi_map, key_map
+
+
+def _reference_is_used(info: dict[str, Any], doi_map: dict[str, set[str]], key_map: dict[str, set[str]]) -> bool:
+    if not doi_map and not key_map:
+        return True
+    doi = _normalize_doi(info.get("doi"))
+    key = str(info.get("key") or "").strip()
+    tags: set[str] = set()
+    if doi:
+        tags.update(doi_map.get(doi, set()))
+    if key:
+        tags.update(key_map.get(key, set()))
+    if not tags:
+        return False
+    return any(tag in _USAGE_TAGS_USED for tag in tags)
+
+
+def _filter_reference_infos_by_usage(
+    infos: list[dict[str, Any]],
+    *,
+    doi_map: dict[str, set[str]],
+    key_map: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    if not doi_map and not key_map:
+        return infos
+    return [info for info in infos if _reference_is_used(info, doi_map, key_map)]
+
+
+def _clean_evidence_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    cleaned = [str(item).strip() for item in items if str(item).strip()]
+    return cleaned
+
+
+def _normalize_source_type(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    if text in {"literature", "paper", "reference", "journal"}:
+        return "literature"
+    if text in {"si", "supplement", "supplementary", "supporting", "appendix"}:
+        return "si"
+    if text in {"expert_judgement", "expert judgement", "expert", "common_sense"}:
+        return "expert_judgement"
+    return text
+
+
+def _infer_source_type_from_evidence(evidence: list[str]) -> str:
+    for item in evidence:
+        lower = item.lower()
+        if "supplement" in lower or "supporting" in lower or "appendix" in lower or "si " in lower:
+            return "si"
+    return "literature"
+
+
+def _exchange_has_evidence(exchange: dict[str, Any]) -> bool:
+    evidence = _clean_evidence_list(exchange.get("evidence"))
+    if evidence:
+        return True
+    data_source = exchange.get("data_source") or exchange.get("dataSource")
+    if isinstance(data_source, dict):
+        citations = _clean_evidence_list(data_source.get("citations"))
+        if citations:
+            return True
+        source_type = _normalize_source_type(data_source.get("source_type") or data_source.get("sourceType"))
+        return bool(source_type and source_type != "expert_judgement")
+    if isinstance(data_source, str):
+        return _normalize_source_type(data_source) not in {"", "expert_judgement"}
+    return False
+
+
+def _apply_exchange_evidence_defaults(
+    exchange: dict[str, Any],
+    *,
+    use_references: bool,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    evidence = _clean_evidence_list(exchange.get("evidence"))
+    data_source = exchange.get("data_source")
+    if isinstance(data_source, dict):
+        data_source = dict(data_source)
+    elif isinstance(data_source, str):
+        data_source = {"source_type": data_source}
+    else:
+        legacy = exchange.get("dataSource")
+        if isinstance(legacy, dict):
+            data_source = dict(legacy)
+        elif isinstance(legacy, str):
+            data_source = {"source_type": legacy}
+        else:
+            data_source = {}
+    source_type = _normalize_source_type(data_source.get("source_type") or data_source.get("sourceType"))
+    if not source_type:
+        if evidence:
+            source_type = _infer_source_type_from_evidence(evidence)
+        else:
+            source_type = "expert_judgement" if not use_references else "expert_judgement"
+    data_source = {**data_source, "source_type": source_type}
+    if evidence and not data_source.get("citations"):
+        data_source["citations"] = evidence
+    if source_type == "expert_judgement" and fallback_reason:
+        if not data_source.get("reason"):
+            data_source["reason"] = fallback_reason
+        if not evidence:
+            evidence = [fallback_reason]
+    exchange["data_source"] = data_source
+    exchange["evidence"] = evidence
+    if "dataSource" in exchange:
+        exchange.pop("dataSource")
+    return exchange
+
+
+def _is_key_exchange(exchange: dict[str, Any]) -> bool:
+    flag = exchange.get("is_key_exchange")
+    if isinstance(flag, bool):
+        return flag
+    flag = exchange.get("isKeyExchange")
+    if isinstance(flag, bool):
+        return flag
+    if bool(exchange.get("is_reference_flow")):
+        return True
+    flow_type = str(exchange.get("flow_type") or "").strip().lower()
+    direction = str(exchange.get("exchangeDirection") or "").strip().lower()
+    name = str(exchange.get("exchangeName") or "").strip().lower()
+    if flow_type == "elementary":
+        return True
+    if direction == "input" and any(keyword in name for keyword in _ENERGY_KEYWORDS):
+        return True
+    return False
+
+
+def _compute_coverage_metrics(process_exchanges: list[dict[str, Any]]) -> dict[str, Any]:
+    total_processes = 0
+    covered_processes = 0
+    key_total = 0
+    key_covered = 0
+    total_exchanges = 0
+    total_covered = 0
+    for proc in process_exchanges:
+        if not isinstance(proc, dict):
+            continue
+        exchanges = proc.get("exchanges") or []
+        if not isinstance(exchanges, list):
+            exchanges = []
+        total_processes += 1
+        process_has_evidence = False
+        for exchange in exchanges:
+            if not isinstance(exchange, dict):
+                continue
+            total_exchanges += 1
+            has_evidence = _exchange_has_evidence(exchange)
+            if has_evidence:
+                total_covered += 1
+                process_has_evidence = True
+            if _is_key_exchange(exchange):
+                key_total += 1
+                if has_evidence:
+                    key_covered += 1
+        if process_has_evidence:
+            covered_processes += 1
+    if key_total == 0 and total_exchanges:
+        key_total = total_exchanges
+        key_covered = total_covered
+    process_coverage = covered_processes / total_processes if total_processes else 0.0
+    exchange_value_coverage = key_covered / key_total if key_total else 0.0
+    return {
+        "process_total": total_processes,
+        "process_covered": covered_processes,
+        "process_coverage": round(process_coverage, 3),
+        "key_exchange_total": key_total,
+        "key_exchange_covered": key_covered,
+        "exchange_value_coverage": round(exchange_value_coverage, 3),
+    }
+
+
+def _append_coverage_history(state: ProcessFromFlowState, metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    history = state.get("coverage_history")
+    if not isinstance(history, list):
+        history = []
+    entry = dict(metrics)
+    entry["evaluated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    history.append(entry)
+    return history
+
+
+def _should_fallback_to_expert(scientific_references: dict[str, Any] | None) -> bool:
+    if not isinstance(scientific_references, dict):
+        return False
+    usability = scientific_references.get("usability")
+    results = usability.get("results") if isinstance(usability, dict) else None
+    if not isinstance(results, list) or not results:
+        return False
+    decisions = [str(item.get("decision") or "").strip().lower() for item in results if isinstance(item, dict)]
+    hints = [str(item.get("si_hint") or "").strip().lower() for item in results if isinstance(item, dict)]
+    if decisions and all(item == "unusable" for item in decisions) and hints and all(item == "none" for item in hints):
+        return True
+    return False
+
+
+def _evaluate_stop_rules(state: ProcessFromFlowState, metrics: dict[str, Any]) -> dict[str, Any]:
+    process_coverage = float(metrics.get("process_coverage") or 0.0)
+    exchange_coverage = float(metrics.get("exchange_value_coverage") or 0.0)
+    history = state.get("coverage_history")
+    delta = None
+    if isinstance(history, list) and history:
+        prev = history[-1] if isinstance(history[-1], dict) else {}
+        prev_process = float(prev.get("process_coverage") or 0.0)
+        prev_exchange = float(prev.get("exchange_value_coverage") or 0.0)
+        delta = max(process_coverage, exchange_coverage) - max(prev_process, prev_exchange)
+    fallback_to_expert = _should_fallback_to_expert(state.get("scientific_references"))
+    if fallback_to_expert:
+        return {
+            "should_stop": True,
+            "action": "expert_judgement",
+            "reason": "no_usable_references_and_no_si_hint",
+            "process_coverage": process_coverage,
+            "exchange_value_coverage": exchange_coverage,
+            "coverage_delta": delta,
+        }
+    if process_coverage >= STOP_RULE_PROCESS_COVERAGE and exchange_coverage >= STOP_RULE_EXCHANGE_COVERAGE:
+        return {
+            "should_stop": True,
+            "action": "stop_retrieval",
+            "reason": "coverage_threshold_met",
+            "process_coverage": process_coverage,
+            "exchange_value_coverage": exchange_coverage,
+            "coverage_delta": delta,
+        }
+    if delta is not None and delta < STOP_RULE_MIN_DELTA:
+        return {
+            "should_stop": True,
+            "action": "stop_retrieval",
+            "reason": "coverage_delta_below_threshold",
+            "process_coverage": process_coverage,
+            "exchange_value_coverage": exchange_coverage,
+            "coverage_delta": delta,
+        }
+    return {
+        "should_stop": False,
+        "action": "continue_retrieval",
+        "reason": "coverage_below_threshold",
+        "process_coverage": process_coverage,
+        "exchange_value_coverage": exchange_coverage,
+        "coverage_delta": delta,
+    }
+
+
+def _cluster_scientific_references(
+    *,
+    llm: LanguageModelProtocol,
+    state: ProcessFromFlowState,
+    fulltext_entries: list[dict[str, Any]],
+    flow_summary: dict[str, Any],
+    operation: str,
+) -> dict[str, Any] | None:
+    summaries = _build_reference_cluster_summaries(
+        fulltext_entries,
+        usability_map=_reference_usability_map(state),
+    )
+    summaries = [item for item in summaries if item.get("doi")]
+    if not summaries:
+        return None
+
+    payload = {
+        "prompt": REFERENCE_CLUSTER_PROMPT,
+        "context": {
+            "operation": operation,
+            "flow": flow_summary,
+            "reference_summaries": summaries,
+        },
+        "response_format": {"type": "json_object"},
+    }
+    raw = llm.invoke(payload)
+    data = _ensure_dict(raw)
+
+    clusters_raw = data.get("clusters")
+    clusters: list[dict[str, Any]] = []
+    if isinstance(clusters_raw, list):
+        for idx, cluster in enumerate(clusters_raw, start=1):
+            if not isinstance(cluster, dict):
+                continue
+            cluster_id = str(cluster.get("cluster_id") or f"C{idx}").strip()
+            dois = [str(item).strip() for item in (cluster.get("dois") or []) if str(item).strip()]
+            if not dois:
+                continue
+            clusters.append(
+                {
+                    "cluster_id": cluster_id,
+                    "dois": dois,
+                    "system_boundary": str(cluster.get("system_boundary") or "unspecified").strip(),
+                    "granularity": str(cluster.get("granularity") or "unknown").strip(),
+                    "key_process_chain": [str(item).strip() for item in (cluster.get("key_process_chain") or []) if str(item).strip()],
+                    "key_intermediate_flows": [str(item).strip() for item in (cluster.get("key_intermediate_flows") or []) if str(item).strip()],
+                    "supported_steps": _normalize_steps(cluster.get("supported_steps")),
+                    "recommendation": str(cluster.get("recommendation") or "supplement").strip(),
+                    "reason": str(cluster.get("reason") or "").strip(),
+                }
+            )
+
+    if not clusters:
+        all_dois = [item.get("doi") for item in summaries if item.get("doi")]
+        clusters = [
+            {
+                "cluster_id": "C1",
+                "dois": all_dois,
+                "system_boundary": "unspecified",
+                "granularity": "unknown",
+                "key_process_chain": [],
+                "key_intermediate_flows": [],
+                "supported_steps": [],
+                "recommendation": "primary",
+                "reason": "Fallback: unable to cluster references reliably.",
+            }
+        ]
+
+    primary_cluster_id = str(data.get("primary_cluster_id") or clusters[0]["cluster_id"]).strip()
+    selection_guidance = str(data.get("selection_guidance") or "").strip()
+
+    return {
+        "source_step": REFERENCE_FULLTEXT_KEY,
+        "input_dois": [item.get("doi") for item in summaries if item.get("doi")],
+        "reference_summaries": summaries,
+        "clusters": clusters,
+        "primary_cluster_id": primary_cluster_id,
+        "selection_guidance": selection_guidance,
+    }
+
+
+def _classification_terms(classification: list[dict[str, Any]] | None, *, max_items: int = 3) -> str:
+    if not classification:
+        return ""
+    texts = [str(item.get("#text") or "").strip() for item in classification if isinstance(item, dict)]
+    texts = [item for item in texts if item]
+    if not texts:
+        return ""
+    if len(texts) > max_items:
+        texts = texts[-max_items:]
+    return " ".join(texts)
+
+
+def _flow_reference_context(flow_summary: dict[str, Any], *, include_comment: bool = True) -> str:
+    treatment = _first_nonempty(flow_summary.get("treatment_en"), flow_summary.get("treatment_zh"))
+    mix = _first_nonempty(flow_summary.get("mix_en"), flow_summary.get("mix_zh"))
+    general = ""
+    if include_comment:
+        general = _first_nonempty(flow_summary.get("general_comment_en"), flow_summary.get("general_comment_zh"))
+    classification = _classification_terms(flow_summary.get("classification"))
+    parts = [treatment, mix, general, classification]
+    cleaned = [_compact_text(item, limit=160) for item in parts if item]
+    return " ".join(cleaned)
+
+
+def _update_scientific_references(
+    state: ProcessFromFlowState,
+    *,
+    step: str,
+    query: str,
+    references: list[dict[str, Any]],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    existing = state.get("scientific_references")
+    updated: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
+    payload: dict[str, Any] = {
+        "query": query,
+        "references": references,
+    }
+    if extra:
+        payload.update(extra)
+    updated[step] = payload
+    return updated
+
 
 FlowSearchFn = Callable[[FlowQuery], tuple[list[FlowCandidate], list[object]]]
 
+_DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\])>,;\"']+", re.IGNORECASE)
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_URL_PATTERN = re.compile(r"https?://[^\s\])>]+", re.IGNORECASE)
 _FLOW_LABEL_PATTERN = re.compile(r"^f\\d+\\s*[:\\-]\\s*", re.IGNORECASE)
 _FLOW_NAME_FIELDS = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
 _FLOW_QUALIFIER_FIELDS = ("flowProperties",)
@@ -100,6 +2112,7 @@ _EMISSION_KEYWORDS = (
 )
 _WATER_KEYWORDS = ("water", "wastewater", "runoff", "leaching", "leachate", "effluent", "drainage")
 _SOIL_KEYWORDS = ("soil", "land", "ground", "field", "sediment")
+_ENERGY_KEYWORDS = ("electricity", "diesel", "gasoline", "natural gas", "steam", "heat", "fuel", "coal")
 
 
 class ProcessFromFlowState(TypedDict, total=False):
@@ -116,9 +2129,17 @@ class ProcessFromFlowState(TypedDict, total=False):
     selected_route_id: str
     processes: list[dict[str, Any]]
     process_exchanges: list[dict[str, Any]]
+    exchange_value_candidates: list[dict[str, Any]]
+    exchange_values_applied: bool
     matched_process_exchanges: list[dict[str, Any]]
     process_datasets: list[dict[str, Any]]
+    source_datasets: list[dict[str, Any]]
+    source_references: list[dict[str, Any]]
     step_markers: dict[str, bool]
+    scientific_references: dict[str, Any]
+    coverage_metrics: dict[str, Any]
+    coverage_history: list[dict[str, Any]]
+    stop_rule_decision: dict[str, Any]
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:
@@ -764,8 +2785,11 @@ def _build_langgraph(
     flow_search_fn: FlowSearchFn,
     selector: CandidateSelector,
     translator: Translator | None,
+    mcp_client: MCPToolClient | None = None,
 ) -> Any:
     graph = StateGraph(ProcessFromFlowState)
+    # Create or use provided MCP client for scientific literature search
+    use_mcp_client = mcp_client
 
     def load_flow(state: ProcessFromFlowState) -> ProcessFromFlowState:
         path = Path(state["flow_path"])
@@ -787,6 +2811,12 @@ def _build_langgraph(
                 "key_outputs": [],
                 "assumptions": [str(item) for item in (state.get("assumptions") or []) if str(item).strip()],
                 "scope": str(state.get("scope") or "").strip(),
+                "supported_dois": [],
+                "route_evidence": {
+                    "source_type": "expert_judgement",
+                    "citations": [],
+                    "notes": "Route summary provided without literature evidence.",
+                },
             }
             return {
                 "technology_routes": [route],
@@ -807,6 +2837,12 @@ def _build_langgraph(
                 "key_outputs": [base_name],
                 "assumptions": ["No quantified inventory available; amounts are placeholders."],
                 "scope": "Generic scope",
+                "supported_dois": [],
+                "route_evidence": {
+                    "source_type": "expert_judgement",
+                    "citations": [],
+                    "notes": "No LLM available; route uses generic assumptions.",
+                },
             }
             return {
                 "technical_description": route_summary,
@@ -815,11 +2851,77 @@ def _build_langgraph(
                 "technology_routes": [route],
                 "step_markers": _update_step_markers(state, "step1"),
             }
+        # Search for scientific references before invoking LLM
+        flow_summary = state.get("flow_summary") or {}
+        flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
+        operation = str(state.get("operation") or "produce").strip()
+
+        # Build search query for scientific literature
+        search_query = f"{operation} {flow_name} technology process route LCA life cycle assessment"
+        flow_context = _flow_reference_context(flow_summary, include_comment=True)
+        if flow_context:
+            search_query = f"{search_query} {flow_context}"
+        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+        references_text = ""
+        scientific_references = _update_scientific_references(
+            state,
+            step=REFERENCE_SEARCH_KEY,
+            query=search_query,
+            references=references,
+        )
+        fulltext_entries: list[dict[str, Any]] = []
+        if references:
+            fulltext_entries, missing_doi = _fetch_fulltext_references(
+                references,
+                mcp_client=use_mcp_client,
+                fallback_query=search_query,
+            )
+            scientific_references = _update_scientific_references(
+                {"scientific_references": scientific_references},
+                step=REFERENCE_FULLTEXT_KEY,
+                query=search_query,
+                references=fulltext_entries,
+                extra={"missing_doi": missing_doi} if missing_doi else None,
+            )
+        if llm is not None and fulltext_entries:
+            if not _reference_clusters(scientific_references):
+                cluster_result = _cluster_scientific_references(
+                    llm=llm,
+                    state={"scientific_references": scientific_references},
+                    fulltext_entries=fulltext_entries,
+                    flow_summary=flow_summary,
+                    operation=operation,
+                )
+                if cluster_result:
+                    scientific_references = dict(scientific_references)
+                    scientific_references[REFERENCE_CLUSTERS_KEY] = cluster_result
+        si_snippets = _load_si_snippets(scientific_references)
+        if si_snippets:
+            scientific_references = dict(scientific_references)
+            scientific_references["si_snippets"] = si_snippets
+        use_references = _references_usable(scientific_references)
+        primary_dois = _primary_cluster_dois(scientific_references)
+        if use_references:
+            references_text = _format_references_for_prompt(references)
+        stop_after = str(state.get("stop_after") or "").strip().lower()
+        if stop_after in {"references", "reference", "refs", "papers", "sci"}:
+            return {
+                "scientific_references": scientific_references,
+                "step_markers": _update_step_markers(state, "step1"),
+            }
+
+        # Build prompt with references
+        enhanced_prompt = TECH_DESCRIPTION_PROMPT
+        if references_text:
+            enhanced_prompt = f"{TECH_DESCRIPTION_PROMPT}\n\n" f"Use the following scientific references as primary evidence for technology routes:\n" f"{references_text}\n"
+
         payload = {
-            "prompt": TECH_DESCRIPTION_PROMPT,
+            "prompt": enhanced_prompt,
             "context": {
-                "operation": state.get("operation") or "produce",
-                "flow": state.get("flow_summary") or {},
+                "operation": operation,
+                "flow": flow_summary,
+                "step_1c_reference_clusters": _reference_clusters(scientific_references) or {},
+                "si_snippets": si_snippets,
             },
             "response_format": {"type": "json_object"},
         }
@@ -839,6 +2941,27 @@ def _build_langgraph(
                 key_outputs = [str(item).strip() for item in (route.get("key_outputs") or route.get("keyOutputs") or []) if str(item).strip()]
                 assumptions = [str(item).strip() for item in (route.get("assumptions") or []) if str(item).strip()]
                 scope = str(route.get("scope") or "").strip()
+                supported_dois = _clean_string_list(route.get("supported_dois") or route.get("supportedDois"))
+                if not supported_dois and primary_dois:
+                    supported_dois = list(primary_dois)
+                route_evidence = route.get("route_evidence") or route.get("routeEvidence")
+                if not isinstance(route_evidence, dict):
+                    route_evidence = {}
+                citations = _clean_evidence_list(route_evidence.get("citations"))
+                if not citations:
+                    citations = _clean_evidence_list(route.get("citations"))
+                if citations:
+                    route_evidence["citations"] = citations
+                source_type = _normalize_source_type(route_evidence.get("source_type") or route_evidence.get("sourceType"))
+                if not source_type:
+                    if citations:
+                        source_type = _infer_source_type_from_evidence(citations)
+                    else:
+                        source_type = "literature" if use_references else "expert_judgement"
+                route_evidence["source_type"] = source_type
+                notes = route_evidence.get("notes")
+                if not notes and not citations and source_type == "expert_judgement":
+                    route_evidence["notes"] = "No usable references; route inferred from context."
                 cleaned_routes.append(
                     {
                         "route_id": route_id,
@@ -849,6 +2972,8 @@ def _build_langgraph(
                         "key_outputs": key_outputs,
                         "assumptions": assumptions,
                         "scope": scope,
+                        "supported_dois": supported_dois,
+                        "route_evidence": route_evidence,
                     }
                 )
         if cleaned_routes:
@@ -858,6 +2983,7 @@ def _build_langgraph(
                 "assumptions": primary.get("assumptions") or [],
                 "scope": primary.get("scope") or "",
                 "technology_routes": cleaned_routes,
+                "scientific_references": scientific_references,
                 "step_markers": _update_step_markers(state, "step1"),
             }
         technical_description = str(data.get("technical_description") or "").strip()
@@ -872,12 +2998,19 @@ def _build_langgraph(
             "key_outputs": [],
             "assumptions": assumptions,
             "scope": scope,
+            "supported_dois": [],
+            "route_evidence": {
+                "source_type": "expert_judgement",
+                "citations": [],
+                "notes": "No route candidates returned; route inferred from context.",
+            },
         }
         return {
             "technical_description": technical_description,
             "assumptions": assumptions,
             "scope": scope,
             "technology_routes": [fallback_route],
+            "scientific_references": scientific_references,
             "step_markers": _update_step_markers(state, "step1"),
         }
 
@@ -934,13 +3067,52 @@ def _build_langgraph(
                 "selected_route_id": "R1",
                 "step_markers": _update_step_markers(state, "step2"),
             }
+        # Search for scientific references for process splitting
+        flow_summary = state.get("flow_summary") or {}
+        flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
+        tech_desc = state.get("technical_description") or ""
+        operation = state.get("operation") or "produce"
+
+        # Build search query focusing on unit processes and process decomposition
+        search_query = f"{flow_name} {operation} unit process decomposition inventory LCA"
+        if tech_desc:
+            # Add key technical terms from description
+            tech_preview = tech_desc[:100].strip()
+            search_query = f"{search_query} {tech_preview}"
+
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        si_snippets = _load_si_snippets(scientific_references)
+        if si_snippets:
+            scientific_references = dict(scientific_references)
+            scientific_references["si_snippets"] = si_snippets
+        use_references = _references_usable(scientific_references)
+        references: list[dict[str, Any]] = []
+        references_text = ""
+        if use_references:
+            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+            references_text = _format_references_for_prompt(references)
+            scientific_references = _update_scientific_references(
+                {"scientific_references": scientific_references},
+                step="step2",
+                query=search_query,
+                references=references,
+            )
+        reference_clusters = _reference_clusters(scientific_references) if use_references else None
+
+        # Build enhanced prompt with references
+        enhanced_prompt = PROCESS_SPLIT_PROMPT
+        if references_text:
+            enhanced_prompt = f"{PROCESS_SPLIT_PROMPT}\n\n" f"Use the following scientific references to identify and split unit processes:\n" f"{references_text}\n"
+
         payload = {
-            "prompt": PROCESS_SPLIT_PROMPT,
+            "prompt": enhanced_prompt,
             "context": {
-                "flow": state.get("flow_summary") or {},
-                "technical_description": state.get("technical_description") or "",
+                "flow": flow_summary,
+                "technical_description": tech_desc,
                 "routes": state.get("technology_routes") or [],
-                "operation": state.get("operation") or "produce",
+                "operation": operation,
+                "step_1c_reference_clusters": reference_clusters or {},
+                "si_snippets": si_snippets,
             },
             "response_format": {"type": "json_object"},
         }
@@ -1016,6 +3188,7 @@ def _build_langgraph(
                 "process_routes": cleaned_routes,
                 "selected_route_id": selected_route_id,
                 "processes": processes,
+                "scientific_references": scientific_references,
                 "step_markers": _update_step_markers(state, "step2"),
             }
             if selected_summary and not state.get("technical_description"):
@@ -1046,40 +3219,110 @@ def _build_langgraph(
             cleaned[0]["is_reference_flow_process"] = True
             for proc in cleaned[1:]:
                 proc["is_reference_flow_process"] = False
-        return {"processes": cleaned, "step_markers": _update_step_markers(state, "step2")}
+        return {
+            "processes": cleaned,
+            "scientific_references": scientific_references,
+            "step_markers": _update_step_markers(state, "step2"),
+        }
 
     def generate_exchanges(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if state.get("process_exchanges"):
-            return {"step_markers": _update_step_markers(state, "step3")}
+            updates: dict[str, Any] = {"step_markers": _update_step_markers(state, "step3")}
+            coverage_metrics = state.get("coverage_metrics")
+            if not isinstance(coverage_metrics, dict):
+                coverage_metrics = _compute_coverage_metrics(state.get("process_exchanges") or [])
+                updates["coverage_metrics"] = coverage_metrics
+            if not isinstance(state.get("stop_rule_decision"), dict):
+                updates["stop_rule_decision"] = _evaluate_stop_rules(state, coverage_metrics)
+            if not isinstance(state.get("coverage_history"), list):
+                updates["coverage_history"] = _append_coverage_history(state, coverage_metrics)
+            return updates
         if llm is None:
             summary = state.get("flow_summary") or {}
             base_name = summary.get("base_name_en") or "reference flow"
             direction = _reference_direction(state.get("operation"))
+            exchange = {
+                "exchangeDirection": direction,
+                "exchangeName": base_name,
+                "generalComment": summary.get("general_comment_en") or "",
+                "unit": None,
+                "amount": None,
+                "is_reference_flow": True,
+            }
+            exchange = _apply_exchange_evidence_defaults(
+                exchange,
+                use_references=False,
+                fallback_reason="No LLM available; expert judgement applied.",
+            )
+            process_exchanges = [{"process_id": "P1", "exchanges": [exchange]}]
+            coverage_metrics = _compute_coverage_metrics(process_exchanges)
+            stop_rule_decision = _evaluate_stop_rules(state, coverage_metrics)
+            coverage_history = _append_coverage_history(state, coverage_metrics)
             return {
-                "process_exchanges": [
-                    {
-                        "process_id": "P1",
-                        "exchanges": [
-                            {
-                                "exchangeDirection": direction,
-                                "exchangeName": base_name,
-                                "generalComment": summary.get("general_comment_en") or "",
-                                "unit": None,
-                                "amount": None,
-                                "is_reference_flow": True,
-                            }
-                        ],
-                    }
-                ],
+                "process_exchanges": process_exchanges,
+                "coverage_metrics": coverage_metrics,
+                "coverage_history": coverage_history,
+                "stop_rule_decision": stop_rule_decision,
                 "step_markers": _update_step_markers(state, "step3"),
             }
+        # Search for scientific references for exchange generation
+        flow_summary = state.get("flow_summary") or {}
+        flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
+        tech_desc = state.get("technical_description") or ""
+        operation = str(state.get("operation") or "produce").strip()
+        processes = state.get("processes") or []
+
+        # Build search query focusing on inventory exchanges, inputs, outputs
+        search_query = f"{flow_name} {operation} inventory exchanges inputs outputs emissions resources LCA"
+        if tech_desc:
+            search_query = f"{search_query} {_compact_text(tech_desc, limit=200)}"
+        flow_context = _flow_reference_context(flow_summary, include_comment=False)
+        if flow_context:
+            search_query = f"{search_query} {flow_context}"
+        if processes and isinstance(processes, list):
+            # Add process names to search context
+            process_names = " ".join([str(p.get("name") or "")[:50] for p in processes[:3] if isinstance(p, dict)])
+            search_query = f"{search_query} {process_names}"
+
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        si_snippets = _load_si_snippets(scientific_references)
+        if si_snippets:
+            scientific_references = dict(scientific_references)
+            scientific_references["si_snippets"] = si_snippets
+        use_references = _references_usable(scientific_references)
+        fallback_to_expert = _should_fallback_to_expert(scientific_references)
+        default_reason = None
+        if fallback_to_expert:
+            default_reason = "No usable references and no SI hints; expert judgement applied."
+        elif not use_references:
+            default_reason = "No usable references; expert judgement applied."
+        references: list[dict[str, Any]] = []
+        references_text = ""
+        if use_references:
+            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+            references_text = _format_references_for_prompt(references)
+            scientific_references = _update_scientific_references(
+                {"scientific_references": scientific_references},
+                step="step3",
+                query=search_query,
+                references=references,
+            )
+        reference_clusters = _reference_clusters(scientific_references) if use_references else None
+
+        # Build enhanced prompt with references
+        enhanced_prompt = EXCHANGES_PROMPT
+        if references_text:
+            enhanced_prompt = f"{EXCHANGES_PROMPT}\n\n" f"Use the following scientific references to confirm exchange flow names and amounts:\n" f"{references_text}\n"
+
         payload = {
-            "prompt": EXCHANGES_PROMPT,
+            "prompt": enhanced_prompt,
             "context": {
-                "flow": state.get("flow_summary") or {},
-                "technical_description": state.get("technical_description") or "",
-                "processes": state.get("processes") or [],
-                "operation": state.get("operation") or "produce",
+                "flow": flow_summary,
+                "technical_description": tech_desc,
+                "processes": processes,
+                "operation": operation,
+                "step_1c_reference_clusters": reference_clusters or {},
+                "si_snippets": si_snippets,
             },
             "response_format": {"type": "json_object"},
         }
@@ -1115,9 +3358,7 @@ def _build_langgraph(
                 name = _strip_flow_label(str(exchange.get("exchangeName") or "").strip())
                 raw_flow_type = _normalize_flow_type(exchange.get("flow_type") or exchange.get("flowType"))
                 unit = str(exchange.get("unit") or "").strip() or "unit"
-                amount = exchange.get("amount")
-                if amount in (None, "", 0):
-                    amount = "1"
+                amount = _coerce_amount_text(exchange.get("amount"))
                 exchange_direction = str(exchange.get("exchangeDirection") or "").strip()
                 name_key = name.lower()
                 if name_key:
@@ -1146,35 +3387,96 @@ def _build_langgraph(
                     is_reference_flow=is_reference,
                 )
                 search_hints = exchange.get("search_hints") or exchange.get("searchHints") or _build_search_hints(name)
-                cleaned_exchanges.append(
-                    {
-                        **exchange,
-                        "exchangeName": name,
-                        "unit": unit,
-                        "amount": amount,
-                        "is_reference_flow": is_reference,
-                        "exchangeDirection": exchange_direction,
-                        "flow_type": flow_type,
-                        "search_hints": search_hints,
-                    }
+                if not isinstance(search_hints, list):
+                    search_hints = [str(search_hints)] if str(search_hints).strip() else []
+                cleaned_exchange = {
+                    **exchange,
+                    "exchangeName": name,
+                    "unit": unit,
+                    "amount": amount,
+                    "is_reference_flow": is_reference,
+                    "exchangeDirection": exchange_direction,
+                    "flow_type": flow_type,
+                    "search_hints": search_hints,
+                }
+                cleaned_exchange = _apply_exchange_evidence_defaults(
+                    cleaned_exchange,
+                    use_references=use_references,
+                    fallback_reason=default_reason,
                 )
+                cleaned_exchanges.append(cleaned_exchange)
             if plan_reference_flow and not matched_reference:
-                cleaned_exchanges.append(
-                    {
-                        "exchangeDirection": reference_direction,
-                        "exchangeName": plan_reference_flow,
-                        "generalComment": "Reference flow for this unit process.",
-                        "unit": "unit",
-                        "amount": "1",
-                        "is_reference_flow": True,
-                        "flow_type": "product",
-                        "search_hints": _build_search_hints(plan_reference_flow),
-                    }
+                reference_exchange = {
+                    "exchangeDirection": reference_direction,
+                    "exchangeName": plan_reference_flow,
+                    "generalComment": "Reference flow for this unit process.",
+                    "unit": "unit",
+                    "amount": "1",
+                    "is_reference_flow": True,
+                    "flow_type": "product",
+                    "search_hints": _build_search_hints(plan_reference_flow),
+                }
+                reference_exchange = _apply_exchange_evidence_defaults(
+                    reference_exchange,
+                    use_references=use_references,
+                    fallback_reason=default_reason,
                 )
+                cleaned_exchanges.append(reference_exchange)
             cleaned_processes.append({"process_id": process_id, "exchanges": cleaned_exchanges})
+        coverage_metrics = _compute_coverage_metrics(cleaned_processes)
+        stop_state = dict(state)
+        stop_state["scientific_references"] = scientific_references
+        stop_rule_decision = _evaluate_stop_rules(stop_state, coverage_metrics)
+        coverage_history = _append_coverage_history(stop_state, coverage_metrics)
         return {
             "process_exchanges": cleaned_processes,
+            "scientific_references": scientific_references,
+            "coverage_metrics": coverage_metrics,
+            "coverage_history": coverage_history,
+            "stop_rule_decision": stop_rule_decision,
             "step_markers": _update_step_markers(state, "step3"),
+        }
+
+    def enrich_exchange_amounts(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if not state.get("process_exchanges"):
+            return {}
+        if state.get("exchange_values_applied"):
+            return {}
+        if llm is None:
+            return {"exchange_values_applied": True}
+
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        si_snippets = _load_si_snippets(scientific_references)
+        if si_snippets:
+            scientific_references = dict(scientific_references)
+            scientific_references["si_snippets"] = si_snippets
+
+        fulltext_entries = scientific_references.get(REFERENCE_FULLTEXT_KEY, {}).get("references")
+        fulltext_list = fulltext_entries if isinstance(fulltext_entries, list) else []
+        fulltext_text = _format_fulltext_entries_for_prompt(fulltext_list)
+        if not fulltext_text and not si_snippets:
+            return {"exchange_values_applied": True, "scientific_references": scientific_references}
+
+        payload = {
+            "prompt": EXCHANGE_VALUE_PROMPT,
+            "context": {
+                "flow": state.get("flow_summary") or {},
+                "operation": state.get("operation") or "produce",
+                "process_exchanges": state.get("process_exchanges") or [],
+                "fulltext_references": fulltext_text,
+                "si_snippets": si_snippets,
+            },
+            "response_format": {"type": "json_object"},
+        }
+        raw = llm.invoke(payload)
+        data = _ensure_dict(raw)
+        candidates = _normalize_exchange_value_candidates(data.get("processes"))
+        updated_exchanges = _apply_exchange_value_candidates(state.get("process_exchanges") or [], candidates)
+        return {
+            "process_exchanges": updated_exchanges,
+            "exchange_value_candidates": candidates,
+            "exchange_values_applied": True,
+            "scientific_references": scientific_references,
         }
 
     def match_flows(state: ProcessFromFlowState) -> ProcessFromFlowState:
@@ -1248,6 +3550,26 @@ def _build_langgraph(
             matched.append({"process_id": process_id, "exchanges": matched_exchanges})
         return {"matched_process_exchanges": matched}
 
+    def build_sources(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if state.get("source_datasets") or state.get("source_references"):
+            return {}
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        doi_map, key_map = _collect_usage_tag_map(scientific_references)
+        if doi_map or key_map:
+            infos = _collect_reference_infos(scientific_references)
+            infos = _filter_reference_infos_by_usage(infos, doi_map=doi_map, key_map=key_map)
+            source_datasets, source_references = _build_source_datasets_from_references(
+                scientific_references,
+                translator=translator,
+                reference_infos=infos,
+            )
+        else:
+            source_datasets, source_references = _build_source_datasets_from_references(scientific_references, translator=translator)
+        if not source_datasets:
+            return {}
+        LOGGER.info("process_from_flow.build_sources", count=len(source_datasets))
+        return {"source_datasets": source_datasets, "source_references": source_references}
+
     def build_process_datasets(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if state.get("process_datasets"):
             return {}
@@ -1258,6 +3580,15 @@ def _build_langgraph(
         scope = state.get("scope") or ""
         assumptions = state.get("assumptions") or []
         reference_direction = _reference_direction(state.get("operation"))
+        source_datasets = [item for item in (state.get("source_datasets") or []) if isinstance(item, dict)]
+        source_references = [item for item in (state.get("source_references") or []) if isinstance(item, dict)]
+        if not source_references:
+            source_references = _build_source_reference_entries(source_datasets)
+        source_reference_items = _coerce_global_reference_items(source_references)
+        default_reference_items = source_reference_items or _entry_level_compliance_reference()
+        source_reference_index = (
+            _build_source_reference_index(source_datasets, source_references) if source_datasets and source_references else {}
+        )
 
         process_plans = {str(item.get("process_id") or ""): item for item in (state.get("processes") or []) if isinstance(item, dict)}
         exchange_plans = {str(item.get("process_id") or ""): item for item in (state.get("matched_process_exchanges") or []) if isinstance(item, dict)}
@@ -1313,6 +3644,7 @@ def _build_langgraph(
                 matched_entry = exchange_plans.get(process_id) or {}
                 exchanges_raw = matched_entry.get("exchanges") or []
                 exchange_items: list[ExchangesExchangeItem] = []
+                process_reference_items: dict[str, GlobalReferenceTypeVariant1Item] = {}
                 reference_internal_id: str | None = None
                 next_internal_id = 1
                 for exchange in exchanges_raw:
@@ -1386,6 +3718,18 @@ def _build_langgraph(
                     if comment_text:
                         comment_entries = _build_multilang_entries(comment_text, translator=translator)
                         exchange_item.general_comment = _as_multilang_list(comment_entries or comment_text)
+                    if source_reference_index:
+                        evidence = _collect_exchange_citations(exchange)
+                        matched_sources = _match_source_references(evidence, source_reference_index)
+                        matched_items = _coerce_global_reference_items(matched_sources)
+                        if matched_items:
+                            exchange_item.references_to_data_source = ExchangeItemReferencesToDataSource(
+                                reference_to_data_source=matched_items
+                            )
+                            for item in matched_items:
+                                ref_id = _reference_item_id(item)
+                                if ref_id:
+                                    process_reference_items[ref_id] = item
                     exchange_items.append(exchange_item)
 
                     if bool(exchange.get("is_reference_flow")):
@@ -1477,10 +3821,14 @@ def _build_langgraph(
                 process_information = ProcessesProcessDataSetProcessInformation(**process_info_kwargs)
 
                 exchanges = ProcessesProcessDataSetExchanges(exchange=exchange_items)
+                process_reference_list = list(process_reference_items.values())
+                process_reference_items_final = process_reference_list or default_reference_items
                 modelling_and_validation = ProcessesProcessDataSetModellingAndValidation(
                     lci_method_and_allocation=ProcessDataSetModellingAndValidationLCIMethodAndAllocation(type_of_data_set="Unit process, single operation"),
                     data_sources_treatment_and_representativeness=(
-                        ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(reference_to_data_source=_entry_level_compliance_reference())
+                        ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(
+                            reference_to_data_source=process_reference_items_final
+                        )
                     ),
                     validation=ProcessDataSetModellingAndValidationValidation(review=ModellingAndValidationValidationReview(type="Not reviewed")),
                     compliance_declarations=_compliance_declarations(),
@@ -1542,14 +3890,16 @@ def _build_langgraph(
     graph.add_node("describe_technology", describe_technology)
     graph.add_node("split_processes", split_processes)
     graph.add_node("generate_exchanges", generate_exchanges)
+    graph.add_node("enrich_exchange_amounts", enrich_exchange_amounts)
     graph.add_node("match_flows", match_flows)
+    graph.add_node("build_sources", build_sources)
     graph.add_node("build_process_datasets", build_process_datasets)
 
     graph.set_entry_point("load_flow")
     graph.add_edge("load_flow", "describe_technology")
     graph.add_conditional_edges(
         "describe_technology",
-        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "tech") else "split_processes",
+        lambda state: END if str(state.get("stop_after") or "").strip().lower() in {"tech", "references", "reference", "refs", "papers", "sci"} else "split_processes",
     )
     graph.add_conditional_edges(
         "split_processes",
@@ -1557,11 +3907,19 @@ def _build_langgraph(
     )
     graph.add_conditional_edges(
         "generate_exchanges",
+        lambda state: "enrich_exchange_amounts",
+    )
+    graph.add_conditional_edges(
+        "enrich_exchange_amounts",
         lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "exchanges") else "match_flows",
     )
     graph.add_conditional_edges(
         "match_flows",
-        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "matches") else "build_process_datasets",
+        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "matches") else "build_sources",
+    )
+    graph.add_conditional_edges(
+        "build_sources",
+        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "sources") else "build_process_datasets",
     )
     graph.add_edge("build_process_datasets", END)
 
@@ -1577,6 +3935,7 @@ class ProcessFromFlowService:
     flow_search_fn: FlowSearchFn | None = None
     selector: CandidateSelector | None = None
     translator: Translator | None = None
+    mcp_client: MCPToolClient | None = None
 
     def run(
         self,
@@ -1596,16 +3955,35 @@ class ProcessFromFlowService:
         else:
             selector = SimilarityCandidateSelector()
 
-        app = _build_langgraph(
-            llm=self.llm,
-            settings=settings,
-            flow_search_fn=flow_search_fn,
-            selector=selector,
-            translator=self.translator,
-        )
-        initial: ProcessFromFlowState = {"flow_path": str(flow_path), "operation": operation}
-        if stop_after:
-            initial["stop_after"] = stop_after
-        if initial_state:
-            initial.update({k: v for k, v in initial_state.items() if k not in {"flow_path", "operation"}})
-        return app.invoke(initial)
+        # Create MCP client if not provided and we want to use scientific references
+        mcp_client = self.mcp_client
+        should_close_mcp = False
+        if mcp_client is None and self.llm is not None:
+            # Only create MCP client when LLM is available (scientific references only useful with LLM)
+            try:
+                mcp_client = MCPToolClient(settings)
+                should_close_mcp = True
+                LOGGER.info("process_from_flow.mcp_client_created", service="TianGong_KB_Remote")
+            except Exception as exc:
+                LOGGER.warning("process_from_flow.mcp_client_creation_failed", error=str(exc))
+                mcp_client = None
+
+        try:
+            app = _build_langgraph(
+                llm=self.llm,
+                settings=settings,
+                flow_search_fn=flow_search_fn,
+                selector=selector,
+                translator=self.translator,
+                mcp_client=mcp_client,
+            )
+            initial: ProcessFromFlowState = {"flow_path": str(flow_path), "operation": operation}
+            if stop_after:
+                initial["stop_after"] = stop_after
+            if initial_state:
+                initial.update({k: v for k, v in initial_state.items() if k not in {"flow_path", "operation"}})
+            return app.invoke(initial)
+        finally:
+            if should_close_mcp and mcp_client:
+                mcp_client.close()
+                LOGGER.info("process_from_flow.mcp_client_closed")

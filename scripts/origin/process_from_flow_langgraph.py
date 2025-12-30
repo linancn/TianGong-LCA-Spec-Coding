@@ -9,13 +9,12 @@ This command is a human-in-the-loop helper:
 - Step 4: match exchanges to Tiangong flows via MCP flow_search.
 - Step 5: generate TIDAS/ILCD process datasets via tidas-sdk.
 
-Typical usage (demo flow):
-  uv run python scripts/origin/process_from_flow_langgraph.py \\
-    --flow artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json
+Usage:
+  See .github/prompts/process_from_flow.prompt.md (English) or
+  .github/prompts/process_from_flow.zh.prompt.md (Chinese) for workflow details.
 
 Outputs (by default):
-  - artifacts/<run_id>/exports/processes
-  - io/process_from_flow/<run_id>/output/processes
+  - artifacts/process_from_flow/<run_id>/exports/processes
 
 Manual cleanup (keep latest 3 runs):
   uv run python scripts/origin/process_from_flow_langgraph.py --cleanup-only --retain-runs 3
@@ -25,7 +24,7 @@ Publish latest run (commit to DB):
 
 Checkpoint flow (edit cache JSON, then resume):
   uv run python scripts/origin/process_from_flow_langgraph.py --stop-after exchanges
-  # edit artifacts/<run_id>/cache/process_from_flow_state.json
+  # edit artifacts/process_from_flow/<run_id>/cache/process_from_flow_state.json
   uv run python scripts/origin/process_from_flow_langgraph.py --resume
 """
 
@@ -37,7 +36,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIPTS_DIR = SCRIPT_DIR.parent
@@ -50,8 +49,6 @@ try:
     from scripts.md._workflow_common import (  # type: ignore
         OpenAIResponsesLLM,
         dump_json,
-        ensure_run_cache_dir,
-        ensure_run_exports_dir,
         generate_run_id,
         load_secrets,
     )
@@ -59,16 +56,14 @@ except ModuleNotFoundError:  # pragma: no cover
     from _workflow_common import (  # type: ignore
         OpenAIResponsesLLM,
         dump_json,
-        ensure_run_cache_dir,
-        ensure_run_exports_dir,
         generate_run_id,
         load_secrets,
     )
 
 DEFAULT_FLOW_PATH = Path("artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json")
-LATEST_RUN_ID_PATH = Path("artifacts/.latest_process_from_flow_run_id")
-DEFAULT_IO_ROOT = Path("io/process_from_flow")
-LATEST_IO_RUN_ID_PATH = DEFAULT_IO_ROOT / ".latest_run_id"
+PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
+LATEST_RUN_ID_PATH = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / ".latest_run_id"
+DATABASE_TOOL_NAME = "Database_CRUD_Tool"
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,27 +72,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--operation", choices=("produce", "treat"), default="produce", help="Whether the process produces or treats/disposes the reference flow.")
     parser.add_argument(
         "--run-id",
-        help="Run identifier for artifacts/<run_id> output. Defaults to a new id when not resuming.",
+        help="Run identifier under artifacts/process_from_flow/<run_id>. Defaults to a new id when not resuming.",
     )
-    parser.add_argument("--resume", action="store_true", help="Resume from artifacts/<run_id>/cache/process_from_flow_state.json.")
+    parser.add_argument("--resume", action="store_true", help="Resume from artifacts/process_from_flow/<run_id>/cache/process_from_flow_state.json.")
     parser.add_argument(
         "--stop-after",
-        choices=("tech", "processes", "exchanges", "matches", "datasets"),
+        choices=("references", "tech", "processes", "exchanges", "matches", "sources", "datasets"),
         help="Stop after a stage, writing state to cache for manual editing.",
     )
     parser.add_argument("--secrets", type=Path, default=Path(".secrets/secrets.toml"), help="Secrets file containing OpenAI credentials.")
     parser.add_argument("--no-llm", action="store_true", help="Run without an LLM (uses minimal deterministic fallbacks).")
     parser.add_argument("--no-translate-zh", action="store_true", help="Skip adding Chinese translations to multi-language fields.")
     parser.add_argument(
-        "--io-root",
-        type=Path,
-        default=DEFAULT_IO_ROOT,
-        help="Base directory for clean input/output copies (will create <io-root>/<run-id>/input|output).",
-    )
-    parser.add_argument(
         "--retain-runs",
         type=int,
-        help=("Manually clean process_from_flow run directories, keeping only the most recent N runs " "under artifacts/ and io/process_from_flow/."),
+        help="Manually clean process_from_flow run directories, keeping only the most recent N runs under artifacts/process_from_flow/.",
     )
     parser.add_argument(
         "--cleanup-only",
@@ -113,6 +102,11 @@ def parse_args() -> argparse.Namespace:
         "--publish-only",
         action="store_true",
         help="Publish process datasets from an existing run and skip the pipeline.",
+    )
+    parser.add_argument(
+        "--publish-flows",
+        action="store_true",
+        help="Also publish placeholder flow datasets and rewrite process references (disabled by default).",
     )
     parser.add_argument(
         "--commit",
@@ -149,14 +143,54 @@ def _extract_process_version(process_payload: dict[str, Any]) -> str:
     return "01.01.000"
 
 
-def _ensure_io_dirs(io_root: Path, run_id: str) -> tuple[Path, Path, Path]:
-    run_root = io_root / run_id
+def _extract_source_uuid(source_payload: dict[str, Any]) -> str:
+    dataset = source_payload.get("sourceDataSet") if isinstance(source_payload.get("sourceDataSet"), dict) else {}
+    info = dataset.get("sourceInformation") if isinstance(dataset.get("sourceInformation"), dict) else {}
+    data_info = info.get("dataSetInformation") if isinstance(info.get("dataSetInformation"), dict) else {}
+    uuid_value = data_info.get("common:UUID")
+    if isinstance(uuid_value, str) and uuid_value.strip():
+        return uuid_value.strip()
+    raise SystemExit("Generated source payload missing sourceInformation.dataSetInformation.common:UUID")
+
+
+def _extract_source_version(source_payload: dict[str, Any]) -> str:
+    dataset = source_payload.get("sourceDataSet") if isinstance(source_payload.get("sourceDataSet"), dict) else {}
+    admin = dataset.get("administrativeInformation") if isinstance(dataset.get("administrativeInformation"), dict) else {}
+    pub = admin.get("publicationAndOwnership") if isinstance(admin.get("publicationAndOwnership"), dict) else {}
+    version = pub.get("common:dataSetVersion")
+    if isinstance(version, str) and version.strip():
+        return version.strip()
+    return "01.01.000"
+
+
+def _ensure_run_root(run_id: str) -> Path:
+    run_root = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id
+    run_root.mkdir(parents=True, exist_ok=True)
+    return run_root
+
+
+def ensure_run_cache_dir(run_id: str) -> Path:
+    run_root = _ensure_run_root(run_id)
+    cache_dir = run_root / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def ensure_run_exports_dir(run_id: str, *, clean: bool = False) -> Path:
+    run_root = _ensure_run_root(run_id)
+    export_root = run_root / "exports"
+    if clean and export_root.exists():
+        shutil.rmtree(export_root)
+    for name in ("processes", "flows", "sources"):
+        (export_root / name).mkdir(parents=True, exist_ok=True)
+    return export_root
+
+
+def _ensure_run_input_dir(run_id: str) -> Path:
+    run_root = _ensure_run_root(run_id)
     input_dir = run_root / "input"
-    output_dir = run_root / "output"
-    process_dir = output_dir / "processes"
     input_dir.mkdir(parents=True, exist_ok=True)
-    process_dir.mkdir(parents=True, exist_ok=True)
-    return input_dir, output_dir, process_dir
+    return input_dir
 
 
 def _find_runs(base_dir: Path, marker: Path) -> list[Path]:
@@ -178,19 +212,16 @@ def _parse_run_id(run_id: str) -> datetime | None:
         return None
 
 
-def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = None) -> None:
+def _cleanup_runs(*, retain: int, current_run_id: str | None = None) -> None:
     if retain <= 0:
         raise SystemExit("--retain-runs must be >= 1")
 
-    artifacts_root = Path("artifacts")
+    artifacts_root = PROCESS_FROM_FLOW_ARTIFACTS_ROOT
     artifacts_marker = Path("cache/process_from_flow_state.json")
-    io_marker = Path("output/process_from_flow_state.json")
 
     artifacts_runs = _find_runs(artifacts_root, artifacts_marker)
-    io_runs = _find_runs(io_root, io_marker)
     artifacts_index = {path.name: path for path in artifacts_runs}
-    io_index = {path.name: path for path in io_runs}
-    all_run_ids = set(artifacts_index) | set(io_index)
+    all_run_ids = set(artifacts_index)
     if not all_run_ids:
         print("No process_from_flow runs found for cleanup.", file=sys.stderr)
         return
@@ -199,7 +230,7 @@ def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = No
         parsed = _parse_run_id(run_id)
         if parsed is not None:
             return (0, parsed)
-        entry = io_index.get(run_id) or artifacts_index.get(run_id)
+        entry = artifacts_index.get(run_id)
         if entry is None:
             return (2, datetime.min.replace(tzinfo=timezone.utc))
         try:
@@ -227,12 +258,8 @@ def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = No
     for run_id in sorted_run_ids:
         if run_id in keep:
             continue
-        if run_id in artifacts_index:
-            if _safe_remove(artifacts_root, run_id):
-                removed += 1
-        if run_id in io_index:
-            if _safe_remove(io_root, run_id):
-                removed += 1
+        if run_id in artifacts_index and _safe_remove(artifacts_root, run_id):
+            removed += 1
 
     print(
         f"Cleanup complete: kept {len(keep)} run(s), removed {removed} directory(s).",
@@ -240,22 +267,18 @@ def _cleanup_runs(*, io_root: Path, retain: int, current_run_id: str | None = No
     )
 
 
-def _resolve_io_run_id(run_id: str | None) -> str:
+def _resolve_run_id(run_id: str | None) -> str:
     if run_id:
         return run_id
-    if LATEST_IO_RUN_ID_PATH.exists():
-        latest = LATEST_IO_RUN_ID_PATH.read_text(encoding="utf-8").strip()
-        if latest:
-            return latest
     if LATEST_RUN_ID_PATH.exists():
         latest = LATEST_RUN_ID_PATH.read_text(encoding="utf-8").strip()
         if latest:
             return latest
-    raise SystemExit("Missing --run-id and no latest run marker found in io/process_from_flow or artifacts.")
+    raise SystemExit("Missing --run-id and no latest run marker found in artifacts/process_from_flow.")
 
 
-def _load_process_datasets(io_root: Path, run_id: str) -> list[dict[str, Any]]:
-    process_dir = io_root / run_id / "output" / "processes"
+def _load_process_datasets(run_id: str) -> list[dict[str, Any]]:
+    process_dir = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "exports" / "processes"
     if not process_dir.exists():
         raise SystemExit(f"Process output directory not found: {process_dir}")
     datasets: list[dict[str, Any]] = []
@@ -266,6 +289,239 @@ def _load_process_datasets(io_root: Path, run_id: str) -> list[dict[str, Any]]:
     if not datasets:
         raise SystemExit(f"No process datasets found under {process_dir}")
     return datasets
+
+
+def _load_source_datasets(run_id: str) -> list[dict[str, Any]]:
+    source_dir = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "exports" / "sources"
+    if not source_dir.exists():
+        return []
+    datasets: list[dict[str, Any]] = []
+    for path in sorted(source_dir.glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            datasets.append(payload)
+    return datasets
+
+
+def _extract_lang_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, Mapping):
+        text = value.get("#text")
+        if isinstance(text, str):
+            return text.strip()
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, Mapping) and item.get("@xml:lang") == "en":
+                text = item.get("#text")
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+        for item in value:
+            text = _extract_lang_text(item)
+            if text:
+                return text
+    return ""
+
+
+def _compose_process_name(process_payload: Mapping[str, Any]) -> str:
+    info = process_payload.get("processInformation", {})
+    if not isinstance(info, Mapping):
+        return "Unknown process"
+    data_info = info.get("dataSetInformation", {})
+    if not isinstance(data_info, Mapping):
+        return "Unknown process"
+    name_block = data_info.get("name", {})
+    if not isinstance(name_block, Mapping):
+        name_block = {}
+    parts: list[str] = []
+    for key in ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes", "functionalUnitFlowProperties"):
+        text = _extract_lang_text(name_block.get(key))
+        if text:
+            parts.append(text)
+    if parts:
+        return " | ".join(parts)
+    fallback = _extract_lang_text(data_info.get("common:generalComment"))
+    return fallback or "Unknown process"
+
+
+def _build_flow_alignment_from_process_datasets(datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    alignment: list[dict[str, Any]] = []
+    for payload in datasets:
+        process_payload = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), Mapping) else payload
+        if not isinstance(process_payload, Mapping):
+            continue
+        process_name = _compose_process_name(process_payload)
+        exchanges_block = process_payload.get("exchanges", {})
+        if not isinstance(exchanges_block, Mapping):
+            continue
+        exchanges = exchanges_block.get("exchange", [])
+        if isinstance(exchanges, Mapping):
+            exchanges = [exchanges]
+        if not isinstance(exchanges, list):
+            continue
+        placeholder_exchanges: list[dict[str, Any]] = []
+        for exchange in exchanges:
+            if not isinstance(exchange, Mapping):
+                continue
+            ref = exchange.get("referenceToFlowDataSet")
+            if not isinstance(ref, Mapping) or not ref.get("unmatched:placeholder"):
+                continue
+            exchange_name = _extract_lang_text(exchange.get("exchangeName"))
+            if not exchange_name:
+                exchange_name = _extract_lang_text(ref.get("common:shortDescription"))
+            if not exchange_name:
+                exchange_name = "Unnamed exchange"
+            comment = _extract_lang_text(exchange.get("generalComment"))
+            sanitized_ref = dict(ref)
+            sanitized_ref.pop("@version", None)
+            sanitized_ref.pop("@uri", None)
+            placeholder_exchanges.append(
+                {
+                    "exchangeName": exchange_name,
+                    "exchangeDirection": exchange.get("exchangeDirection"),
+                    "unit": exchange.get("unit"),
+                    "meanAmount": exchange.get("meanAmount")
+                    if exchange.get("meanAmount") is not None
+                    else exchange.get("resultingAmount", exchange.get("amount")),
+                    "generalComment": comment,
+                    "referenceToFlowDataSet": sanitized_ref,
+                }
+            )
+        if placeholder_exchanges:
+            alignment.append({"process_name": process_name, "origin_exchanges": {"placeholders": placeholder_exchanges}})
+    return alignment
+
+
+def _apply_flow_refs_to_processes(datasets: list[dict[str, Any]], plans: list[Any]) -> int:
+    mapping: dict[str, dict[str, Any]] = {}
+    for plan in plans:
+        uuid_value = getattr(plan, "uuid", None)
+        exchange_ref = getattr(plan, "exchange_ref", None)
+        if isinstance(uuid_value, str) and uuid_value and isinstance(exchange_ref, Mapping):
+            mapping[uuid_value] = dict(exchange_ref)
+    if not mapping:
+        return 0
+
+    updated = 0
+    for payload in datasets:
+        process_payload = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), Mapping) else payload
+        if not isinstance(process_payload, Mapping):
+            continue
+        exchanges_block = process_payload.get("exchanges", {})
+        if not isinstance(exchanges_block, Mapping):
+            continue
+        exchanges = exchanges_block.get("exchange", [])
+        if isinstance(exchanges, Mapping):
+            exchanges = [exchanges]
+        if not isinstance(exchanges, list):
+            continue
+        for exchange in exchanges:
+            if not isinstance(exchange, Mapping):
+                continue
+            ref = exchange.get("referenceToFlowDataSet")
+            if not isinstance(ref, Mapping):
+                continue
+            uuid_value = ref.get("@refObjectId")
+            if isinstance(uuid_value, str) and uuid_value in mapping:
+                exchange["referenceToFlowDataSet"] = mapping[uuid_value]
+                updated += 1
+    return updated
+
+
+def _publish_flows(
+    datasets: list[dict[str, Any]],
+    *,
+    commit: bool,
+    llm: Any | None = None,
+) -> list[Any]:
+    from tiangong_lca_spec.publishing import FlowPublisher
+
+    alignment = _build_flow_alignment_from_process_datasets(datasets)
+    if not alignment:
+        return []
+    publisher = FlowPublisher(dry_run=not commit, llm=llm)
+    try:
+        plans = publisher.prepare_from_alignment(alignment)
+        if not plans:
+            return []
+        publisher.publish()
+        if commit:
+            print(f"Published {len(plans)} flow dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
+        else:
+            print(f"Dry-run: prepared {len(plans)} flow dataset(s) for publish.", file=sys.stderr)
+        return plans
+    finally:
+        publisher.close()
+
+
+def _write_process_exports(datasets: list[dict[str, Any]], exports_dir: Path) -> list[Path]:
+    written: list[Path] = []
+    for payload in datasets:
+        if not isinstance(payload, dict):
+            continue
+        uuid_value = _extract_process_uuid(payload)
+        version = _extract_process_version(payload)
+        filename = f"{uuid_value}_{version}.json"
+        target = exports_dir / "processes" / filename
+        dump_json(payload, target)
+        written.append(target)
+    return written
+
+
+def _publish_sources(datasets: list[dict[str, Any]], *, commit: bool) -> None:
+    publishable = [item for item in datasets if isinstance(item, dict)]
+    if not publishable:
+        return
+    if not commit:
+        print(f"Dry-run: prepared {len(publishable)} source dataset(s) for publish.", file=sys.stderr)
+        return
+
+    from tiangong_lca_spec.core.config import get_settings
+    from tiangong_lca_spec.core.mcp_client import MCPToolClient
+
+    settings = get_settings()
+    server_name = settings.flow_search_service_name
+    failed: list[tuple[str, str, str]] = []
+    with MCPToolClient(settings) as client:
+        for payload in publishable:
+            uuid_value = _extract_source_uuid(payload)
+            try:
+                client.invoke_json_tool(
+                    server_name,
+                    DATABASE_TOOL_NAME,
+                    {
+                        "operation": "insert",
+                        "table": "sources",
+                        "id": uuid_value,
+                        "jsonOrdered": payload,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                version = _extract_source_version(payload)
+                try:
+                    client.invoke_json_tool(
+                        server_name,
+                        DATABASE_TOOL_NAME,
+                        {
+                            "operation": "update",
+                            "table": "sources",
+                            "id": uuid_value,
+                            "version": version,
+                            "jsonOrdered": payload,
+                        },
+                    )
+                except Exception as update_exc:  # noqa: BLE001
+                    failed.append((uuid_value, str(exc), str(update_exc)))
+
+    if failed:
+        details = "; ".join(
+            f"{uuid_value} insert failed: {insert_error}; update failed: {update_error}"
+            for uuid_value, insert_error, update_error in failed
+        )
+        raise SystemExit(f"Failed to publish {len(failed)} source dataset(s): {details}")
+    print(f"Published {len(publishable)} source dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
 
 
 def _publish_processes(datasets: list[dict[str, Any]], *, commit: bool) -> None:
@@ -293,11 +549,24 @@ def main() -> None:
     if args.cleanup_only:
         if args.retain_runs is None:
             raise SystemExit("--cleanup-only requires --retain-runs")
-        _cleanup_runs(io_root=args.io_root, retain=args.retain_runs)
+        _cleanup_runs(retain=args.retain_runs)
         return
     if args.publish_only:
-        run_id = _resolve_io_run_id(args.run_id)
-        datasets = _load_process_datasets(args.io_root, run_id)
+        run_id = _resolve_run_id(args.run_id)
+        llm = None
+        if args.publish_flows and not args.no_llm and args.secrets.exists():
+            api_key, model, base_url = load_secrets(args.secrets)
+            llm = OpenAIResponsesLLM(api_key=api_key, model=model, base_url=base_url)
+        source_datasets = _load_source_datasets(run_id)
+        datasets = _load_process_datasets(run_id)
+        if args.publish_flows:
+            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm)
+            if args.commit and flow_plans:
+                updated = _apply_flow_refs_to_processes(datasets, flow_plans)
+                if updated:
+                    _write_process_exports(datasets, PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "exports")
+        if source_datasets:
+            _publish_sources(source_datasets, commit=args.commit)
         _publish_processes(datasets, commit=args.commit)
         return
 
@@ -314,7 +583,7 @@ def main() -> None:
     cache_dir = ensure_run_cache_dir(run_id)
     exports_dir = ensure_run_exports_dir(run_id)
     state_path = cache_dir / "process_from_flow_state.json"
-    input_dir, output_dir, io_process_dir = _ensure_io_dirs(args.io_root, run_id)
+    input_dir = _ensure_run_input_dir(run_id)
     try:
         shutil.copy2(args.flow, input_dir / args.flow.name)
     except FileNotFoundError:
@@ -355,7 +624,6 @@ def main() -> None:
     )
 
     dump_json(result_state, state_path)
-    dump_json(result_state, output_dir / "process_from_flow_state.json")
 
     if args.stop_after and args.stop_after != "datasets":
         print(f"Stopped after stage '{args.stop_after}'. Edit state and resume with: --resume --run-id {run_id}", file=sys.stderr)
@@ -368,30 +636,36 @@ def main() -> None:
         LATEST_RUN_ID_PATH.write_text(run_id, encoding="utf-8")
         return
 
-    written: list[Path] = []
-    io_written: list[Path] = []
-    for payload in datasets:
-        if not isinstance(payload, dict):
-            continue
-        uuid_value = _extract_process_uuid(payload)
-        version = _extract_process_version(payload)
-        filename = f"{uuid_value}_{version}.json"
-        target = exports_dir / "processes" / filename
-        dump_json(payload, target)
-        written.append(target)
-        io_target = io_process_dir / filename
-        dump_json(payload, io_target)
-        io_written.append(io_target)
+    written = _write_process_exports(datasets, exports_dir)
 
     LATEST_RUN_ID_PATH.write_text(run_id, encoding="utf-8")
-    LATEST_IO_RUN_ID_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LATEST_IO_RUN_ID_PATH.write_text(run_id, encoding="utf-8")
     print(f"Wrote {len(written)} process dataset(s) to {exports_dir / 'processes'}", file=sys.stderr)
-    print(f"Wrote {len(io_written)} process dataset(s) to {io_process_dir}", file=sys.stderr)
+
+    source_payloads = result_state.get("source_datasets") or []
+    source_written: list[Path] = []
+    if isinstance(source_payloads, list) and source_payloads:
+        for payload in source_payloads:
+            if not isinstance(payload, dict):
+                continue
+            uuid_value = _extract_source_uuid(payload)
+            version = _extract_source_version(payload)
+            filename = f"{uuid_value}_{version}.json"
+            target = exports_dir / "sources" / filename
+            dump_json(payload, target)
+            source_written.append(target)
+        print(f"Wrote {len(source_written)} source dataset(s) to {exports_dir / 'sources'}", file=sys.stderr)
     if args.publish:
+        if args.publish_flows:
+            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm)
+            if args.commit and flow_plans:
+                updated = _apply_flow_refs_to_processes(datasets, flow_plans)
+                if updated:
+                    _write_process_exports(datasets, exports_dir)
+        if isinstance(source_payloads, list) and source_payloads:
+            _publish_sources(source_payloads, commit=args.commit)
         _publish_processes(datasets, commit=args.commit)
     if args.retain_runs:
-        _cleanup_runs(io_root=args.io_root, retain=args.retain_runs, current_run_id=run_id)
+        _cleanup_runs(retain=args.retain_runs, current_run_id=run_id)
 
 
 if __name__ == "__main__":  # pragma: no cover
