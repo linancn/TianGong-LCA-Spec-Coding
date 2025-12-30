@@ -801,10 +801,14 @@ def _build_source_datasets_from_references(
     scientific_references: dict[str, Any] | None,
     *,
     translator: Translator | None = None,
+    reference_infos: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if not isinstance(scientific_references, dict):
-        return [], []
-    infos = _collect_reference_infos(scientific_references)
+    if reference_infos is not None:
+        infos = reference_infos
+    else:
+        if not isinstance(scientific_references, dict):
+            return [], []
+        infos = _collect_reference_infos(scientific_references)
     source_datasets: list[dict[str, Any]] = []
     source_references: list[dict[str, Any]] = []
     for info in infos:
@@ -892,6 +896,18 @@ def _coerce_global_reference_items(references: list[Any]) -> list[GlobalReferenc
             )
         )
     return items
+
+
+def _reference_item_id(item: Any) -> str | None:
+    if isinstance(item, dict):
+        return str(item.get("@refObjectId") or item.get("refObjectId") or "").strip() or None
+    ref_object_id = getattr(item, "ref_object_id", None)
+    if ref_object_id:
+        return str(ref_object_id).strip() or None
+    ref_object_id = getattr(item, "refObjectId", None)
+    if ref_object_id:
+        return str(ref_object_id).strip() or None
+    return None
 
 
 def _normalize_reference_text(value: str) -> str:
@@ -1622,6 +1638,105 @@ def _usage_tags_from_supported_steps(supported_steps: list[str], decision: str |
     if not tags and decision and str(decision).strip().lower() == "unusable":
         tags.append("background_only")
     return tags
+
+
+_USAGE_TAGS_USED = {"tech_route", "process_split", "exchange_values"}
+_USAGE_TAGS_ALL = _USAGE_TAGS_USED | {"background_only"}
+
+
+def _normalize_usage_tags(value: Any) -> list[str]:
+    if not value:
+        return []
+    items = value if isinstance(value, list) else [value]
+    tags: list[str] = []
+    for item in items:
+        text = str(item).strip().lower()
+        if text in _USAGE_TAGS_ALL and text not in tags:
+            tags.append(text)
+    if "background_only" in tags and len(tags) > 1:
+        tags = [tag for tag in tags if tag != "background_only"]
+    return tags
+
+
+def _collect_usage_tag_map(scientific_references: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    doi_map: dict[str, set[str]] = {}
+    key_map: dict[str, set[str]] = {}
+    tagged_dois: set[str] = set()
+
+    def add_tags(*, doi: str | None, key: str | None, tags: list[str]) -> None:
+        if not tags:
+            return
+        if doi:
+            doi_map.setdefault(doi, set()).update(tags)
+        if key:
+            key_map.setdefault(key, set()).update(tags)
+
+    usage_tagging = scientific_references.get("usage_tagging")
+    results = usage_tagging.get("results") if isinstance(usage_tagging, dict) else None
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            doi = _normalize_doi(item.get("doi"))
+            key = str(item.get("key") or "").strip() or None
+            tags = _normalize_usage_tags(item.get("usage_tags") or item.get("usageTags"))
+            add_tags(doi=doi or None, key=key, tags=tags)
+            if doi:
+                tagged_dois.add(doi)
+
+    clusters = scientific_references.get(REFERENCE_CLUSTERS_KEY)
+    summaries = clusters.get("reference_summaries") if isinstance(clusters, dict) else None
+    if isinstance(summaries, list):
+        for summary in summaries:
+            if not isinstance(summary, dict):
+                continue
+            doi = _normalize_doi(summary.get("doi"))
+            if doi and doi in tagged_dois:
+                continue
+            tags = _normalize_usage_tags(summary.get("usage_tags") or summary.get("usageTags"))
+            add_tags(doi=doi or None, key=None, tags=tags)
+
+    usability = scientific_references.get("usability")
+    usability_results = usability.get("results") if isinstance(usability, dict) else None
+    if isinstance(usability_results, list):
+        for item in usability_results:
+            if not isinstance(item, dict):
+                continue
+            doi = _normalize_doi(item.get("doi"))
+            if doi and doi in tagged_dois:
+                continue
+            supported_steps = _normalize_steps(item.get("supported_steps"))
+            decision = item.get("decision")
+            tags = _usage_tags_from_supported_steps(supported_steps, decision)
+            add_tags(doi=doi or None, key=None, tags=tags)
+
+    return doi_map, key_map
+
+
+def _reference_is_used(info: dict[str, Any], doi_map: dict[str, set[str]], key_map: dict[str, set[str]]) -> bool:
+    if not doi_map and not key_map:
+        return True
+    doi = _normalize_doi(info.get("doi"))
+    key = str(info.get("key") or "").strip()
+    tags: set[str] = set()
+    if doi:
+        tags.update(doi_map.get(doi, set()))
+    if key:
+        tags.update(key_map.get(key, set()))
+    if not tags:
+        return False
+    return any(tag in _USAGE_TAGS_USED for tag in tags)
+
+
+def _filter_reference_infos_by_usage(
+    infos: list[dict[str, Any]],
+    *,
+    doi_map: dict[str, set[str]],
+    key_map: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    if not doi_map and not key_map:
+        return infos
+    return [info for info in infos if _reference_is_used(info, doi_map, key_map)]
 
 
 def _clean_evidence_list(value: Any) -> list[str]:
@@ -2997,6 +3112,7 @@ def _build_langgraph(
                 "routes": state.get("technology_routes") or [],
                 "operation": operation,
                 "step_1c_reference_clusters": reference_clusters or {},
+                "si_snippets": si_snippets,
             },
             "response_format": {"type": "json_object"},
         }
@@ -3438,7 +3554,17 @@ def _build_langgraph(
         if state.get("source_datasets") or state.get("source_references"):
             return {}
         scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
-        source_datasets, source_references = _build_source_datasets_from_references(scientific_references, translator=translator)
+        doi_map, key_map = _collect_usage_tag_map(scientific_references)
+        if doi_map or key_map:
+            infos = _collect_reference_infos(scientific_references)
+            infos = _filter_reference_infos_by_usage(infos, doi_map=doi_map, key_map=key_map)
+            source_datasets, source_references = _build_source_datasets_from_references(
+                scientific_references,
+                translator=translator,
+                reference_infos=infos,
+            )
+        else:
+            source_datasets, source_references = _build_source_datasets_from_references(scientific_references, translator=translator)
         if not source_datasets:
             return {}
         LOGGER.info("process_from_flow.build_sources", count=len(source_datasets))
@@ -3459,7 +3585,7 @@ def _build_langgraph(
         if not source_references:
             source_references = _build_source_reference_entries(source_datasets)
         source_reference_items = _coerce_global_reference_items(source_references)
-        reference_to_data_source = source_reference_items or _entry_level_compliance_reference()
+        default_reference_items = source_reference_items or _entry_level_compliance_reference()
         source_reference_index = (
             _build_source_reference_index(source_datasets, source_references) if source_datasets and source_references else {}
         )
@@ -3518,6 +3644,7 @@ def _build_langgraph(
                 matched_entry = exchange_plans.get(process_id) or {}
                 exchanges_raw = matched_entry.get("exchanges") or []
                 exchange_items: list[ExchangesExchangeItem] = []
+                process_reference_items: dict[str, GlobalReferenceTypeVariant1Item] = {}
                 reference_internal_id: str | None = None
                 next_internal_id = 1
                 for exchange in exchanges_raw:
@@ -3599,6 +3726,10 @@ def _build_langgraph(
                             exchange_item.references_to_data_source = ExchangeItemReferencesToDataSource(
                                 reference_to_data_source=matched_items
                             )
+                            for item in matched_items:
+                                ref_id = _reference_item_id(item)
+                                if ref_id:
+                                    process_reference_items[ref_id] = item
                     exchange_items.append(exchange_item)
 
                     if bool(exchange.get("is_reference_flow")):
@@ -3690,10 +3821,14 @@ def _build_langgraph(
                 process_information = ProcessesProcessDataSetProcessInformation(**process_info_kwargs)
 
                 exchanges = ProcessesProcessDataSetExchanges(exchange=exchange_items)
+                process_reference_list = list(process_reference_items.values())
+                process_reference_items_final = process_reference_list or default_reference_items
                 modelling_and_validation = ProcessesProcessDataSetModellingAndValidation(
                     lci_method_and_allocation=ProcessDataSetModellingAndValidationLCIMethodAndAllocation(type_of_data_set="Unit process, single operation"),
                     data_sources_treatment_and_representativeness=(
-                        ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(reference_to_data_source=reference_to_data_source)
+                        ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(
+                            reference_to_data_source=process_reference_items_final
+                        )
                     ),
                     validation=ProcessDataSetModellingAndValidationValidation(review=ModellingAndValidationValidationReview(type="Not reviewed")),
                     compliance_declarations=_compliance_declarations(),

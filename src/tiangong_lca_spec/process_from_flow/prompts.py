@@ -243,3 +243,24 @@ REFERENCE_USABILITY_PROMPT = (
     '  "si_reason": "..."\n'
     "}\n"
 )
+
+REFERENCE_USAGE_TAGGING_PROMPT = (
+    "You are tagging how a scientific reference should be used in the process_from_flow workflow.\n"
+    "\n"
+    "Tagging categories:\n"
+    "- tech_route: supports Step 1 (technology routes or process stages).\n"
+    "- process_split: supports Step 2 (unit process split or ordered operations).\n"
+    "- exchange_values: supports Step 3/3b (inventory exchanges, inputs/outputs, emissions, or quantified values).\n"
+    "- background_only: background context only; no direct support for Steps 1-3.\n"
+    "\n"
+    "Rules:\n"
+    "- Pick all that apply, but never include background_only with other tags.\n"
+    "- Use fulltext and SI snippets if available.\n"
+    "- If evidence is weak or absent, return background_only.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "usage_tags": ["tech_route", "process_split", "exchange_values", "background_only"],\n'
+    '  "reason": "..."'
+    "}\n"
+)

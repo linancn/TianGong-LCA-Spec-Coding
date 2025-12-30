@@ -22,7 +22,12 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     from _workflow_common import dump_json  # type: ignore
 
-from tiangong_lca_spec.process_from_flow.service import _build_source_datasets_from_references  # type: ignore
+from tiangong_lca_spec.process_from_flow.service import (  # type: ignore
+    _build_source_datasets_from_references,
+    _collect_reference_infos,
+    _collect_usage_tag_map,
+    _filter_reference_infos_by_usage,
+)
 
 PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
 
@@ -88,7 +93,19 @@ def main() -> None:
     state = _load_state(state_path)
 
     scientific_references = state.get("scientific_references")
-    source_datasets, source_references = _build_source_datasets_from_references(scientific_references)
+    if isinstance(scientific_references, dict):
+        doi_map, key_map = _collect_usage_tag_map(scientific_references)
+        if doi_map or key_map:
+            infos = _collect_reference_infos(scientific_references)
+            infos = _filter_reference_infos_by_usage(infos, doi_map=doi_map, key_map=key_map)
+            source_datasets, source_references = _build_source_datasets_from_references(
+                scientific_references,
+                reference_infos=infos,
+            )
+        else:
+            source_datasets, source_references = _build_source_datasets_from_references(scientific_references)
+    else:
+        source_datasets, source_references = _build_source_datasets_from_references(scientific_references)
     if not source_datasets:
         raise SystemExit("No source datasets generated from scientific references.")
 

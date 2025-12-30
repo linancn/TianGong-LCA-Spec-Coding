@@ -34,8 +34,8 @@ Each node checks if its target fields already exist to avoid rework.
   - PDFs/images: run `scripts/origin/mineru_for_process_si.py` to split into JSON (keep page/table blocks).
   - Spreadsheets/text (xls/xlsx/csv/doc/docx/txt/md): keep originals and capture readable snapshots (use mineru or direct text read).
   - Metadata should include `doi`/`si_url`/`file_type`/`local_path`/`mineru_output_path`/`status`/`error`.
-- 1e) reference_usage_tagging: tag each reference as `tech_route`/`process_split`/`exchange_values`/`background_only`, stored in `reference_summaries[*].usage_tags` or a separate index.
-- 1f) reference_sources: generate ILCD source datasets from Step 1a/1b/Step 2/Step 3 references via `tidas_sdk.create_source`, store in `source_datasets`, and produce `source_references` for later process linking.
+- 1e) reference_usage_tagging: tag each reference as `tech_route`/`process_split`/`exchange_values`/`background_only`, stored in `reference_summaries[*].usage_tags` or a separate index. Script: `uv run python scripts/origin/process_from_flow_reference_usage_tagging.py --run-id <run_id>`.
+- 1f) reference_sources: generate ILCD source datasets from Step 1a/1b/Step 2/Step 3 references via `tidas_sdk.create_source`, store in `source_datasets`, and produce `source_references` for later process linking. Sources are filtered to keep only references tagged as used (non-`background_only`), and each article is written as its own source dataset. (In LangGraph, `build_sources` runs after Step 4 and before Step 5.)
 - Stop-rule evaluation: call the coverage-based stop rules to decide whether to continue retrieval or switch to `expert_judgement`.
 - If any of Step 1a/1b/1c lacks usable references (including usability results all marked unusable), Steps 1-3 fall back to common sense: do not use literature evidence, and Steps 2/3 do not issue retrievals; still tag data sources in processes/exchanges as `expert_judgement` with reasons.
 - 1) Describe technology (Step 1): use the reference flow plus Step 1c primary cluster (and si_snippets when available) to output plausible technology/process routes (route1/route2...), each with route_summary, key inputs/outputs, key unit processes, assumptions, and scope; include `supported_dois` and `route_evidence` so the summary stays traceable to evidence.
@@ -61,6 +61,28 @@ Each node checks if its target fields already exist to avoid rework.
   - Use matched flows; missing matches use placeholders (no invented uuid/shortDescription).
   - Ensure a reference exchange; empty amounts fall back to `"1.0"`.
   - Fill functional unit, time/region, compliance, data entry, copyright; validate with `tidas_sdk.create_process` (log warning on failure).
+  - Process-level `referenceToDataSource` is the union of all exchange-level source references for that process (fallback to entry-level compliance if none).
+
+## SI Integration (Actual Injection Points)
+- Step 1 uses `si_snippets` in the prompt context (`TECH_DESCRIPTION_PROMPT`).
+- Step 2 uses `si_snippets` in the prompt context (`PROCESS_SPLIT_PROMPT`).
+- Step 3 uses `si_snippets` in the prompt context (`EXCHANGES_PROMPT`).
+- Step 3b uses `fulltext_references` + `si_snippets` in the prompt context (`EXCHANGE_VALUE_PROMPT`).
+- Step 4/Step 5 do not read SI directly.
+- SI must be written back to `process_from_flow_state.json` before Step 1; otherwise rerun Step 1-3 after SI is available.
+
+## Workflow Orchestration Script (with SI)
+To ensure SI is fetched and injected before Step 1-3, use:
+`scripts/origin/process_from_flow_workflow.py`.
+This script runs Step 1b usability, Step 1d SI download/parse, and Step 1e usage tagging before resuming Step 1-5.
+
+Orchestration order:
+Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e (optional) → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 1f → Step 5
+
+Example:
+```bash
+uv run python scripts/origin/process_from_flow_workflow.py --flow <flow.json> --operation produce
+```
 
 ## Outputs and Debugging
 - Normal runs return full state; `process_datasets` is the final output list and `source_datasets` can be written to `exports/sources/`.

@@ -34,8 +34,8 @@
   - PDF/图像：调用 `scripts/origin/mineru_for_process_si.py` 拆分并输出 JSON（保留页码与表格块）。
   - 表格/文本（xls/xlsx/csv/doc/docx/txt/md）：保留原件并记录可读提取文本/表格快照（可用 mineru 或直接读取文本）。
   - 元数据建议包含 `doi`/`si_url`/`file_type`/`local_path`/`mineru_output_path`/`status`/`error`，便于溯源与重跑。
-- 1e) reference_usage_tagging：综合正文与 SI，标注文献用途（`tech_route`/`process_split`/`exchange_values`/`background_only`），写入 `reference_summaries[*].usage_tags` 或独立索引表。
-- 1f) reference_sources：基于 Step 1a/1b/Step 2/Step 3 的检索结果，使用 `tidas_sdk.create_source` 生成 ILCD source 数据集，写入 `source_datasets`，并生成 `source_references` 以便后续 process 引用。
+- 1e) reference_usage_tagging：综合正文与 SI，标注文献用途（`tech_route`/`process_split`/`exchange_values`/`background_only`），写入 `reference_summaries[*].usage_tags` 或独立索引表。脚本：`uv run python scripts/origin/process_from_flow_reference_usage_tagging.py --run-id <run_id>`。
+- 1f) reference_sources：基于 Step 1a/1b/Step 2/Step 3 的检索结果，使用 `tidas_sdk.create_source` 生成 ILCD source 数据集，写入 `source_datasets`，并生成 `source_references` 以便后续 process 引用。来源会按 usage_tag 过滤，仅保留被标记为使用的文献（非 `background_only`），且每篇文章生成一个独立 source 数据集。（在 LangGraph 中 `build_sources` 位于 Step 4 之后、Step 5 之前）
 - 斩杀线判定：按“斩杀线规则”评估覆盖率与检索收益，决定是否继续检索或转入 `expert_judgement`。
 - 若 Step 1a/1b/1c 任一没有可用参考文献（包含可用性筛选结果全部为不可用的情况），则 Step 1-3 进入 common sense 模式：不再使用文献证据，Step 2/Step 3 不再发起检索；但仍需在过程与 exchange 中标注数据来源为 `expert_judgement` 并写明理由。
 - 1) 识别技术路径（Step 1）：基于 reference flow + Step 1c 主干候选（必要时结合 si_snippets）输出所有可能的技术/工艺路径（route1/route2...），每条路径给出 route_summary、关键输入/输出、关键单元过程、假设与范围；必须附 `supported_dois` 与 `route_evidence`，仅做结构化路线归纳，不替代证据明细。
@@ -62,6 +62,28 @@
   - 强制存在参考流交换；空量值回退为 `"1.0"`。
   - 自动填充功能单位、时间/地域、合规声明、数据录入与版权块；使用 `tidas_sdk.create_process` 进行模型校验（失败仅记录警告）。
   - `process_datasets` 为最终落库结构，`processes`/`process_exchanges` 作为可迭代中间文档；新增文献时优先更新中间文档并重建数据集。
+  - process 层面的 `referenceToDataSource` 为该 process 下所有 exchange 引用 source 的并集（若为空则回退到 entry-level 合规引用）。
+
+## SI 影响注入点（实际行为）
+- Step 1 的 LLM 提示中包含 `si_snippets`（`TECH_DESCRIPTION_PROMPT`）。
+- Step 2 的 LLM 提示中包含 `si_snippets`（`PROCESS_SPLIT_PROMPT`）。
+- Step 3 的 LLM 提示中包含 `si_snippets`（`EXCHANGES_PROMPT`）。
+- Step 3b 的 LLM 提示中包含 `fulltext_references` + `si_snippets`（`EXCHANGE_VALUE_PROMPT`）。
+- Step 4/Step 5 不直接读取 SI。
+- SI 必须在 Step 1 前写回 `process_from_flow_state.json`，否则需回跑 Step 1-3。
+
+## 流程编排脚本（含 SI）
+为保证 SI 在 Step 1-3 前写回并影响推理，使用：
+`scripts/origin/process_from_flow_workflow.py`。
+该脚本会在恢复主流程前依次执行 Step 1b 可用性筛选、Step 1d SI 下载/解析、Step 1e 使用标注。
+
+编排顺序：
+Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e（可选） → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 1f → Step 5
+
+示例：
+```bash
+uv run python scripts/origin/process_from_flow_workflow.py --flow <flow.json> --operation produce
+```
 
 ## 产出与调试
 - 正常运行返回完整状态，其中 `process_datasets` 为生成结果（可直接写出或继续处理），`source_datasets` 可写出到 `exports/sources/`。
