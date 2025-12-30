@@ -9,20 +9,21 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypedDict
-from uuid import UUID, uuid4
+from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 from zipfile import ZipFile
 
 import xml.etree.ElementTree as ET
 
 from langgraph.graph import END, StateGraph
-from tidas_sdk import create_process
+from tidas_sdk import create_process, create_source
 from tidas_sdk.core.multilang import MultiLangList
 from tidas_sdk.entities.utils import default_timestamp
-from tidas_sdk.generated.tidas_data_types import GlobalReferenceTypeVariant0
+from tidas_sdk.generated.tidas_data_types import GlobalReferenceTypeVariant0, GlobalReferenceTypeVariant1Item
 from tidas_sdk.generated.tidas_processes import (
     CommonClassItemOption0,
     ComplianceDeclarationsComplianceOption0,
     DataSetInformationClassificationInformationCommonClassification,
+    ExchangeItemReferencesToDataSource,
     ExchangesExchangeItem,
     ModellingAndValidationValidationReview,
     ProcessDataSetAdministrativeInformationCommonCommissionerAndGoal,
@@ -46,6 +47,19 @@ from tidas_sdk.generated.tidas_processes import (
     ProcessInformationDataSetInformationClassificationInformation,
     ProcessInformationDataSetInformationName,
     ProcessInformationGeographyLocationOfOperationSupplyOrProduction,
+)
+from tidas_sdk.generated.tidas_sources import (
+    ClassificationInformationCommonClassificationCommonClass as SourceClassificationCommonClass,
+    DataSetInformationClassificationInformationCommonClassification as SourceClassificationInformationCommonClassification,
+    SourceDataSetAdministrativeInformationDataEntryBy,
+    SourceDataSetAdministrativeInformationPublicationAndOwnership,
+    SourceDataSetSourceInformationDataSetInformation,
+    SourceInformationDataSetInformationClassificationInformation,
+    SourceInformationDataSetInformationReferenceToDigitalFile,
+    Sources,
+    SourcesSourceDataSet,
+    SourcesSourceDataSetAdministrativeInformation,
+    SourcesSourceDataSetSourceInformation,
 )
 
 from tiangong_lca_spec.core.config import Settings, get_settings
@@ -475,6 +489,168 @@ def _references_usable(scientific_references: dict[str, Any] | None) -> bool:
     return True
 
 
+def _parse_reference_source(value: str) -> tuple[str, str]:
+    text = value.strip()
+    if not text:
+        return "", ""
+    match = _MARKDOWN_LINK_PATTERN.search(text)
+    if match:
+        label = match.group(1).strip()
+        link = match.group(2).strip()
+        return label, link
+    link = _extract_reference_url(text)
+    return text, link
+
+
+def _extract_reference_url(value: str) -> str:
+    if not value:
+        return ""
+    match = _URL_PATTERN.search(value)
+    return match.group(0) if match else ""
+
+
+def _reference_key(
+    doi: str | None,
+    url: str | None,
+    citation: str | None,
+    title: str | None,
+    description: str | None,
+) -> str:
+    if doi:
+        return f"doi:{doi.lower()}"
+    if url:
+        return f"url:{url.lower()}"
+    if citation:
+        return f"citation:{citation.lower()}"
+    if title:
+        return f"title:{title.lower()}"
+    if description:
+        return f"desc:{description.lower()}"
+    return ""
+
+
+def _reference_title_from_citation(citation: str | None) -> str:
+    if not citation:
+        return ""
+    parts = re.split(r"\\.\\s+", citation.strip(), maxsplit=1)
+    candidate = parts[0].strip() if parts else citation.strip()
+    if len(candidate) < 8:
+        candidate = citation.strip()
+    return _compact_text(candidate, limit=160)
+
+
+def _reference_info_from_record(
+    record: dict[str, Any],
+    *,
+    origin_step: str | None = None,
+    doi_override: str | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(record, dict):
+        return None
+    doi = str(doi_override or _extract_reference_doi(record) or "").strip() or None
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    source_text = _first_nonempty(record.get("source"), metadata.get("meta"), metadata.get("citation"), metadata.get("source"))
+    citation, link = _parse_reference_source(source_text) if source_text else ("", "")
+    if not citation:
+        citation = _first_nonempty(metadata.get("meta"), metadata.get("citation"), metadata.get("title"), source_text)
+    url = _first_nonempty(link, metadata.get("url"), metadata.get("uri"), metadata.get("link"))
+    if not url:
+        url = _extract_reference_url(source_text or "")
+    if not url and doi:
+        url = f"https://doi.org/{doi}"
+    title = _first_nonempty(metadata.get("title"), metadata.get("paper_title"), metadata.get("name"), metadata.get("document_title"))
+    if not title:
+        title = _reference_title_from_citation(citation)
+    content = _extract_record_text(record)
+    description = _compact_text(content, limit=360)
+    if not citation and title:
+        citation = title
+    if not citation and doi:
+        citation = f"DOI {doi}"
+    if not any([doi, citation, title, description]):
+        return None
+    short_name = _compact_text(title or citation or (doi or "Reference source"), limit=180)
+    key = _reference_key(doi, url, citation, title, description)
+    if not key and short_name:
+        key = f"short:{short_name.lower()}"
+    return {
+        "key": key,
+        "doi": doi,
+        "url": url,
+        "citation": citation,
+        "title": title,
+        "short_name": short_name,
+        "description": description,
+        "origin_steps": [origin_step] if origin_step else [],
+    }
+
+
+def _merge_reference_info(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    if not target:
+        return incoming
+    for field in ("doi", "url"):
+        if not target.get(field) and incoming.get(field):
+            target[field] = incoming.get(field)
+    for field in ("citation", "title", "short_name", "description"):
+        incoming_value = incoming.get(field)
+        if not incoming_value:
+            continue
+        current = target.get(field)
+        if not current or len(str(incoming_value)) > len(str(current)):
+            target[field] = incoming_value
+    steps = set(target.get("origin_steps") or [])
+    steps.update(incoming.get("origin_steps") or [])
+    target["origin_steps"] = sorted(step for step in steps if step)
+    return target
+
+
+def _collect_reference_infos(scientific_references: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(scientific_references, dict):
+        return []
+    collected: dict[str, dict[str, Any]] = {}
+
+    def register(info: dict[str, Any] | None) -> None:
+        if not info:
+            return
+        key = str(info.get("key") or "").strip()
+        if not key:
+            key = f"ref:{len(collected) + 1}"
+            info["key"] = key
+        existing = collected.get(key)
+        if existing is None:
+            collected[key] = info
+        else:
+            collected[key] = _merge_reference_info(existing, info)
+
+    fulltext_entries = scientific_references.get(REFERENCE_FULLTEXT_KEY, {}).get("references", [])
+    if isinstance(fulltext_entries, list):
+        for entry in fulltext_entries:
+            if not isinstance(entry, dict):
+                continue
+            doi = str(entry.get("doi") or "").strip() or None
+            records = entry.get("records") or []
+            record = next((item for item in records if isinstance(item, dict)), None)
+            if record is None and doi:
+                record = {"doi": doi, "source": f"https://doi.org/{doi}"}
+            info = _reference_info_from_record(record or {}, origin_step=REFERENCE_FULLTEXT_KEY, doi_override=doi)
+            register(info)
+
+    for step_key in (REFERENCE_SEARCH_KEY, "step2", "step3"):
+        block = scientific_references.get(step_key)
+        if not isinstance(block, dict):
+            continue
+        references = block.get("references")
+        if not isinstance(references, list):
+            continue
+        for ref in references:
+            if not isinstance(ref, dict):
+                continue
+            info = _reference_info_from_record(ref, origin_step=step_key)
+            register(info)
+
+    return list(collected.values())
+
+
 def _build_reference_cluster_summaries(
     fulltext_entries: list[dict[str, Any]],
     *,
@@ -507,6 +683,374 @@ def _build_reference_cluster_summaries(
             }
         )
     return summaries
+
+
+def _source_uuid_for_info(info: dict[str, Any]) -> str:
+    key = str(info.get("key") or "").strip()
+    if not key:
+        return str(uuid4())
+    return str(uuid5(NAMESPACE_URL, key))
+
+
+def _build_source_reference_payload(
+    *,
+    uuid_value: str,
+    version: str,
+    short_description: Any,
+) -> dict[str, Any]:
+    reference = _global_reference(
+        ref_type="source data set",
+        ref_object_id=uuid_value,
+        version=version,
+        uri=build_local_dataset_uri("source data set", uuid_value, version),
+        short_description=short_description,
+    )
+    return reference.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def _build_source_dataset(
+    info: dict[str, Any],
+    *,
+    translator: Translator | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if not info:
+        return None
+    uuid_value = _source_uuid_for_info(info)
+    version = "01.01.000"
+    short_name = str(info.get("short_name") or info.get("title") or info.get("citation") or info.get("doi") or "Source reference").strip()
+    citation = str(info.get("citation") or short_name or "Source reference").strip()
+    description = str(info.get("description") or "").strip()
+    origin_steps = [str(step).strip() for step in (info.get("origin_steps") or []) if str(step).strip()]
+    if origin_steps:
+        description = f"{description} Search steps: {', '.join(origin_steps)}.".strip() if description else f"Search steps: {', '.join(origin_steps)}."
+    if info.get("doi"):
+        description = f"{description} DOI: {info['doi']}.".strip() if description else f"DOI: {info['doi']}."
+    url = str(info.get("url") or "").strip()
+
+    short_entries = _build_multilang_entries(short_name, translator=translator)
+    description_entries = _build_multilang_entries(description, translator=translator) if description else []
+    classification_class = SourceClassificationCommonClass(level="0", class_id="C", text="Literature")
+    classification = SourceClassificationInformationCommonClassification(common_class=classification_class)
+    classification_info = SourceInformationDataSetInformationClassificationInformation(common_classification=classification)
+    reference_to_file = SourceInformationDataSetInformationReferenceToDigitalFile(uri=url) if url else None
+    publication_type = "Article in periodical" if info.get("doi") else "Other unpublished and grey literature"
+
+    data_info = SourceDataSetSourceInformationDataSetInformation(
+        common_uuid=uuid_value,
+        common_short_name=_as_multilang_list(short_entries or short_name),
+        classification_information=classification_info,
+        source_citation=citation,
+        publication_type=publication_type,
+        source_description_or_comment=_as_multilang_list(description_entries or description),
+        reference_to_digital_file=reference_to_file,
+        reference_to_contact=_contact_reference(),
+    )
+    source_information = SourcesSourceDataSetSourceInformation(data_set_information=data_info)
+    data_entry = SourceDataSetAdministrativeInformationDataEntryBy(
+        common_time_stamp=default_timestamp(),
+        common_reference_to_data_set_format=_dataset_format_reference(),
+    )
+    publication = SourceDataSetAdministrativeInformationPublicationAndOwnership(
+        common_data_set_version=version,
+        common_permanent_data_set_uri=build_portal_uri("source", uuid_value, version),
+        common_reference_to_ownership_of_data_set=_contact_reference(),
+    )
+    administrative_information = SourcesSourceDataSetAdministrativeInformation(
+        data_entry_by=data_entry,
+        publication_and_ownership=publication,
+    )
+    source_dataset = SourcesSourceDataSet(
+        xmlns="http://lca.jrc.it/ILCD/Source",
+        xmlns_common="http://lca.jrc.it/ILCD/Common",
+        xmlns_xsi="http://www.w3.org/2001/XMLSchema-instance",
+        version="1.1",
+        xsi_schema_location="http://lca.jrc.it/ILCD/Source ../../schemas/ILCD_SourceDataSet.xsd",
+        source_information=source_information,
+        administrative_information=administrative_information,
+    )
+    source_model = Sources(source_data_set=source_dataset)
+
+    validated_on_init = False
+    try:
+        entity = create_source(source_model, validate=True)
+        validated_on_init = True
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning("process_from_flow.source_validation_failed", source_key=info.get("key"), error=str(exc))
+        entity = create_source(source_model, validate=False)
+
+    if validated_on_init:
+        errors = entity.last_validation_error()
+        if errors:
+            LOGGER.warning("process_from_flow.source_not_valid", source_key=info.get("key"), error=str(errors))
+    else:
+        valid = entity.validate(mode="pydantic")
+        if not valid:
+            errors = entity.last_validation_error()
+            LOGGER.warning("process_from_flow.source_not_valid", source_key=info.get("key"), error=str(errors))
+
+    payload = entity.model.model_dump(mode="json", by_alias=True, exclude_none=True)
+    reference_payload = _build_source_reference_payload(
+        uuid_value=uuid_value,
+        version=version,
+        short_description=short_entries or short_name,
+    )
+    return payload, reference_payload
+
+
+def _build_source_datasets_from_references(
+    scientific_references: dict[str, Any] | None,
+    *,
+    translator: Translator | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not isinstance(scientific_references, dict):
+        return [], []
+    infos = _collect_reference_infos(scientific_references)
+    source_datasets: list[dict[str, Any]] = []
+    source_references: list[dict[str, Any]] = []
+    for info in infos:
+        result = _build_source_dataset(info, translator=translator)
+        if not result:
+            continue
+        payload, reference = result
+        source_datasets.append(payload)
+        source_references.append(reference)
+    return source_datasets, source_references
+
+
+def _build_source_reference_entries(source_datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    for dataset in source_datasets:
+        if not isinstance(dataset, dict):
+            continue
+        source_data_set = dataset.get("sourceDataSet")
+        if not isinstance(source_data_set, dict):
+            continue
+        info = source_data_set.get("sourceInformation")
+        if not isinstance(info, dict):
+            continue
+        data_info = info.get("dataSetInformation")
+        if not isinstance(data_info, dict):
+            continue
+        uuid_value = str(data_info.get("common:UUID") or "").strip()
+        if not uuid_value:
+            continue
+        short_desc = data_info.get("common:shortName")
+        admin = source_data_set.get("administrativeInformation")
+        version = None
+        if isinstance(admin, dict):
+            publication = admin.get("publicationAndOwnership")
+            if isinstance(publication, dict):
+                version = publication.get("common:dataSetVersion")
+        version_text = str(version or "01.01.000").strip()
+        if not short_desc:
+            short_desc = [_language_entry("Source reference", "en")]
+        references.append(
+            {
+                "@type": "source data set",
+                "@refObjectId": uuid_value,
+                "@uri": build_local_dataset_uri("source data set", uuid_value, version_text),
+                "@version": version_text,
+                "common:shortDescription": short_desc,
+            }
+        )
+    return references
+
+
+def _coerce_global_reference_items(references: list[Any]) -> list[GlobalReferenceTypeVariant1Item]:
+    items: list[GlobalReferenceTypeVariant1Item] = []
+    for ref in references:
+        if isinstance(ref, GlobalReferenceTypeVariant1Item):
+            items.append(ref)
+            continue
+        if isinstance(ref, GlobalReferenceTypeVariant0):
+            items.append(
+                GlobalReferenceTypeVariant1Item(
+                    type=ref.type,
+                    ref_object_id=ref.ref_object_id,
+                    version=ref.version,
+                    uri=ref.uri,
+                    common_short_description=ref.common_short_description,
+                )
+            )
+            continue
+        if not isinstance(ref, dict):
+            continue
+        ref_type = ref.get("@type") or ref.get("type")
+        ref_id = ref.get("@refObjectId") or ref.get("refObjectId")
+        version = ref.get("@version") or ref.get("version") or "01.01.000"
+        uri = ref.get("@uri") or ref.get("uri") or ""
+        short_desc = ref.get("common:shortDescription") or ref.get("common_short_description") or ref.get("commonShortDescription")
+        if not ref_type or not ref_id:
+            continue
+        items.append(
+            GlobalReferenceTypeVariant1Item(
+                type=str(ref_type),
+                ref_object_id=str(ref_id),
+                version=str(version),
+                uri=str(uri),
+                common_short_description=_as_multilang_list(short_desc or "Source reference"),
+            )
+        )
+    return items
+
+
+def _normalize_reference_text(value: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip().lower()
+    return text
+
+
+def _normalize_reference_url(value: str) -> str:
+    text = value.strip().rstrip(").,;").lower()
+    return text
+
+
+def _collect_lang_values(value: Any) -> list[str]:
+    lang_map = _extract_lang_texts(value)
+    values: list[str] = []
+    for items in lang_map.values():
+        for item in items:
+            text = str(item).strip()
+            if text:
+                values.append(text)
+    return values
+
+
+def _build_source_reference_index(
+    source_datasets: list[dict[str, Any]],
+    source_references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    by_uuid: dict[str, dict[str, Any]] = {}
+    for ref in source_references:
+        if not isinstance(ref, dict):
+            continue
+        uuid_value = str(ref.get("@refObjectId") or "").strip()
+        if uuid_value:
+            by_uuid[uuid_value] = ref
+
+    doi_map: dict[str, dict[str, Any]] = {}
+    url_map: dict[str, dict[str, Any]] = {}
+    text_entries: list[tuple[str, dict[str, Any]]] = []
+
+    for dataset in source_datasets:
+        if not isinstance(dataset, dict):
+            continue
+        source_data_set = dataset.get("sourceDataSet")
+        if not isinstance(source_data_set, dict):
+            continue
+        info_block = source_data_set.get("sourceInformation")
+        if not isinstance(info_block, dict):
+            continue
+        data_info = info_block.get("dataSetInformation")
+        if not isinstance(data_info, dict):
+            continue
+        uuid_value = str(data_info.get("common:UUID") or "").strip()
+        if not uuid_value:
+            continue
+        ref = by_uuid.get(uuid_value)
+        if ref is None:
+            ref_candidates = _build_source_reference_entries([dataset])
+            ref = ref_candidates[0] if ref_candidates else None
+        if not isinstance(ref, dict):
+            continue
+
+        citation = data_info.get("sourceCitation")
+        short_name = data_info.get("common:shortName")
+        description = data_info.get("sourceDescriptionOrComment")
+        digital_file = data_info.get("referenceToDigitalFile")
+        url = None
+        if isinstance(digital_file, dict):
+            url = digital_file.get("@uri")
+
+        for text in [citation, short_name, description]:
+            for value in _collect_lang_values(text):
+                doi = _extract_doi_from_text(value)
+                if doi:
+                    doi_map[doi.lower()] = ref
+                text_key = _normalize_reference_text(value)
+                if text_key:
+                    text_entries.append((text_key, ref))
+
+        if isinstance(url, str) and url.strip():
+            url_key = _normalize_reference_url(url)
+            if url_key:
+                url_map[url_key] = ref
+            doi = _extract_doi_from_text(url)
+            if doi:
+                doi_map[doi.lower()] = ref
+
+    return {
+        "doi": doi_map,
+        "url": url_map,
+        "text_entries": text_entries,
+    }
+
+
+def _collect_exchange_citations(exchange: dict[str, Any]) -> list[str]:
+    evidence = _clean_evidence_list(exchange.get("evidence"))
+    data_source = exchange.get("data_source") or exchange.get("dataSource")
+    citations: list[str] = []
+    if isinstance(data_source, dict):
+        citations = _clean_evidence_list(data_source.get("citations"))
+    combined = []
+    for item in evidence + citations:
+        if item and item not in combined:
+            combined.append(item)
+    return combined
+
+
+def _match_source_references(
+    evidence: list[str],
+    reference_index: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not evidence:
+        return []
+    doi_map = reference_index.get("doi", {})
+    url_map = reference_index.get("url", {})
+    text_entries = reference_index.get("text_entries", [])
+
+    matched: dict[str, dict[str, Any]] = {}
+    for item in evidence:
+        text = str(item).strip()
+        if not text:
+            continue
+        doi = _extract_doi_from_text(text)
+        if doi:
+            ref = doi_map.get(doi.lower())
+            if isinstance(ref, dict):
+                ref_id = ref.get("@refObjectId")
+                if ref_id:
+                    matched[str(ref_id)] = ref
+                continue
+        url = _extract_reference_url(text)
+        if url:
+            url_key = _normalize_reference_url(url)
+            ref = url_map.get(url_key)
+            if ref is None and url_key.rstrip("/") != url_key:
+                ref = url_map.get(url_key.rstrip("/"))
+            if isinstance(ref, dict):
+                ref_id = ref.get("@refObjectId")
+                if ref_id:
+                    matched[str(ref_id)] = ref
+                continue
+            doi = _extract_doi_from_text(url_key)
+            if doi:
+                ref = doi_map.get(doi.lower())
+                if isinstance(ref, dict):
+                    ref_id = ref.get("@refObjectId")
+                    if ref_id:
+                        matched[str(ref_id)] = ref
+                    continue
+        norm = _normalize_reference_text(text)
+        if not norm:
+            continue
+        for key, ref in text_entries:
+            if len(key) < 12:
+                continue
+            if key in norm or norm in key:
+                ref_id = ref.get("@refObjectId") if isinstance(ref, dict) else None
+                if ref_id:
+                    matched[str(ref_id)] = ref
+    return list(matched.values())
 
 
 def _extract_mineru_text_blocks(payload: Any, *, max_blocks: int) -> list[str]:
@@ -1429,6 +1973,8 @@ def _update_scientific_references(
 FlowSearchFn = Callable[[FlowQuery], tuple[list[FlowCandidate], list[object]]]
 
 _DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\])>,;\"']+", re.IGNORECASE)
+_MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_URL_PATTERN = re.compile(r"https?://[^\s\])>]+", re.IGNORECASE)
 _FLOW_LABEL_PATTERN = re.compile(r"^f\\d+\\s*[:\\-]\\s*", re.IGNORECASE)
 _FLOW_NAME_FIELDS = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
 _FLOW_QUALIFIER_FIELDS = ("flowProperties",)
@@ -1472,6 +2018,8 @@ class ProcessFromFlowState(TypedDict, total=False):
     exchange_values_applied: bool
     matched_process_exchanges: list[dict[str, Any]]
     process_datasets: list[dict[str, Any]]
+    source_datasets: list[dict[str, Any]]
+    source_references: list[dict[str, Any]]
     step_markers: dict[str, bool]
     scientific_references: dict[str, Any]
     coverage_metrics: dict[str, Any]
@@ -2886,6 +3434,16 @@ def _build_langgraph(
             matched.append({"process_id": process_id, "exchanges": matched_exchanges})
         return {"matched_process_exchanges": matched}
 
+    def build_sources(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if state.get("source_datasets") or state.get("source_references"):
+            return {}
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        source_datasets, source_references = _build_source_datasets_from_references(scientific_references, translator=translator)
+        if not source_datasets:
+            return {}
+        LOGGER.info("process_from_flow.build_sources", count=len(source_datasets))
+        return {"source_datasets": source_datasets, "source_references": source_references}
+
     def build_process_datasets(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if state.get("process_datasets"):
             return {}
@@ -2896,6 +3454,15 @@ def _build_langgraph(
         scope = state.get("scope") or ""
         assumptions = state.get("assumptions") or []
         reference_direction = _reference_direction(state.get("operation"))
+        source_datasets = [item for item in (state.get("source_datasets") or []) if isinstance(item, dict)]
+        source_references = [item for item in (state.get("source_references") or []) if isinstance(item, dict)]
+        if not source_references:
+            source_references = _build_source_reference_entries(source_datasets)
+        source_reference_items = _coerce_global_reference_items(source_references)
+        reference_to_data_source = source_reference_items or _entry_level_compliance_reference()
+        source_reference_index = (
+            _build_source_reference_index(source_datasets, source_references) if source_datasets and source_references else {}
+        )
 
         process_plans = {str(item.get("process_id") or ""): item for item in (state.get("processes") or []) if isinstance(item, dict)}
         exchange_plans = {str(item.get("process_id") or ""): item for item in (state.get("matched_process_exchanges") or []) if isinstance(item, dict)}
@@ -3024,6 +3591,14 @@ def _build_langgraph(
                     if comment_text:
                         comment_entries = _build_multilang_entries(comment_text, translator=translator)
                         exchange_item.general_comment = _as_multilang_list(comment_entries or comment_text)
+                    if source_reference_index:
+                        evidence = _collect_exchange_citations(exchange)
+                        matched_sources = _match_source_references(evidence, source_reference_index)
+                        matched_items = _coerce_global_reference_items(matched_sources)
+                        if matched_items:
+                            exchange_item.references_to_data_source = ExchangeItemReferencesToDataSource(
+                                reference_to_data_source=matched_items
+                            )
                     exchange_items.append(exchange_item)
 
                     if bool(exchange.get("is_reference_flow")):
@@ -3118,7 +3693,7 @@ def _build_langgraph(
                 modelling_and_validation = ProcessesProcessDataSetModellingAndValidation(
                     lci_method_and_allocation=ProcessDataSetModellingAndValidationLCIMethodAndAllocation(type_of_data_set="Unit process, single operation"),
                     data_sources_treatment_and_representativeness=(
-                        ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(reference_to_data_source=_entry_level_compliance_reference())
+                        ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(reference_to_data_source=reference_to_data_source)
                     ),
                     validation=ProcessDataSetModellingAndValidationValidation(review=ModellingAndValidationValidationReview(type="Not reviewed")),
                     compliance_declarations=_compliance_declarations(),
@@ -3182,6 +3757,7 @@ def _build_langgraph(
     graph.add_node("generate_exchanges", generate_exchanges)
     graph.add_node("enrich_exchange_amounts", enrich_exchange_amounts)
     graph.add_node("match_flows", match_flows)
+    graph.add_node("build_sources", build_sources)
     graph.add_node("build_process_datasets", build_process_datasets)
 
     graph.set_entry_point("load_flow")
@@ -3204,7 +3780,11 @@ def _build_langgraph(
     )
     graph.add_conditional_edges(
         "match_flows",
-        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "matches") else "build_process_datasets",
+        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "matches") else "build_sources",
+    )
+    graph.add_conditional_edges(
+        "build_sources",
+        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "sources") else "build_process_datasets",
     )
     graph.add_edge("build_process_datasets", END)
 

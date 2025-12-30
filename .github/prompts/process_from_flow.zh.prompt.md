@@ -6,7 +6,7 @@
 - 目标：从参考 flow 数据集（ILCD JSON）推导对应的 process 数据集（ILCD 格式），exchange 里的 flow uuid/shortDescription 必须来自 `search_flows` 结果，未命中时才用占位符。
 - 核心入口：`ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`。
 - 依赖：LLM 为必选，用于技术路径识别、单元过程拆分、交换生成与候选选择；同时依赖 flow 搜索函数 `search_flows`（可注入自定义）与候选选择器（建议 LLM 版本）。
-- `stop_after` 支持 `"references"|"tech"|"processes"|"exchanges"|"matches"`，用于调试时提前终止。
+- `stop_after` 支持 `"references"|"tech"|"processes"|"exchanges"|"matches"|"sources"`，用于调试时提前终止。
 
 ## 状态字段
 工作流以状态字典传递数据，关键字段：
@@ -19,6 +19,8 @@
 - `process_exchanges`：每个过程的交换清单（仅结构，无匹配信息）。
 - `matched_process_exchanges`：为每个交换附上 flow 搜索结果与已选候选，并回填 uuid/shortDescription。
 - `process_datasets`：最终生成的 ILCD process 数据集。
+- `source_datasets`：由检索文献生成的 ILCD source 数据集。
+- `source_references`：可直接挂载到 process / exchange `referenceToDataSource` 的 source 引用列表。
 - `step_markers`：阶段标记（step1/step2/step3），用于人工查阅。
 
 ## 节点顺序与行为
@@ -33,6 +35,7 @@
   - 表格/文本（xls/xlsx/csv/doc/docx/txt/md）：保留原件并记录可读提取文本/表格快照（可用 mineru 或直接读取文本）。
   - 元数据建议包含 `doi`/`si_url`/`file_type`/`local_path`/`mineru_output_path`/`status`/`error`，便于溯源与重跑。
 - 1e) reference_usage_tagging：综合正文与 SI，标注文献用途（`tech_route`/`process_split`/`exchange_values`/`background_only`），写入 `reference_summaries[*].usage_tags` 或独立索引表。
+- 1f) reference_sources：基于 Step 1a/1b/Step 2/Step 3 的检索结果，使用 `tidas_sdk.create_source` 生成 ILCD source 数据集，写入 `source_datasets`，并生成 `source_references` 以便后续 process 引用。
 - 斩杀线判定：按“斩杀线规则”评估覆盖率与检索收益，决定是否继续检索或转入 `expert_judgement`。
 - 若 Step 1a/1b/1c 任一没有可用参考文献（包含可用性筛选结果全部为不可用的情况），则 Step 1-3 进入 common sense 模式：不再使用文献证据，Step 2/Step 3 不再发起检索；但仍需在过程与 exchange 中标注数据来源为 `expert_judgement` 并写明理由。
 - 1) 识别技术路径（Step 1）：基于 reference flow + Step 1c 主干候选（必要时结合 si_snippets）输出所有可能的技术/工艺路径（route1/route2...），每条路径给出 route_summary、关键输入/输出、关键单元过程、假设与范围；必须附 `supported_dois` 与 `route_evidence`，仅做结构化路线归纳，不替代证据明细。
@@ -50,7 +53,7 @@
   - 对排放类 exchange 自动补充介质标签（`to air` / `to water` / `to soil`），降低检索歧义。
   - 为 exchange 增加 `flow_type`（product/elementary/waste/service）与 `search_hints` 别名。
   - 每条 exchange 必须附 `data_source`/`evidence` 字段，记录 DOI/正文/ SI 文件与表格位置；若为推断或补全，标记 `source_type=expert_judgement` 并说明依据。
-- 3b) exchange_amounts：调用 `EXCHANGE_VALUE_PROMPT` 基于正文与 SI 抽取可核查的 exchange 数值与单位；仅使用显式证据，无法定位时保持占位符并保留 `expert_judgement`。抽取结果会回填 `process_exchanges`，用于后续 `meanAmount/resultingAmount`。
+- 3b) exchange_amounts：调用 `EXCHANGE_VALUE_PROMPT` 基于正文与 SI 抽取可核查的 exchange 数值与单位；仅使用显式证据，无法定位时保持占位符并保留 `expert_judgement`。抽取结果会回填 `process_exchanges`，用于后续 `meanAmount/resultingAmount`，并据 evidence 把 exchange 的 `referencesToDataSource` 关联到 `source_references`。
 - 4) match_flows：对每个交换执行 flow 搜索（最多保留前 10 个候选并列为 list），用 LLM 选择器挑选最合适的候选，不使用相似度兜底；必须记录决策理由与未匹配项；exchange 的 flow uuid/shortDescription 必须来自已选候选。
   - match_flows 仅补充流匹配信息，不得覆盖/丢失 `data_source`/`evidence`。
 - 5) build_process_datasets：组合前述信息生成 ILCD process 数据集（参考流方向随 operation 调整，若提供 Translator 则补充中文多语字段）：
@@ -61,7 +64,8 @@
   - `process_datasets` 为最终落库结构，`processes`/`process_exchanges` 作为可迭代中间文档；新增文献时优先更新中间文档并重建数据集。
 
 ## 产出与调试
-- 正常运行返回完整状态，其中 `process_datasets` 为生成结果（可直接写出或继续处理）。
+- 正常运行返回完整状态，其中 `process_datasets` 为生成结果（可直接写出或继续处理），`source_datasets` 可写出到 `exports/sources/`。
+- 如需从缓存 state 补写 source 文件：`uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`。
 - CLI 仅写入 `artifacts/process_from_flow/<run_id>/`，包含 `input/`、`cache/` 与 `exports/`，其中状态文件保存在 `cache/process_from_flow_state.json`。
 - 调试时可配合 `stop_after` 查看中间态，例如设置为 `"matches"` 只跑到流匹配阶段。
 

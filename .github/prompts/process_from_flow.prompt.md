@@ -6,7 +6,7 @@ This document describes the LangGraph workflow in `src/tiangong_lca_spec/process
 - Goal: Derive an ILCD process dataset from a reference flow dataset (ILCD JSON). Flow uuid/shortDescription in exchanges must come from `search_flows` results; use placeholders only when no match is found.
 - Entry point: `ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`.
 - Dependencies: LLM is required for technology routes, unit process split, exchange generation, and candidate selection; also relies on flow search function `search_flows` (injectable) and a candidate selector (LLM selector recommended).
-- `stop_after` supports `"references"|"tech"|"processes"|"exchanges"|"matches"` for early termination in debugging.
+- `stop_after` supports `"references"|"tech"|"processes"|"exchanges"|"matches"|"sources"` for early termination in debugging.
 
 ## State Fields
 The workflow passes a state dict with key fields:
@@ -19,6 +19,8 @@ The workflow passes a state dict with key fields:
 - `process_exchanges`: per-process exchange list (structure only, no matching info).
 - `matched_process_exchanges`: exchanges with flow search results and selected candidates (uuid/shortDescription filled).
 - `process_datasets`: final ILCD process datasets.
+- `source_datasets`: ILCD source datasets derived from retrieved references.
+- `source_references`: source references ready for process/exchange `referenceToDataSource`.
 - `step_markers`: stage flags (step1/step2/step3) for inspection.
 
 ## Node Order and Behavior
@@ -33,6 +35,7 @@ Each node checks if its target fields already exist to avoid rework.
   - Spreadsheets/text (xls/xlsx/csv/doc/docx/txt/md): keep originals and capture readable snapshots (use mineru or direct text read).
   - Metadata should include `doi`/`si_url`/`file_type`/`local_path`/`mineru_output_path`/`status`/`error`.
 - 1e) reference_usage_tagging: tag each reference as `tech_route`/`process_split`/`exchange_values`/`background_only`, stored in `reference_summaries[*].usage_tags` or a separate index.
+- 1f) reference_sources: generate ILCD source datasets from Step 1a/1b/Step 2/Step 3 references via `tidas_sdk.create_source`, store in `source_datasets`, and produce `source_references` for later process linking.
 - Stop-rule evaluation: call the coverage-based stop rules to decide whether to continue retrieval or switch to `expert_judgement`.
 - If any of Step 1a/1b/1c lacks usable references (including usability results all marked unusable), Steps 1-3 fall back to common sense: do not use literature evidence, and Steps 2/3 do not issue retrievals; still tag data sources in processes/exchanges as `expert_judgement` with reasons.
 - 1) Describe technology (Step 1): use the reference flow plus Step 1c primary cluster (and si_snippets when available) to output plausible technology/process routes (route1/route2...), each with route_summary, key inputs/outputs, key unit processes, assumptions, and scope; include `supported_dois` and `route_evidence` so the summary stays traceable to evidence.
@@ -50,7 +53,7 @@ Each node checks if its target fields already exist to avoid rework.
   - Emission exchanges add media suffix (`to air` / `to water` / `to soil`) to reduce ambiguity.
   - Exchanges include `flow_type` (product/elementary/waste/service) and `search_hints` aliases.
   - Every exchange includes `data_source`/`evidence`; inferred values must be marked `source_type=expert_judgement` with justification.
-- 3b) exchange_amounts: use `EXCHANGE_VALUE_PROMPT` to extract verifiable exchange amounts/units from fulltext and SI; only use explicit evidence. Missing values keep placeholders and `expert_judgement`. Extracted values are merged into `process_exchanges` and used for `meanAmount/resultingAmount`.
+- 3b) exchange_amounts: use `EXCHANGE_VALUE_PROMPT` to extract verifiable exchange amounts/units from fulltext and SI; only use explicit evidence. Missing values keep placeholders and `expert_judgement`. Extracted values are merged into `process_exchanges` and used for `meanAmount/resultingAmount`, and evidence is used to attach exchange `referencesToDataSource` from `source_references`.
 - 4) match_flows: search flows for each exchange (keep top 10 candidates), select with LLM selector (no similarity fallback); record reasoning and unmatched items; exchange uuid/shortDescription must come from selected candidates.
   - match_flows must not overwrite `data_source`/`evidence`.
 - 5) build_process_datasets: assemble ILCD process datasets (reference direction depends on operation; if Translator provided, add Chinese fields):
@@ -60,7 +63,8 @@ Each node checks if its target fields already exist to avoid rework.
   - Fill functional unit, time/region, compliance, data entry, copyright; validate with `tidas_sdk.create_process` (log warning on failure).
 
 ## Outputs and Debugging
-- Normal runs return full state; `process_datasets` is the final output list.
+- Normal runs return full state; `process_datasets` is the final output list and `source_datasets` can be written to `exports/sources/`.
+- To backfill source files from cached state: `uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`.
 - CLI writes only under `artifacts/process_from_flow/<run_id>/` with `input/`, `cache/`, and `exports/`; state file is `cache/process_from_flow_state.json`.
 - Use `stop_after` for debugging (e.g., `"matches"` to stop after flow matching).
 
