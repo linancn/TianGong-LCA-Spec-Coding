@@ -28,8 +28,14 @@ Each node checks if its target fields already exist to avoid rework.
 - 1b) reference_fulltext: dedupe DOIs from Step 1a and fetch full text via DOI filter, write to `scientific_references.step_1b_reference_fulltext` (`filter: {"doi": [...]}` + `topK=1` + `extK`).
 - 1b-optional) reference_usability: optional screening step to determine whether Step 1b full text is sufficient to support process split and exchange generation; mark a reference as unusable when it only reports LCIA impact indicators or lacks any quantitative LCI table rows; also flag `si_hint` when the text points to Supporting Information/Appendix that may contain inventory tables; output to `scientific_references.usability`.
 - 1c) reference_clusters: cluster DOIs by boundary, main chain, and key intermediate flows using Step 1b full text and usability, write to `scientific_references.step_1c_reference_clusters` (include `reference_summaries` with `si_hint`/`si_reason` for later SI triage).
-- If any of Step 1a/1b/1c lacks usable references (including usability results all marked unusable), Steps 1-3 fall back to common sense: do not use literature evidence, and Steps 2/3 do not issue retrievals.
-- 1) Describe technology (Step 1): output plausible technology/process routes (route1/route2...), each with route_summary, key inputs/outputs, key unit processes, assumptions, and scope; if references exist, prefer the Step 1c primary cluster.
+- 1d) reference_si_download_and_parse: when `si_hint` is `likely/possible` or the main text includes explicit SI links, download SI originals and register metadata; store originals under `artifacts/process_from_flow/<run_id>/input/si/` and parsed outputs under `input/si_mineru/`.
+  - PDFs/images: run `scripts/origin/mineru_for_process_si.py` to split into JSON (keep page/table blocks).
+  - Spreadsheets/text (xls/xlsx/csv/doc/docx/txt/md): keep originals and capture readable snapshots (use mineru or direct text read).
+  - Metadata should include `doi`/`si_url`/`file_type`/`local_path`/`mineru_output_path`/`status`/`error`.
+- 1e) reference_usage_tagging: tag each reference as `tech_route`/`process_split`/`exchange_values`/`background_only`, stored in `reference_summaries[*].usage_tags` or a separate index.
+- Stop-rule evaluation: call the coverage-based stop rules to decide whether to continue retrieval or switch to `expert_judgement`.
+- If any of Step 1a/1b/1c lacks usable references (including usability results all marked unusable), Steps 1-3 fall back to common sense: do not use literature evidence, and Steps 2/3 do not issue retrievals; still tag data sources in processes/exchanges as `expert_judgement` with reasons.
+- 1) Describe technology (Step 1): use the reference flow plus Step 1c primary cluster (and si_snippets when available) to output plausible technology/process routes (route1/route2...), each with route_summary, key inputs/outputs, key unit processes, assumptions, and scope; include `supported_dois` and `route_evidence` so the summary stays traceable to evidence.
 - 2) Split into unit processes (Step 2): output ordered unit processes per route; the reference flow of process i must appear as an input of process i+1, and the last process produces/treats `load_flow`. Each process outputs:
   - Structured fields: `technology` / `inputs` / `outputs` / `boundary` / `assumptions`.
   - `inputs`/`outputs` labeled `f1:`/`f2:` per flow (chain intermediates must match).
@@ -37,10 +43,16 @@ Each node checks if its target fields already exist to avoid rework.
   - Name parts: `name_parts` with `base_name` / `treatment_and_route` / `mix_and_location` / `quantitative_reference`.
   - Quantitative reference: numeric expression like `1 kg of <reference_flow_name>` or `1 unit of <reference_flow_name>`.
   - Explicit main output: `reference_flow_name` for the process, consistent with chain inputs.
+  - Keep `processes` as an iterative plan; Step 5 produces the ILCD datasets so future references can refine the plan.
+  - When exchange values only cover aggregated steps, record `aggregation_scope`/`allocation_strategy` under assumptions and adjust granularity if needed.
+  - Record sources (DOI + SI file/table/page) in technology/boundary/assumptions for later exchange traceability.
 - 3) generate_exchanges: use `EXCHANGES_PROMPT` to generate exchanges per process (each must mark `is_reference_flow` matching `reference_flow_name`; production uses Output, treatment uses Input). Exchange names must be searchable, no composite flows; add unit and amount (placeholder if unknown); evidence selection follows the Step 1c primary cluster.
   - Emission exchanges add media suffix (`to air` / `to water` / `to soil`) to reduce ambiguity.
   - Exchanges include `flow_type` (product/elementary/waste/service) and `search_hints` aliases.
+  - Every exchange includes `data_source`/`evidence`; inferred values must be marked `source_type=expert_judgement` with justification.
+- 3b) exchange_amounts: use `EXCHANGE_VALUE_PROMPT` to extract verifiable exchange amounts/units from fulltext and SI; only use explicit evidence. Missing values keep placeholders and `expert_judgement`. Extracted values are merged into `process_exchanges` and used for `meanAmount/resultingAmount`.
 - 4) match_flows: search flows for each exchange (keep top 10 candidates), select with LLM selector (no similarity fallback); record reasoning and unmatched items; exchange uuid/shortDescription must come from selected candidates.
+  - match_flows must not overwrite `data_source`/`evidence`.
 - 5) build_process_datasets: assemble ILCD process datasets (reference direction depends on operation; if Translator provided, add Chinese fields):
   - Use `ProcessClassifier`; fall back to Manufacturing on failure.
   - Use matched flows; missing matches use placeholders (no invented uuid/shortDescription).
@@ -113,3 +125,14 @@ uv run python test/test_scientific_references.py
 - Configure `tiangong_kb_remote` to enable literature integration (optional but recommended).
 - Keep flow search/selector interface consistent (`FlowQuery` -> `(candidates, unmatched)`; candidates include uuid/base_name, etc.).
 - CLI adds Chinese translations by default (disable with `--no-translate-zh`).
+
+## Stop Rules
+- Stop rules rely on coverage rather than raw retrieval counts; the workflow calls this section, so thresholds can evolve without changing node order.
+- Coverage definitions:
+  - `process_coverage` = processes with evidence / total planned processes.
+  - `exchange_value_coverage` = key exchanges with evidence / total key exchanges.
+- Default thresholds (adjustable):
+  - Stop retrieval when `process_coverage >= 0.5` AND `exchange_value_coverage >= 0.6`.
+  - If two consecutive retrieval rounds improve coverage by < 0.1, stop further retrieval.
+- If coverage is still below thresholds and usability results show `unusable` with `si_hint=none`, switch to `expert_judgement` and log reasons.
+- Key exchanges include: reference flow, main energy input, main raw materials, and major emissions named in the paper/SI (top 3-5).

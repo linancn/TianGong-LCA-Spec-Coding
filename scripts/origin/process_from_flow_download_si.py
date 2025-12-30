@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ import httpx
 
 PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
 DEFAULT_TIMEOUT = 30.0
-DEFAULT_MAX_LINKS = 5
+DEFAULT_MAX_LINKS = 10
 
 KEYWORDS = (
     "supporting information",
@@ -91,6 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-links", type=int, default=DEFAULT_MAX_LINKS, help="Max candidate links per DOI.")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="HTTP timeout in seconds.")
     parser.add_argument("--dry-run", action="store_true", help="List candidate SI links without downloading.")
+    parser.add_argument("--no-update-state", action="store_true", help="Skip writing SI metadata back to the state file.")
     parser.add_argument("--user-agent", default="Mozilla/5.0", help="User-Agent header.")
     return parser.parse_args()
 
@@ -272,6 +274,27 @@ def _guess_extension(url: str, content_type: str | None) -> str:
     return ".bin"
 
 
+def _is_same_page_anchor(url: str, base_url: str) -> bool:
+    parsed = urlparse(url)
+    if not parsed.fragment:
+        return False
+    base = urlparse(base_url)
+    if parsed.netloc != base.netloc or parsed.path != base.path:
+        return False
+    return parsed.fragment.lower().startswith("moesm")
+
+
+def _dedupe_candidates(candidates: list[LinkCandidate]) -> list[LinkCandidate]:
+    seen: set[str] = set()
+    deduped: list[LinkCandidate] = []
+    for item in candidates:
+        if item.url in seen:
+            continue
+        seen.add(item.url)
+        deduped.append(item)
+    return deduped
+
+
 def _find_candidates(html: str, base_url: str) -> list[LinkCandidate]:
     candidates: list[LinkCandidate] = []
     for href, text in _extract_links(html):
@@ -281,7 +304,8 @@ def _find_candidates(html: str, base_url: str) -> list[LinkCandidate]:
         if _is_candidate(href, text):
             reason = text.strip() or "keyword match"
             candidates.append(LinkCandidate(url=url, text=text.strip(), reason=reason))
-    return candidates
+    filtered = [item for item in candidates if not _is_same_page_anchor(item.url, base_url)]
+    return _dedupe_candidates(filtered)
 
 
 def main() -> None:
@@ -363,6 +387,41 @@ def main() -> None:
     report_path = output_dir / "si_download_report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote report to {report_path}")
+
+    if state_path and not args.no_update_state and not args.dry_run:
+        state = _load_state(state_path)
+        scientific_references = state.get("scientific_references")
+        if not isinstance(scientific_references, dict):
+            scientific_references = {}
+        flat_entries: list[dict[str, Any]] = []
+        for entry in report:
+            if not isinstance(entry, dict):
+                continue
+            doi = str(entry.get("doi") or "").strip()
+            downloads = entry.get("downloads") or []
+            if not isinstance(downloads, list):
+                continue
+            for download in downloads:
+                if not isinstance(download, dict):
+                    continue
+                flat_entries.append(
+                    {
+                        "doi": doi,
+                        "url": download.get("url"),
+                        "status": download.get("status"),
+                        "path": download.get("path"),
+                        "content_type": download.get("content_type"),
+                        "error": download.get("error"),
+                    }
+                )
+        scientific_references["si_downloads"] = {
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "report_path": str(report_path),
+            "entries": flat_entries,
+        }
+        state["scientific_references"] = scientific_references
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Updated state with SI metadata at {state_path}")
 
 
 if __name__ == "__main__":

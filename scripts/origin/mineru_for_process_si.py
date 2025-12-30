@@ -216,10 +216,12 @@ def _update_state_with_mineru_output(*, run_id: str, input_path: Path, output_pa
     entries = scientific_references.get("si_mineru_outputs")
     if not isinstance(entries, list):
         entries = []
-    doi = _infer_doi_from_path(input_path, run_id)
+    doi_sanitized = _infer_doi_from_path(input_path, run_id)
+    doi = _lookup_original_doi(scientific_references, input_path) or doi_sanitized
     entries.append(
         {
             "doi": doi,
+            "doi_sanitized": doi_sanitized,
             "input_path": str(input_path),
             "output_path": str(output_path),
             "status": "ok",
@@ -228,6 +230,33 @@ def _update_state_with_mineru_output(*, run_id: str, input_path: Path, output_pa
     scientific_references["si_mineru_outputs"] = entries
     payload["scientific_references"] = scientific_references
     state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _lookup_original_doi(scientific_references: dict[str, Any], input_path: Path) -> str | None:
+    downloads = scientific_references.get("si_downloads")
+    entries = downloads.get("entries") if isinstance(downloads, dict) else None
+    if not isinstance(entries, list):
+        return None
+    input_resolved = input_path.resolve()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        path_text = entry.get("path")
+        if not isinstance(path_text, str) or not path_text:
+            continue
+        try:
+            candidate_path = Path(path_text).resolve()
+        except OSError:
+            candidate_path = None
+        if candidate_path and candidate_path == input_resolved:
+            doi_value = entry.get("doi")
+            if isinstance(doi_value, str) and doi_value.strip():
+                return doi_value.strip()
+        if path_text == str(input_path):
+            doi_value = entry.get("doi")
+            if isinstance(doi_value, str) and doi_value.strip():
+                return doi_value.strip()
+    return None
 
 
 if __name__ == "__main__":
