@@ -94,6 +94,7 @@ from tiangong_lca_spec.utils.translate import Translator
 from .prompts import (
     EXCHANGE_VALUE_PROMPT,
     EXCHANGES_PROMPT,
+    INDUSTRY_AVERAGE_PROMPT,
     PROCESS_SPLIT_PROMPT,
     REFERENCE_CLUSTER_PROMPT,
     TECH_DESCRIPTION_PROMPT,
@@ -105,10 +106,12 @@ SCIENTIFIC_REFERENCE_FULLTEXT_TOP_K = 1
 SCIENTIFIC_REFERENCE_FULLTEXT_EXT_K = 200
 REFERENCE_CLUSTER_MAX_CHARS = 1200
 REFERENCE_CLUSTER_MAX_RECORDS = 2
+INDUSTRY_AVERAGE_TOP_K = 5
 
 REFERENCE_SEARCH_KEY = "step_1a_reference_search"
 REFERENCE_FULLTEXT_KEY = "step_1b_reference_fulltext"
 REFERENCE_CLUSTERS_KEY = "step_1c_reference_clusters"
+INDUSTRY_AVERAGE_KEY = "industry_average"
 
 STOP_RULE_PROCESS_COVERAGE = 0.5
 STOP_RULE_EXCHANGE_COVERAGE = 0.6
@@ -232,6 +235,8 @@ def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
         # Extract content and metadata
         content = ref.get("content") or ref.get("text") or ref.get("segment", {}).get("content") or ""
         metadata = ref.get("metadata") or {}
+        source = ref.get("source") or (metadata.get("source") if isinstance(metadata, dict) else None)
+        doi = _extract_reference_doi(ref)
 
         # Build reference entry
         entry_parts = [f"[{idx}]"]
@@ -239,6 +244,10 @@ def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
             meta_str = metadata.get("meta") or ""
             if meta_str:
                 entry_parts.append(f"Source: {meta_str}")
+        if isinstance(source, str) and source.strip():
+            entry_parts.append(f"Source: {_compact_text(source.strip(), limit=280)}")
+        if isinstance(doi, str) and doi.strip():
+            entry_parts.append(f"DOI: {doi.strip()}")
 
         if content:
             content_text = content if isinstance(content, str) else str(content)
@@ -250,6 +259,52 @@ def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
         lines.append("")  # Empty line between references
 
     return "\n".join(lines)
+
+
+def _reference_identity(reference: dict[str, Any]) -> str:
+    doi = _extract_reference_doi(reference)
+    if doi:
+        return f"doi:{doi.lower()}"
+    source = str(reference.get("source") or "").strip()
+    if source:
+        return f"source:{source.lower()}"
+    content = str(reference.get("content") or reference.get("text") or "").strip()
+    if content:
+        return f"content:{_compact_text(content, limit=80).lower()}"
+    return f"ref:{hash(str(reference))}"
+
+
+def _merge_reference_records(existing: list[dict[str, Any]], new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged = list(existing)
+    seen = {_reference_identity(item) for item in existing if isinstance(item, dict)}
+    for item in new:
+        if not isinstance(item, dict):
+            continue
+        ident = _reference_identity(item)
+        if ident in seen:
+            continue
+        merged.append(item)
+        seen.add(ident)
+    return merged
+
+
+def _extract_reference_evidence(references: list[dict[str, Any]]) -> list[str]:
+    evidence: list[str] = []
+    for ref in references:
+        if not isinstance(ref, dict):
+            continue
+        doi = _extract_reference_doi(ref)
+        if doi:
+            evidence.append(f"DOI {doi}")
+            continue
+        source_text = str(ref.get("source") or ref.get("content") or ref.get("text") or "").strip()
+        url = _extract_reference_url(source_text)
+        if url:
+            evidence.append(url)
+            continue
+        if source_text:
+            evidence.append(_compact_text(source_text, limit=160))
+    return evidence
 
 
 def _first_nonempty(*values: Any) -> str:
@@ -635,7 +690,7 @@ def _collect_reference_infos(scientific_references: dict[str, Any]) -> list[dict
             info = _reference_info_from_record(record or {}, origin_step=REFERENCE_FULLTEXT_KEY, doi_override=doi)
             register(info)
 
-    for step_key in (REFERENCE_SEARCH_KEY, "step2", "step3"):
+    for step_key in (REFERENCE_SEARCH_KEY, "step2", "step3", INDUSTRY_AVERAGE_KEY):
         block = scientific_references.get(step_key)
         if not isinstance(block, dict):
             continue
@@ -1002,16 +1057,11 @@ def _build_source_reference_index(
 
 
 def _collect_exchange_citations(exchange: dict[str, Any]) -> list[str]:
-    evidence = _clean_evidence_list(exchange.get("evidence"))
     data_source = exchange.get("data_source") or exchange.get("dataSource")
-    citations: list[str] = []
-    if isinstance(data_source, dict):
-        citations = _clean_evidence_list(data_source.get("citations"))
-    combined = []
-    for item in evidence + citations:
-        if item and item not in combined:
-            combined.append(item)
-    return combined
+    if not isinstance(data_source, dict):
+        return []
+    citations = _clean_evidence_list(data_source.get("citations"))
+    return citations
 
 
 def _match_source_references(
@@ -1596,15 +1646,21 @@ def _apply_exchange_value_candidates(
                     exchange["amount"] = amount
                 if unit:
                     exchange["unit"] = unit
+                existing_ds = exchange.get("data_source") if isinstance(exchange.get("data_source"), dict) else {}
+                existing_evidence = _clean_evidence_list(exchange.get("evidence"))
+                citations, evidence = _normalize_citations_and_evidence(
+                    existing_ds.get("citations"),
+                    existing_evidence + _clean_evidence_list(evidence),
+                )
+                data_source = dict(existing_ds)
                 if source_type:
-                    exchange["data_source"] = {"source_type": source_type, "citations": evidence}
-                if evidence:
-                    existing = exchange.get("evidence") or []
-                    if isinstance(existing, list):
-                        merged = existing + [item for item in evidence if item not in existing]
-                    else:
-                        merged = evidence
-                    exchange["evidence"] = merged
+                    data_source["source_type"] = source_type
+                if citations:
+                    data_source["citations"] = citations
+                else:
+                    data_source.pop("citations", None)
+                exchange["data_source"] = data_source
+                exchange["evidence"] = evidence
             cleaned.append(exchange)
         updated.append({"process_id": process_id, "exchanges": cleaned})
     return updated
@@ -1710,6 +1766,19 @@ def _collect_usage_tag_map(scientific_references: dict[str, Any]) -> tuple[dict[
             tags = _usage_tags_from_supported_steps(supported_steps, decision)
             add_tags(doi=doi or None, key=None, tags=tags)
 
+    industry_block = scientific_references.get(INDUSTRY_AVERAGE_KEY)
+    industry_refs = industry_block.get("references") if isinstance(industry_block, dict) else None
+    if isinstance(industry_refs, list):
+        for ref in industry_refs:
+            if not isinstance(ref, dict):
+                continue
+            info = _reference_info_from_record(ref, origin_step=INDUSTRY_AVERAGE_KEY)
+            if not info:
+                continue
+            doi = _normalize_doi(info.get("doi"))
+            key = str(info.get("key") or "").strip() or None
+            add_tags(doi=doi or None, key=key, tags=["exchange_values"])
+
     return doi_map, key_map
 
 
@@ -1745,6 +1814,78 @@ def _clean_evidence_list(value: Any) -> list[str]:
     items = value if isinstance(value, list) else [value]
     cleaned = [str(item).strip() for item in items if str(item).strip()]
     return cleaned
+
+
+def _split_citations_from_evidence(evidence: list[str]) -> tuple[list[str], list[str]]:
+    citations: list[str] = []
+    remaining: list[str] = []
+    for item in evidence:
+        text = str(item).strip()
+        if not text:
+            continue
+        doi = _extract_doi_from_text(text)
+        if doi:
+            citations.append(f"DOI {doi}")
+            continue
+        url = _extract_reference_url(text)
+        if url:
+            citations.append(url)
+            continue
+        remaining.append(text)
+    return _dedupe_flows(citations), _dedupe_flows(remaining)
+
+
+def _normalize_citations_and_evidence(citations: Any, evidence: Any) -> tuple[list[str], list[str]]:
+    citation_list = _clean_evidence_list(citations)
+    evidence_list = _clean_evidence_list(evidence)
+    citations_from_citations, remaining_from_citations = _split_citations_from_evidence(citation_list)
+    citations_from_evidence, remaining_from_evidence = _split_citations_from_evidence(evidence_list)
+    merged_citations = _dedupe_flows(citations_from_citations + citations_from_evidence)
+    merged_evidence = _dedupe_flows(remaining_from_citations + remaining_from_evidence)
+    return merged_citations, merged_evidence
+
+
+def _format_evidence_for_comment(evidence: list[str]) -> str:
+    if not evidence:
+        return ""
+    compacted = [_compact_text(item, limit=220) for item in evidence if str(item).strip()]
+    if not compacted:
+        return ""
+    return f"Evidence: {' | '.join(compacted)}"
+
+
+def _parse_industry_average_response(data: dict[str, Any]) -> tuple[str | None, str | None, list[str], str | None]:
+    amount = _coerce_amount_text(data.get("amount") or data.get("mean_amount") or data.get("value"))
+    unit = str(data.get("unit") or "").strip() or None
+    evidence = _clean_evidence_list(data.get("evidence"))
+    notes = str(data.get("notes") or "").strip() or None
+    return amount, unit, evidence, notes
+
+
+def _merge_industry_average_block(
+    scientific_references: dict[str, Any],
+    *,
+    query_entry: dict[str, Any] | None,
+    references: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    updated = dict(scientific_references)
+    block = dict(updated.get(INDUSTRY_AVERAGE_KEY) or {})
+    existing_refs = block.get("references")
+    if not isinstance(existing_refs, list):
+        existing_refs = []
+    new_refs = references or []
+    if new_refs:
+        block["references"] = _merge_reference_records(existing_refs, new_refs)
+    else:
+        block["references"] = existing_refs
+    if query_entry:
+        queries = block.get("queries")
+        if not isinstance(queries, list):
+            queries = []
+        queries.append(query_entry)
+        block["queries"] = queries
+    updated[INDUSTRY_AVERAGE_KEY] = block
+    return updated
 
 
 def _normalize_source_type(value: Any) -> str:
@@ -1790,7 +1931,6 @@ def _apply_exchange_evidence_defaults(
     use_references: bool,
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
-    evidence = _clean_evidence_list(exchange.get("evidence"))
     data_source = exchange.get("data_source")
     if isinstance(data_source, dict):
         data_source = dict(data_source)
@@ -1804,6 +1944,8 @@ def _apply_exchange_evidence_defaults(
             data_source = {"source_type": legacy}
         else:
             data_source = {}
+    evidence = _clean_evidence_list(exchange.get("evidence"))
+    citations, evidence = _normalize_citations_and_evidence(data_source.get("citations"), evidence)
     source_type = _normalize_source_type(data_source.get("source_type") or data_source.get("sourceType"))
     if not source_type:
         if evidence:
@@ -1811,8 +1953,10 @@ def _apply_exchange_evidence_defaults(
         else:
             source_type = "expert_judgement" if not use_references else "expert_judgement"
     data_source = {**data_source, "source_type": source_type}
-    if evidence and not data_source.get("citations"):
-        data_source["citations"] = evidence
+    if citations:
+        data_source["citations"] = citations
+    else:
+        data_source.pop("citations", None)
     if source_type == "expert_judgement" and fallback_reason:
         if not data_source.get("reason"):
             data_source["reason"] = fallback_reason
@@ -2062,6 +2206,34 @@ def _flow_reference_context(flow_summary: dict[str, Any], *, include_comment: bo
     classification = _classification_terms(flow_summary.get("classification"))
     parts = [treatment, mix, general, classification]
     cleaned = [_compact_text(item, limit=160) for item in parts if item]
+    return " ".join(cleaned)
+
+
+def _compose_industry_average_query(
+    *,
+    exchange: dict[str, Any],
+    process_plan: dict[str, Any] | None,
+    flow_summary: dict[str, Any],
+    operation: str,
+) -> str:
+    exchange_name = str(exchange.get("exchangeName") or "").strip()
+    unit = str(exchange.get("unit") or "").strip() or "unit"
+    process_name = str((process_plan or {}).get("name") or "").strip()
+    reference_flow = str((process_plan or {}).get("reference_flow_name") or "").strip()
+    base_flow = _first_nonempty(flow_summary.get("base_name_en"), flow_summary.get("base_name_zh"))
+    flow_context = _flow_reference_context(flow_summary, include_comment=False)
+    parts = [
+        exchange_name,
+        unit,
+        "industry average",
+        "LCI",
+        base_flow,
+        operation,
+        process_name,
+        reference_flow,
+        flow_context,
+    ]
+    cleaned = [item for item in (part.strip() for part in parts) if item]
     return " ".join(cleaned)
 
 
@@ -2541,6 +2713,17 @@ def _clean_string_list(values: Any) -> list[str]:
     return []
 
 
+def _dedupe_flows(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
 def _normalize_quantitative_reference(value: Any, fallback_flow_name: str | None) -> str:
     text = str(value).strip() if value is not None else ""
     if not text:
@@ -2667,19 +2850,15 @@ def _normalize_route_processes(
         is_reference_flow_process = bool(proc.get("is_reference_flow_process"))
         name_parts = proc.get("name_parts") if isinstance(proc.get("name_parts"), dict) else {}
         structure = proc.get("structure") if isinstance(proc.get("structure"), dict) else {}
-        exchange_keywords = proc.get("exchange_keywords") if isinstance(proc.get("exchange_keywords"), dict) else {}
-
         structure_inputs = [_strip_flow_label(val) for val in _clean_string_list(structure.get("inputs"))]
         structure_outputs = [_strip_flow_label(val) for val in _clean_string_list(structure.get("outputs"))]
         structure_assumptions = _clean_string_list(structure.get("assumptions"))
-        exchange_inputs = [_strip_flow_label(val) for val in _clean_string_list(exchange_keywords.get("inputs"))]
-        exchange_outputs = [_strip_flow_label(val) for val in _clean_string_list(exchange_keywords.get("outputs"))]
 
         reference_flow_name = str(proc.get("reference_flow_name") or proc.get("referenceFlowName") or "").strip()
         if is_reference_flow_process:
             reference_flow_name = flow_name
         if not reference_flow_name:
-            candidate_outputs = exchange_outputs + structure_outputs
+            candidate_outputs = structure_outputs
             if candidate_outputs:
                 reference_flow_name = candidate_outputs[0]
         if not reference_flow_name:
@@ -2688,8 +2867,6 @@ def _normalize_route_processes(
 
         if reference_flow_name and reference_flow_name not in structure_outputs:
             structure_outputs.insert(0, reference_flow_name)
-        if reference_flow_name and reference_flow_name not in exchange_outputs:
-            exchange_outputs.insert(0, reference_flow_name)
 
         base_name = str(name_parts.get("base_name") or "").strip()
         if not base_name:
@@ -2742,10 +2919,6 @@ def _normalize_route_processes(
                     "outputs": structure_outputs,
                     "assumptions": structure_assumptions,
                 },
-                "exchange_keywords": {
-                    "inputs": exchange_inputs,
-                    "outputs": exchange_outputs,
-                },
             }
         )
 
@@ -2755,20 +2928,21 @@ def _normalize_route_processes(
             continue
         next_proc = normalized[idx + 1]
         next_structure = next_proc.get("structure") if isinstance(next_proc.get("structure"), dict) else {}
-        next_exchange = next_proc.get("exchange_keywords") if isinstance(next_proc.get("exchange_keywords"), dict) else {}
         next_inputs = _clean_string_list(next_structure.get("inputs"))
         if chain_flow not in next_inputs:
             next_inputs.insert(0, chain_flow)
-        next_exchange_inputs = _clean_string_list(next_exchange.get("inputs"))
-        if chain_flow not in next_exchange_inputs:
-            next_exchange_inputs.insert(0, chain_flow)
         next_proc["structure"] = {**next_structure, "inputs": next_inputs}
-        next_proc["exchange_keywords"] = {**next_exchange, "inputs": next_exchange_inputs}
 
     for proc in normalized:
         structure = proc.get("structure") if isinstance(proc.get("structure"), dict) else {}
-        inputs = _clean_string_list(structure.get("inputs"))
-        outputs = _clean_string_list(structure.get("outputs"))
+        inputs = [_strip_flow_label(val) for val in _clean_string_list(structure.get("inputs"))]
+        outputs = [_strip_flow_label(val) for val in _clean_string_list(structure.get("outputs"))]
+        proc["exchange_keywords"] = {
+            "inputs": _dedupe_flows(inputs),
+            "outputs": _dedupe_flows(outputs),
+        }
+        inputs = _clean_string_list(inputs)
+        outputs = _clean_string_list(outputs)
         proc["structure"] = {
             **structure,
             "inputs": _label_flows(inputs, prefix="f"),
@@ -2856,21 +3030,37 @@ def _build_langgraph(
         flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
         operation = str(state.get("operation") or "produce").strip()
 
+        scientific_references = state.get("scientific_references") if isinstance(state.get("scientific_references"), dict) else {}
+        references_text = ""
+        references: list[dict[str, Any]] = []
+        fulltext_entries: list[dict[str, Any]] = []
+
         # Build search query for scientific literature
         search_query = f"{operation} {flow_name} technology process route LCA life cycle assessment"
         flow_context = _flow_reference_context(flow_summary, include_comment=True)
         if flow_context:
             search_query = f"{search_query} {flow_context}"
-        references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
-        references_text = ""
-        scientific_references = _update_scientific_references(
-            state,
-            step=REFERENCE_SEARCH_KEY,
-            query=search_query,
-            references=references,
-        )
-        fulltext_entries: list[dict[str, Any]] = []
-        if references:
+
+        existing_search = scientific_references.get(REFERENCE_SEARCH_KEY)
+        if isinstance(existing_search, dict):
+            stored = existing_search.get("references")
+            if isinstance(stored, list):
+                references = stored
+        if not references:
+            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+            scientific_references = _update_scientific_references(
+                state,
+                step=REFERENCE_SEARCH_KEY,
+                query=search_query,
+                references=references,
+            )
+
+        existing_fulltext = scientific_references.get(REFERENCE_FULLTEXT_KEY)
+        if isinstance(existing_fulltext, dict):
+            stored_fulltext = existing_fulltext.get("references")
+            if isinstance(stored_fulltext, list):
+                fulltext_entries = stored_fulltext
+        if not fulltext_entries and references:
             fulltext_entries, missing_doi = _fetch_fulltext_references(
                 references,
                 mcp_client=use_mcp_client,
@@ -2901,7 +3091,7 @@ def _build_langgraph(
             scientific_references["si_snippets"] = si_snippets
         use_references = _references_usable(scientific_references)
         primary_dois = _primary_cluster_dois(scientific_references)
-        if use_references:
+        if use_references and references:
             references_text = _format_references_for_prompt(references)
         stop_after = str(state.get("stop_after") or "").strip().lower()
         if stop_after in {"references", "reference", "refs", "papers", "sci"}:
@@ -3059,7 +3249,7 @@ def _build_langgraph(
                     "boundary": state.get("scope") or "",
                     "assumptions": state.get("assumptions") or [],
                 },
-                "exchange_keywords": {"inputs": [], "outputs": [flow_name]},
+                "exchange_keywords": {"inputs": [], "outputs": _dedupe_flows([flow_name])},
             }
             return {
                 "processes": [process_entry],
@@ -3089,14 +3279,21 @@ def _build_langgraph(
         references: list[dict[str, Any]] = []
         references_text = ""
         if use_references:
-            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
-            references_text = _format_references_for_prompt(references)
-            scientific_references = _update_scientific_references(
-                {"scientific_references": scientific_references},
-                step="step2",
-                query=search_query,
-                references=references,
-            )
+            existing_step = scientific_references.get("step2")
+            if isinstance(existing_step, dict):
+                stored = existing_step.get("references")
+                if isinstance(stored, list):
+                    references = stored
+            if not references:
+                references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+                scientific_references = _update_scientific_references(
+                    {"scientific_references": scientific_references},
+                    step="step2",
+                    query=search_query,
+                    references=references,
+                )
+            if references:
+                references_text = _format_references_for_prompt(references)
         reference_clusters = _reference_clusters(scientific_references) if use_references else None
 
         # Build enhanced prompt with references
@@ -3138,7 +3335,6 @@ def _build_langgraph(
                     name = str(item.get("name") or "").strip()
                     description = str(item.get("description") or "").strip()
                     structure = item.get("structure") if isinstance(item.get("structure"), dict) else {}
-                    exchange_keywords = item.get("exchange_keywords") if isinstance(item.get("exchange_keywords"), dict) else {}
                     reference_flow_name = str(item.get("reference_flow_name") or item.get("referenceFlowName") or "").strip()
                     cleaned_processes.append(
                         {
@@ -3149,7 +3345,6 @@ def _build_langgraph(
                             "reference_flow_name": reference_flow_name,
                             "name_parts": name_parts,
                             "structure": structure,
-                            "exchange_keywords": exchange_keywords,
                         }
                     )
                 if not cleaned_processes:
@@ -3299,14 +3494,21 @@ def _build_langgraph(
         references: list[dict[str, Any]] = []
         references_text = ""
         if use_references:
-            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
-            references_text = _format_references_for_prompt(references)
-            scientific_references = _update_scientific_references(
-                {"scientific_references": scientific_references},
-                step="step3",
-                query=search_query,
-                references=references,
-            )
+            existing_step = scientific_references.get("step3")
+            if isinstance(existing_step, dict):
+                stored = existing_step.get("references")
+                if isinstance(stored, list):
+                    references = stored
+            if not references:
+                references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+                scientific_references = _update_scientific_references(
+                    {"scientific_references": scientific_references},
+                    step="step3",
+                    query=search_query,
+                    references=references,
+                )
+            if references:
+                references_text = _format_references_for_prompt(references)
         reference_clusters = _reference_clusters(scientific_references) if use_references else None
 
         # Build enhanced prompt with references
@@ -3386,9 +3588,6 @@ def _build_langgraph(
                     flow_type=flow_type,
                     is_reference_flow=is_reference,
                 )
-                search_hints = exchange.get("search_hints") or exchange.get("searchHints") or _build_search_hints(name)
-                if not isinstance(search_hints, list):
-                    search_hints = [str(search_hints)] if str(search_hints).strip() else []
                 cleaned_exchange = {
                     **exchange,
                     "exchangeName": name,
@@ -3397,7 +3596,6 @@ def _build_langgraph(
                     "is_reference_flow": is_reference,
                     "exchangeDirection": exchange_direction,
                     "flow_type": flow_type,
-                    "search_hints": search_hints,
                 }
                 cleaned_exchange = _apply_exchange_evidence_defaults(
                     cleaned_exchange,
@@ -3414,7 +3612,6 @@ def _build_langgraph(
                     "amount": "1",
                     "is_reference_flow": True,
                     "flow_type": "product",
-                    "search_hints": _build_search_hints(plan_reference_flow),
                 }
                 reference_exchange = _apply_exchange_evidence_defaults(
                     reference_exchange,
@@ -3454,24 +3651,123 @@ def _build_langgraph(
         fulltext_entries = scientific_references.get(REFERENCE_FULLTEXT_KEY, {}).get("references")
         fulltext_list = fulltext_entries if isinstance(fulltext_entries, list) else []
         fulltext_text = _format_fulltext_entries_for_prompt(fulltext_list)
-        if not fulltext_text and not si_snippets:
-            return {"exchange_values_applied": True, "scientific_references": scientific_references}
+        candidates: list[dict[str, Any]] = []
+        updated_exchanges = state.get("process_exchanges") or []
+        if fulltext_text or si_snippets:
+            payload = {
+                "prompt": EXCHANGE_VALUE_PROMPT,
+                "context": {
+                    "flow": state.get("flow_summary") or {},
+                    "operation": state.get("operation") or "produce",
+                    "process_exchanges": state.get("process_exchanges") or [],
+                    "fulltext_references": fulltext_text,
+                    "si_snippets": si_snippets,
+                },
+                "response_format": {"type": "json_object"},
+            }
+            raw = llm.invoke(payload)
+            data = _ensure_dict(raw)
+            candidates = _normalize_exchange_value_candidates(data.get("processes"))
+            updated_exchanges = _apply_exchange_value_candidates(state.get("process_exchanges") or [], candidates)
+        process_plan_index = {str(item.get("process_id") or ""): item for item in (state.get("processes") or []) if isinstance(item, dict)}
+        flow_summary = state.get("flow_summary") or {}
+        operation = str(state.get("operation") or "produce").strip()
 
-        payload = {
-            "prompt": EXCHANGE_VALUE_PROMPT,
-            "context": {
-                "flow": state.get("flow_summary") or {},
-                "operation": state.get("operation") or "produce",
-                "process_exchanges": state.get("process_exchanges") or [],
-                "fulltext_references": fulltext_text,
-                "si_snippets": si_snippets,
-            },
-            "response_format": {"type": "json_object"},
-        }
-        raw = llm.invoke(payload)
-        data = _ensure_dict(raw)
-        candidates = _normalize_exchange_value_candidates(data.get("processes"))
-        updated_exchanges = _apply_exchange_value_candidates(state.get("process_exchanges") or [], candidates)
+        def estimate_industry_average(
+            *,
+            exchange: dict[str, Any],
+            process_plan: dict[str, Any] | None,
+            references_text: str,
+            allow_estimate: bool,
+        ) -> tuple[str | None, str | None, list[str], str | None]:
+            name_parts = (process_plan or {}).get("name_parts") if isinstance((process_plan or {}).get("name_parts"), dict) else {}
+            quantitative_reference = str(name_parts.get("quantitative_reference") or "").strip()
+            payload = {
+                "prompt": INDUSTRY_AVERAGE_PROMPT,
+                "context": {
+                    "flow": flow_summary,
+                    "operation": operation,
+                    "process": process_plan or {},
+                    "exchange": exchange,
+                    "quantitative_reference": quantitative_reference,
+                    "references": references_text,
+                    "allow_estimate_without_references": allow_estimate,
+                },
+                "response_format": {"type": "json_object"},
+            }
+            raw = llm.invoke(payload)
+            data = _ensure_dict(raw)
+            return _parse_industry_average_response(data)
+
+        for proc in updated_exchanges:
+            if not isinstance(proc, dict):
+                continue
+            process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+            exchanges = proc.get("exchanges") or []
+            if not isinstance(exchanges, list):
+                continue
+            plan = process_plan_index.get(process_id)
+            for exchange in exchanges:
+                if not isinstance(exchange, dict):
+                    continue
+                amount = exchange.get("amount")
+                if amount not in (None, "", 0):
+                    continue
+                query = _compose_industry_average_query(
+                    exchange=exchange,
+                    process_plan=plan,
+                    flow_summary=flow_summary,
+                    operation=operation,
+                )
+                kb_refs = _search_scientific_references(query, mcp_client=use_mcp_client, top_k=INDUSTRY_AVERAGE_TOP_K)
+                references_text = _format_references_for_prompt(kb_refs) if kb_refs else ""
+                avg_amount, avg_unit, avg_evidence, _ = estimate_industry_average(
+                    exchange=exchange,
+                    process_plan=plan,
+                    references_text=references_text,
+                    allow_estimate=bool(kb_refs),
+                )
+                if not avg_amount:
+                    avg_amount, avg_unit, avg_evidence, _ = estimate_industry_average(
+                        exchange=exchange,
+                        process_plan=plan,
+                        references_text="",
+                        allow_estimate=True,
+                    )
+                if not avg_amount:
+                    continue
+                exchange["amount"] = avg_amount
+                if avg_unit:
+                    exchange["unit"] = avg_unit
+                citations, evidence = _split_citations_from_evidence(_clean_evidence_list(avg_evidence))
+                if not citations:
+                    ref_citations, ref_evidence = _split_citations_from_evidence(_extract_reference_evidence(kb_refs))
+                    citations = ref_citations
+                    if ref_evidence:
+                        evidence = evidence + [item for item in ref_evidence if item not in evidence]
+                if not evidence:
+                    evidence = ["Industry average estimate (expert judgement)"]
+                existing_ds = exchange.get("data_source") if isinstance(exchange.get("data_source"), dict) else {}
+                existing_evidence = _clean_evidence_list(exchange.get("evidence"))
+                merged_citations, merged_evidence = _normalize_citations_and_evidence(
+                    _clean_evidence_list(existing_ds.get("citations")) + citations,
+                    existing_evidence + evidence,
+                )
+                data_source = {"source_type": "expert_judgement"}
+                if merged_citations:
+                    data_source["citations"] = merged_citations
+                exchange["data_source"] = data_source
+                exchange["evidence"] = merged_evidence
+                if kb_refs:
+                    scientific_references = _merge_industry_average_block(
+                        scientific_references,
+                        query_entry={
+                            "process_id": process_id,
+                            "exchange": str(exchange.get("exchangeName") or "").strip(),
+                            "query": query,
+                        },
+                        references=kb_refs,
+                    )
         return {
             "process_exchanges": updated_exchanges,
             "exchange_value_candidates": candidates,
@@ -3707,6 +4003,13 @@ def _build_langgraph(
                     amount_text = _default_exchange_amount() if amount in (None, "", 0) else str(amount)
 
                     comment_text = str(exchange.get("generalComment") or "").strip()
+                    evidence_text = _format_evidence_for_comment(_clean_evidence_list(exchange.get("evidence")))
+                    if evidence_text:
+                        if comment_text:
+                            if evidence_text not in comment_text:
+                                comment_text = f"{comment_text} {evidence_text}"
+                        else:
+                            comment_text = evidence_text
                     exchange_item = ExchangesExchangeItem(
                         data_set_internal_id=internal_id,
                         reference_to_flow_data_set=reference,

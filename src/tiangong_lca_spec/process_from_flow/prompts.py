@@ -53,11 +53,10 @@ PROCESS_SPLIT_PROMPT = (
     "- Use clear, short process names.\n"
     "- Provide `process_id` values like P1, P2, ...\n"
     "- Each process must include structured fields split by: technology/process, inputs, outputs, boundary, assumptions.\n"
-    "- Also include exchange keywords (inputs/outputs) as short, searchable English names; do NOT invent quantities.\n"
     "- Each process MUST define reference_flow_name (the main output flow of the process).\n"
     "- Process name must include four modules: base_name, treatment_and_route, mix_and_location, quantitative_reference.\n"
     "- quantitative_reference must be a numeric expression like '1 kg of <reference_flow_name>' or '1 unit of <reference_flow_name>'. If unit is unknown, use 'unit'.\n"
-    "- Ensure chain consistency: the reference_flow_name of process i must appear verbatim in process i+1 inputs and exchange_keywords.inputs.\n"
+    "- Ensure chain consistency: the reference_flow_name of process i must appear verbatim in process i+1 inputs.\n"
     "- Provide inputs/outputs as clean flow names (no f1/f2 labels); labels are added in post-processing.\n"
     "- If step_1c_reference_clusters are provided in the context, prioritize the primary cluster and only use supplementary clusters "
     "when they do not change the main process chain or system boundary.\n"
@@ -89,10 +88,6 @@ PROCESS_SPLIT_PROMPT = (
     '            "boundary": "...",\n'
     '            "assumptions": ["..."]\n'
     "          },\n"
-    '          "exchange_keywords": {\n'
-    '            "inputs": ["..."],\n'
-    '            "outputs": ["..."]\n'
-    "          },\n"
     '          "is_reference_flow_process": true|false\n'
     "        }\n"
     "      ]\n"
@@ -107,7 +102,7 @@ EXCHANGES_PROMPT = (
     "\n"
     "Rules:\n"
     "- Provide plausible exchange names that can be searched in a flow catalogue (prefer English names).\n"
-    "- If process provides structured fields (structure/inputs/outputs) or exchange_keywords, use them as primary candidates.\n"
+    "- If process provides structured fields (structure/inputs/outputs), use them as primary candidates.\n"
     "- Use scientific references (if provided) to confirm each exchange flow name and amount; only use numeric amounts explicitly supported by references.\n"
     "- Use SI snippets (if provided) as evidence for exchange values and cite them in evidence.\n"
     "- If step_1c_reference_clusters are provided in the context, only use exchange evidence from the primary cluster; "
@@ -121,12 +116,12 @@ EXCHANGES_PROMPT = (
     "or waterborne pollutants (e.g., nitrate, phosphate, pesticides) when relevant.\n"
     "- For labor, split by activity if multiple (e.g., 'Labor, harvesting' and 'Labor, post-harvest handling').\n"
     "- Add flow_type for each exchange: product | elementary | waste | service.\n"
-    "- Add search_hints as a list of short aliases/synonyms to improve retrieval (e.g., 'Water, fresh' -> 'Freshwater').\n"
     "- For emissions, include 'to air' / 'to water' / 'to soil' in exchangeName when applicable.\n"
     "- Provide unit for each exchange (e.g., kg, kWh, MJ, m3, unit). If unsure, use 'unit'.\n"
     "- Provide amount as a numeric string; use null when unknown (placeholders are filled later).\n"
     "- For every exchange, provide data_source and evidence: data_source.source_type must be literature|si|expert_judgement.\n"
-    "- evidence must be a list of short citations (e.g., 'Doe 2021 Table 2', 'SI Table S3'); when inferred, explain in evidence.\n"
+    "- data_source.citations must include DOI or URL when available (e.g., 'DOI 10.xxx' or 'https://doi.org/...').\n"
+    "- evidence must be a list of non-DOI supporting notes (e.g., 'Doe 2021 Table 2', 'SI Table S3', or inference notes).\n"
     "- For every process, output 1..12 exchanges.\n"
     "- For each process, include exactly one exchange matching reference_flow_name and set is_reference_flow=true.\n"
     "- For the final process (is_reference_flow_process=true), the reference_flow_name must correspond to the load_flow.\n"
@@ -147,8 +142,7 @@ EXCHANGES_PROMPT = (
     '          "amount": null,\n'
     '          "is_reference_flow": true|false,\n'
     '          "flow_type": "product|elementary|waste|service",\n'
-    '          "search_hints": ["..."],\n'
-    '          "data_source": {"source_type": "literature|si|expert_judgement", "citations": ["..."]},\n'
+    '          "data_source": {"source_type": "literature|si|expert_judgement", "citations": ["DOI ..."]},\n'
     '          "evidence": ["..."]\n'
     "        }\n"
     "      ]\n"
@@ -166,7 +160,8 @@ EXCHANGE_VALUE_PROMPT = (
     "- Do NOT infer or estimate values. If no explicit value exists for an exchange, omit it from the output.\n"
     "- Match exchangeName exactly to the names in process_exchanges (case-insensitive matching is ok).\n"
     "- Provide unit and amount as a numeric string (e.g., '0.45', '12.3').\n"
-    "- Provide evidence citing DOI + table/figure or SI location.\n"
+    "- Provide evidence citing table/figure or SI location.\n"
+    "- If a DOI or URL is available, include it explicitly in evidence.\n"
     "- source_type must be literature|si.\n"
     "\n"
     "Return strict JSON:\n"
@@ -185,6 +180,27 @@ EXCHANGE_VALUE_PROMPT = (
     "      ]\n"
     "    }\n"
     "  ]\n"
+    "}\n"
+)
+
+INDUSTRY_AVERAGE_PROMPT = (
+    "You are filling missing exchange amounts using industry-average values.\n"
+    "Input context includes the process metadata, exchange metadata, and optional scientific references.\n"
+    "\n"
+    "Rules:\n"
+    "- If references are provided, use them as primary evidence for an industry-average amount per functional unit.\n"
+    "- If references are insufficient, you may estimate a reasonable industry-average value, but mark evidence as "
+    "'Industry average estimate (expert judgement)'.\n"
+    "- If allow_estimate_without_references is false and references are empty, return null for amount.\n"
+    "- Keep units consistent with the exchange unit when possible; otherwise choose a standard unit.\n"
+    "- Return a single numeric value (no ranges). If you cannot estimate, return null for amount.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "amount": "0.0" | null,\n'
+    '  "unit": "kg|MJ|kWh|m3|unit" | null,\n'
+    '  "evidence": ["..."],\n'
+    '  "notes": "short rationale"\n'
     "}\n"
 )
 

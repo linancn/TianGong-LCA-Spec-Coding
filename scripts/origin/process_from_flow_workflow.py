@@ -15,6 +15,7 @@ This script orchestrates:
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -192,6 +193,18 @@ def _run_main_pipeline(args: argparse.Namespace, run_id: str) -> None:
     _run_python(script, cmd)
 
 
+def _clear_stop_after(run_id: str) -> None:
+    state_path = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "cache" / "process_from_flow_state.json"
+    if not state_path.exists():
+        return
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or "stop_after" not in payload:
+        return
+    payload.pop("stop_after", None)
+    state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[info] Cleared stop_after in {state_path}", file=sys.stderr)
+
+
 def main() -> None:
     args = parse_args()
     run_id = args.run_id or generate_run_id()
@@ -204,6 +217,7 @@ def main() -> None:
     _run_si_download(args, run_id)
     _run_mineru_for_si(args, run_id)
     _run_usage_tagging(args, run_id)
+    _clear_stop_after(run_id)
     _run_main_pipeline(args, run_id)
 
 
