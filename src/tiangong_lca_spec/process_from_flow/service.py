@@ -1916,6 +1916,7 @@ def _apply_exchange_value_candidates(
                 basis_flow = candidate.get("basis_flow")
                 source_type = candidate.get("source_type")
                 evidence = candidate.get("evidence") or []
+                value_citations, value_evidence = _normalize_citations_and_evidence([], _clean_evidence_list(evidence))
                 if amount:
                     exchange["amount"] = amount
                 if unit:
@@ -1941,6 +1942,7 @@ def _apply_exchange_value_candidates(
                     data_source.pop("citations", None)
                 exchange["data_source"] = data_source
                 exchange["evidence"] = evidence
+                _merge_value_evidence(exchange, value_citations, value_evidence)
             cleaned.append(exchange)
         updated.append({"process_id": process_id, "exchanges": cleaned})
     return updated
@@ -2366,6 +2368,173 @@ def _apply_exchange_evidence_defaults(
     if "dataSource" in exchange:
         exchange.pop("dataSource")
     return exchange
+
+
+def _merge_value_evidence(exchange: dict[str, Any], citations: list[str], evidence: list[str]) -> None:
+    if not citations and not evidence:
+        return
+    merged_citations = _dedupe_flows(_clean_evidence_list(exchange.get("value_citations")) + citations)
+    merged_evidence = _dedupe_flows(_clean_evidence_list(exchange.get("value_evidence")) + evidence)
+    if merged_citations:
+        exchange["value_citations"] = merged_citations
+    if merged_evidence:
+        exchange["value_evidence"] = merged_evidence
+    if merged_citations or merged_evidence:
+        exchange["value_reference_used"] = True
+
+
+def _is_energy_exchange(name: str) -> bool:
+    lower = name.lower()
+    return any(token in lower for token in _ENERGY_KEYWORDS)
+
+
+def _exchange_direction_for_dedupe(exchange: dict[str, Any], *, reference_direction: str | None) -> str:
+    direction = str(exchange.get("exchangeDirection") or "").strip()
+    if direction not in {"Input", "Output"}:
+        direction = "Input"
+    if bool(exchange.get("is_reference_flow")) and reference_direction:
+        direction = reference_direction
+    return direction
+
+
+def _exchange_flow_type_for_dedupe(exchange: dict[str, Any], *, direction: str) -> str:
+    raw_flow_type = _normalize_flow_type(exchange.get("flow_type") or exchange.get("flowType"))
+    if raw_flow_type:
+        return raw_flow_type
+    flow_search = exchange.get("flow_search")
+    if isinstance(flow_search, dict):
+        selected_uuid = flow_search.get("selected_uuid")
+        candidates = flow_search.get("candidates")
+        if isinstance(candidates, list) and selected_uuid:
+            for cand in candidates:
+                if isinstance(cand, dict) and cand.get("uuid") == selected_uuid:
+                    cand_flow_type = _normalize_flow_type(cand.get("flow_type") or cand.get("flowType"))
+                    if cand_flow_type:
+                        return cand_flow_type
+    name = str(exchange.get("exchangeName") or "").strip()
+    return _infer_flow_type(name, direction=direction, is_reference_flow=bool(exchange.get("is_reference_flow")))
+
+
+def _exchange_uuid_for_dedupe(exchange: dict[str, Any]) -> str | None:
+    flow_search = exchange.get("flow_search")
+    if isinstance(flow_search, dict):
+        uuid_value = flow_search.get("selected_uuid")
+        if isinstance(uuid_value, str) and uuid_value.strip():
+            return uuid_value.strip()
+    return None
+
+
+def _score_product_exchange(exchange: dict[str, Any]) -> tuple[int, int, int]:
+    is_reference = 1 if bool(exchange.get("is_reference_flow")) else 0
+    has_evidence = 1 if _has_strong_evidence(exchange) else 0
+    has_amount = 1 if _parse_amount_value(exchange.get("amount")) is not None else 0
+    return (is_reference, has_evidence, has_amount)
+
+
+def _dedupe_product_uuid_exchanges(
+    exchanges: list[dict[str, Any]],
+    *,
+    reference_direction: str | None,
+) -> list[dict[str, Any]]:
+    if not exchanges:
+        return exchanges
+    seen: dict[tuple[str, str], tuple[dict[str, Any], int]] = {}
+    deduped: list[dict[str, Any]] = []
+    for exchange in exchanges:
+        if not isinstance(exchange, dict):
+            continue
+        direction = _exchange_direction_for_dedupe(exchange, reference_direction=reference_direction)
+        flow_type = _exchange_flow_type_for_dedupe(exchange, direction=direction)
+        if flow_type != "product":
+            deduped.append(exchange)
+            continue
+        uuid_value = _exchange_uuid_for_dedupe(exchange)
+        if not uuid_value:
+            deduped.append(exchange)
+            continue
+        key = (direction, uuid_value)
+        existing = seen.get(key)
+        if not existing:
+            seen[key] = (exchange, len(deduped))
+            deduped.append(exchange)
+            continue
+        existing_exchange, index = existing
+        if _score_product_exchange(exchange) > _score_product_exchange(existing_exchange):
+            deduped[index] = exchange
+            seen[key] = (exchange, index)
+    return deduped
+
+
+def _has_strong_evidence(exchange: dict[str, Any]) -> bool:
+    data_source = exchange.get("data_source") or exchange.get("dataSource")
+    if isinstance(data_source, dict):
+        source_type = _normalize_source_type(data_source.get("source_type") or data_source.get("sourceType"))
+        citations = _clean_evidence_list(data_source.get("citations"))
+        if citations:
+            return True
+        if source_type in {"literature", "si"}:
+            return True
+    value_evidence = _clean_evidence_list(exchange.get("value_citations")) + _clean_evidence_list(exchange.get("value_evidence"))
+    return bool(value_evidence)
+
+
+def _dedupe_reference_exchanges(
+    exchanges: list[dict[str, Any]],
+    *,
+    reference_flow: str | None,
+    reference_direction: str | None,
+) -> list[dict[str, Any]]:
+    if not exchanges or not reference_flow:
+        return exchanges
+    candidates = [item for item in exchanges if _flow_name_matches(str(item.get("exchangeName") or ""), reference_flow)]
+    if not candidates:
+        return exchanges
+    for item in candidates:
+        if reference_direction:
+            item["exchangeDirection"] = reference_direction
+        item["is_reference_flow"] = True
+    if len(candidates) == 1:
+        return exchanges
+
+    def score(item: dict[str, Any]) -> tuple[int, int]:
+        has_evidence = 1 if _has_strong_evidence(item) else 0
+        has_amount = 1 if _parse_amount_value(item.get("amount")) is not None else 0
+        return (has_evidence, has_amount)
+
+    primary = max(candidates, key=score)
+    return [item for item in exchanges if (item is primary) or (item not in candidates)]
+
+
+def _should_keep_exchange(
+    exchange: dict[str, Any],
+    *,
+    structure_inputs: set[str],
+    structure_outputs: set[str],
+    reference_flow: str | None,
+) -> bool:
+    name = str(exchange.get("exchangeName") or "").strip()
+    if reference_flow and _flow_name_matches(name, reference_flow):
+        return True
+    flow_type = str(exchange.get("flow_type") or "").strip().lower()
+    if flow_type == "elementary":
+        return True
+    if flow_type == "service":
+        return True
+    if _is_energy_exchange(name):
+        return True
+    direction = str(exchange.get("exchangeDirection") or "").strip()
+    name_key = _normalize_exchange_name(name)
+    if direction == "Input" and not structure_inputs:
+        return True
+    if direction == "Output" and not structure_outputs:
+        return True
+    if direction == "Input" and name_key in structure_inputs:
+        return True
+    if direction == "Output" and name_key in structure_outputs:
+        return True
+    if _has_strong_evidence(exchange):
+        return True
+    return False
 
 
 def _is_key_exchange(exchange: dict[str, Any]) -> bool:
@@ -3860,6 +4029,10 @@ def _build_langgraph(
                 use_references=False,
                 fallback_reason="No LLM available; expert judgement applied.",
             )
+            data_source = exchange.get("data_source")
+            citations = _clean_evidence_list(data_source.get("citations")) if isinstance(data_source, dict) else []
+            evidence = _clean_evidence_list(exchange.get("evidence"))
+            _merge_value_evidence(exchange, citations, evidence)
             process_exchanges = [{"process_id": "P1", "exchanges": [exchange]}]
             coverage_metrics = _compute_coverage_metrics(process_exchanges)
             stop_rule_decision = _evaluate_stop_rules(state, coverage_metrics)
@@ -3961,8 +4134,16 @@ def _build_langgraph(
             if is_reference_flow_process:
                 plan_reference_flow = target_flow_name
             structure = plan.get("structure") if isinstance(plan.get("structure"), dict) else {}
-            structure_inputs = {_strip_flow_label(value).strip().lower() for value in _clean_string_list(structure.get("inputs")) if _strip_flow_label(value).strip()}
-            structure_outputs = {_strip_flow_label(value).strip().lower() for value in _clean_string_list(structure.get("outputs")) if _strip_flow_label(value).strip()}
+            structure_inputs = {
+                _normalize_exchange_name(_strip_flow_label(value))
+                for value in _clean_string_list(structure.get("inputs"))
+                if _strip_flow_label(value).strip()
+            }
+            structure_outputs = {
+                _normalize_exchange_name(_strip_flow_label(value))
+                for value in _clean_string_list(structure.get("outputs"))
+                if _strip_flow_label(value).strip()
+            }
             cleaned_exchanges: list[dict[str, Any]] = []
             matched_reference = False
             for exchange in exchanges:
@@ -3973,7 +4154,7 @@ def _build_langgraph(
                 unit = str(exchange.get("unit") or "").strip() or "unit"
                 amount = _coerce_amount_text(exchange.get("amount"))
                 exchange_direction = str(exchange.get("exchangeDirection") or "").strip()
-                name_key = name.lower()
+                name_key = _normalize_exchange_name(name)
                 if name_key:
                     in_inputs = name_key in structure_inputs
                     in_outputs = name_key in structure_outputs
@@ -3983,7 +4164,7 @@ def _build_langgraph(
                         exchange_direction = "Output"
                 is_reference = False
                 if plan_reference_flow:
-                    is_reference = name_key == plan_reference_flow.lower()
+                    is_reference = _flow_name_matches(name, plan_reference_flow)
                 if is_reference:
                     matched_reference = True
                 if is_reference and reference_direction:
@@ -4013,6 +4194,10 @@ def _build_langgraph(
                     use_references=use_references,
                     fallback_reason=default_reason,
                 )
+                data_source = cleaned_exchange.get("data_source")
+                citations = _clean_evidence_list(data_source.get("citations")) if isinstance(data_source, dict) else []
+                evidence = _clean_evidence_list(cleaned_exchange.get("evidence"))
+                _merge_value_evidence(cleaned_exchange, citations, evidence)
                 cleaned_exchanges.append(cleaned_exchange)
             if plan_reference_flow and not matched_reference:
                 reference_exchange = {
@@ -4029,7 +4214,29 @@ def _build_langgraph(
                     use_references=use_references,
                     fallback_reason=default_reason,
                 )
+                data_source = reference_exchange.get("data_source")
+                citations = _clean_evidence_list(data_source.get("citations")) if isinstance(data_source, dict) else []
+                evidence = _clean_evidence_list(reference_exchange.get("evidence"))
+                _merge_value_evidence(reference_exchange, citations, evidence)
                 cleaned_exchanges.append(reference_exchange)
+            cleaned_exchanges = _dedupe_reference_exchanges(
+                cleaned_exchanges,
+                reference_flow=plan_reference_flow or "",
+                reference_direction=reference_direction,
+            )
+            if structure_inputs or structure_outputs:
+                filtered = [
+                    item
+                    for item in cleaned_exchanges
+                    if _should_keep_exchange(
+                        item,
+                        structure_inputs=structure_inputs,
+                        structure_outputs=structure_outputs,
+                        reference_flow=plan_reference_flow or "",
+                    )
+                ]
+                if filtered:
+                    cleaned_exchanges = filtered
             cleaned_processes.append({"process_id": process_id, "exchanges": cleaned_exchanges})
         coverage_metrics = _compute_coverage_metrics(cleaned_processes)
         stop_state = dict(state)
@@ -4178,6 +4385,7 @@ def _build_langgraph(
                     data_source["citations"] = merged_citations
                 exchange["data_source"] = data_source
                 exchange["evidence"] = merged_evidence
+                _merge_value_evidence(exchange, citations, evidence)
                 if kb_refs:
                     scientific_references = _merge_industry_average_block(
                         scientific_references,
@@ -4366,6 +4574,11 @@ def _build_langgraph(
                     "mass": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
                     "energy": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
                 }
+                if isinstance(exchanges_raw, list):
+                    exchanges_raw = _dedupe_product_uuid_exchanges(
+                        exchanges_raw,
+                        reference_direction=reference_direction,
+                    )
                 for exchange in exchanges_raw:
                     if not isinstance(exchange, dict):
                         continue
@@ -4471,11 +4684,16 @@ def _build_langgraph(
                         comment_entries = _build_multilang_entries(comment_text, translator=translator)
                         exchange_item.general_comment = _as_multilang_list(comment_entries or comment_text)
                     if source_reference_index:
-                        evidence = _collect_exchange_citations(exchange)
-                        matched_sources = _match_source_references(evidence, source_reference_index)
-                        matched_items = _coerce_global_reference_items(matched_sources)
-                        if matched_items:
-                            exchange_item.references_to_data_source = ExchangeItemReferencesToDataSource(reference_to_data_source=matched_items)
+                        value_evidence = _dedupe_flows(_clean_evidence_list(exchange.get("value_citations")) + _clean_evidence_list(exchange.get("value_evidence")))
+                        if value_evidence:
+                            matched_sources = _match_source_references(value_evidence, source_reference_index)
+                            matched_items = _coerce_global_reference_items(matched_sources)
+                            if matched_items:
+                                exchange_item.references_to_data_source = ExchangeItemReferencesToDataSource(reference_to_data_source=matched_items)
+                        background_evidence = _dedupe_flows(value_evidence + _clean_evidence_list(exchange.get("evidence")) + _collect_exchange_citations(exchange))
+                        if background_evidence:
+                            matched_sources = _match_source_references(background_evidence, source_reference_index)
+                            matched_items = _coerce_global_reference_items(matched_sources)
                             for item in matched_items:
                                 ref_id = _reference_item_id(item)
                                 if ref_id:

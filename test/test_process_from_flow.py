@@ -98,6 +98,8 @@ class FakeLLM:
                     }
                 ]
             }
+        if prompt.startswith("You are extracting quantitative exchange values from evidence."):
+            return {"processes": []}
         if prompt.startswith("You are selecting level"):
             context = input_data.get("context") or {}
             candidates = context.get("candidates") or []
@@ -107,6 +109,62 @@ class FakeLLM:
             level = choice.get("level", 0)
             return {"@level": str(level), "@classId": choice.get("code", "C"), "#text": choice.get("description", "Manufacturing")}
         raise AssertionError(f"Unexpected prompt: {prompt}")
+
+
+class NoisyLLM(FakeLLM):
+    def invoke(self, input_data: dict[str, Any]) -> Any:
+        prompt = str(input_data.get("prompt") or "")
+        if prompt.startswith("You are defining the inventory exchanges"):
+            return {
+                "processes": [
+                    {
+                        "process_id": "P1",
+                        "exchanges": [
+                            {
+                                "exchangeDirection": "Output",
+                                "exchangeName": "Test flow",
+                                "generalComment": "Reference flow output.",
+                                "unit": "kg",
+                                "amount": "1.0",
+                                "is_reference_flow": True,
+                            },
+                            {
+                                "exchangeDirection": "Input",
+                                "exchangeName": "Test flow; Production mix, at plant",
+                                "generalComment": "Duplicate reference flow input.",
+                                "unit": "kg",
+                                "amount": "0.06",
+                                "is_reference_flow": False,
+                            },
+                            {
+                                "exchangeDirection": "Output",
+                                "exchangeName": "Ham",
+                                "generalComment": "Unplanned co-product.",
+                                "unit": "kg",
+                                "amount": "2.0",
+                                "is_reference_flow": False,
+                            },
+                            {
+                                "exchangeDirection": "Output",
+                                "exchangeName": "Carbon dioxide",
+                                "generalComment": "Emission output.",
+                                "unit": "kg",
+                                "amount": "0.05",
+                                "is_reference_flow": False,
+                            },
+                            {
+                                "exchangeDirection": "Input",
+                                "exchangeName": "Electricity, medium voltage",
+                                "generalComment": "Utility input.",
+                                "unit": "kWh",
+                                "amount": None,
+                                "is_reference_flow": False,
+                            },
+                        ],
+                    }
+                ]
+            }
+        return super().invoke(input_data)
 
 
 def fake_flow_search(query: FlowQuery) -> tuple[list[FlowCandidate], list[object]]:
@@ -216,3 +274,43 @@ def test_process_from_flow_treat_sets_reference_flow_as_input(tmp_path: Path) ->
     exchanges = process_data_set["exchanges"]["exchange"]
     assert isinstance(exchanges, list)
     assert any(item.get("@dataSetInternalID") == ref_id and item.get("exchangeDirection") == "Input" for item in exchanges)
+
+
+def test_process_from_flow_filters_unplanned_outputs(tmp_path: Path) -> None:
+    flow_uuid = str(uuid4())
+    flow_path = tmp_path / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "flowDataSet": {
+                    "flowInformation": {
+                        "dataSetInformation": {
+                            "common:UUID": flow_uuid,
+                            "name": {
+                                "baseName": [{"@xml:lang": "en", "#text": "Test flow"}],
+                                "treatmentStandardsRoutes": [{"@xml:lang": "en", "#text": "Finished product, manufactured"}],
+                                "mixAndLocationTypes": [{"@xml:lang": "en", "#text": "Production mix, at plant"}],
+                                "flowProperties": [],
+                            },
+                            "classificationInformation": {"common:classification": {"common:class": [{"@level": "0", "@classId": "0", "#text": "Test"}]}},
+                            "common:generalComment": [{"@xml:lang": "en", "#text": "Test flow general comment."}],
+                        }
+                    },
+                    "administrativeInformation": {"publicationAndOwnership": {"common:dataSetVersion": "01.01.000"}},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    llm = NoisyLLM()
+    service = ProcessFromFlowService(llm=llm, flow_search_fn=fake_flow_search)
+    state = service.run(flow_path=flow_path, operation="produce")
+
+    process_exchanges = state.get("process_exchanges") or []
+    assert isinstance(process_exchanges, list)
+    exchanges = process_exchanges[0]["exchanges"]
+    names = [str(item.get("exchangeName") or "").lower() for item in exchanges]
+    assert sum("test flow" in name for name in names) == 1
+    assert not any(name == "ham" for name in names)
