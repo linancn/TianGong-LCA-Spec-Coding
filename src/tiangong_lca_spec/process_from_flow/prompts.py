@@ -162,6 +162,7 @@ EXCHANGE_VALUE_PROMPT = (
     "- Provide unit and amount as a numeric string (e.g., '0.45', '12.3').\n"
     "- Provide evidence citing table/figure or SI location.\n"
     "- If a DOI or URL is available, include it explicitly in evidence.\n"
+    "- If the reported value is given per a specific functional unit, include basis_amount, basis_unit, and basis_flow.\n"
     "- source_type must be literature|si.\n"
     "\n"
     "Return strict JSON:\n"
@@ -174,6 +175,9 @@ EXCHANGE_VALUE_PROMPT = (
     '          "exchangeName": "...",\n'
     '          "amount": "0.0",\n'
     '          "unit": "kg|MJ|kWh|m3|unit",\n'
+    '          "basis_amount": "1.0",\n'
+    '          "basis_unit": "kg|MJ|kWh|m3|unit",\n'
+    '          "basis_flow": "<reference flow name>",\n'
     '          "source_type": "literature|si",\n'
     '          "evidence": ["DOI ... Table X", "SI ..."]\n'
     "        }\n"
@@ -192,6 +196,8 @@ INDUSTRY_AVERAGE_PROMPT = (
     "- If references are insufficient, you may estimate a reasonable industry-average value, but mark evidence as "
     "'Industry average estimate (expert judgement)'.\n"
     "- If allow_estimate_without_references is false and references are empty, return null for amount.\n"
+    "- Only return a value when the evidence (or estimate) matches the SAME system boundary and functional unit "
+    "as the process; if boundary or functional unit cannot be matched, return null.\n"
     "- Keep units consistent with the exchange unit when possible; otherwise choose a standard unit.\n"
     "- Return a single numeric value (no ranges). If you cannot estimate, return null for amount.\n"
     "\n"

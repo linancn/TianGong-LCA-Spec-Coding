@@ -5,14 +5,13 @@ from __future__ import annotations
 import csv
 import json
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, TypedDict
-from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zipfile import ZipFile
-
-import xml.etree.ElementTree as ET
 
 from langgraph.graph import END, StateGraph
 from tidas_sdk import create_process, create_source
@@ -50,7 +49,11 @@ from tidas_sdk.generated.tidas_processes import (
 )
 from tidas_sdk.generated.tidas_sources import (
     ClassificationInformationCommonClassificationCommonClass as SourceClassificationCommonClass,
+)
+from tidas_sdk.generated.tidas_sources import (
     DataSetInformationClassificationInformationCommonClassification as SourceClassificationInformationCommonClassification,
+)
+from tidas_sdk.generated.tidas_sources import (
     SourceDataSetAdministrativeInformationDataEntryBy,
     SourceDataSetAdministrativeInformationPublicationAndOwnership,
     SourceDataSetSourceInformationDataSetInformation,
@@ -125,6 +128,35 @@ SI_TABLE_MAX_COLS = 12
 SI_DOCX_MAX_TABLES = 6
 SI_DOCX_MAX_PARAGRAPHS = 40
 SI_XLSX_MAX_SHEETS = 3
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_FLOWPROPERTY_DIR = _REPO_ROOT / "input_data" / "flowproperties"
+_UNIT_GROUP_DIR = _REPO_ROOT / "input_data" / "units"
+
+
+@dataclass(frozen=True, slots=True)
+class FlowPropertyInfo:
+    flow_property_id: str
+    name: str
+    unit_group_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class UnitGroupInfo:
+    unit_group_id: str
+    name: str
+    reference_unit: str
+    units: dict[str, float]
+
+
+@dataclass(frozen=True, slots=True)
+class FlowReferenceInfo:
+    flow_property_id: str | None
+    unit_group: UnitGroupInfo | None
+
+
+_FLOW_PROPERTY_CACHE: dict[str, FlowPropertyInfo] = {}
+_UNIT_GROUP_CACHE: dict[str, UnitGroupInfo] = {}
 
 
 def _search_scientific_references(
@@ -1305,9 +1337,7 @@ def _extract_xlsx_text(path: Path) -> str:
             except KeyError:
                 shared_strings = []
 
-            sheet_names = sorted(
-                name for name in zip_file.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
-            )
+            sheet_names = sorted(name for name in zip_file.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"))
             lines: list[str] = []
             for sheet_idx, sheet_name in enumerate(sheet_names[:SI_XLSX_MAX_SHEETS], start=1):
                 try:
@@ -1560,6 +1590,243 @@ def _coerce_amount_text(value: Any) -> str | None:
     return text or None
 
 
+def _parse_amount_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _format_amount_value(value: float) -> str:
+    if value == 0:
+        return "0"
+    return f"{value:.6g}"
+
+
+def _normalize_unit_token(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value).strip().lower()
+    text = text.replace(" ", "")
+    text = text.replace("^", "")
+    text = text.replace("³", "3")
+    return text
+
+
+_UNIT_DIMENSIONS: dict[str, tuple[str, float]] = {
+    "kg": ("mass", 1.0),
+    "g": ("mass", 0.001),
+    "mg": ("mass", 1.0e-6),
+    "t": ("mass", 1000.0),
+    "lb": ("mass", 0.45359237),
+    "lbav": ("mass", 0.45359237),
+    "oz": ("mass", 0.028349523125),
+    "mj": ("energy", 1.0),
+    "gj": ("energy", 1000.0),
+    "j": ("energy", 1.0e-6),
+    "kwh": ("energy", 3.6),
+    "mwh": ("energy", 3600.0),
+}
+
+
+def _convert_amount_simple(amount: float, from_unit: str, to_unit: str) -> float | None:
+    from_key = _normalize_unit_token(from_unit)
+    to_key = _normalize_unit_token(to_unit)
+    if not from_key or not to_key:
+        return None
+    if from_key == to_key:
+        return amount
+    from_entry = _UNIT_DIMENSIONS.get(from_key)
+    to_entry = _UNIT_DIMENSIONS.get(to_key)
+    if not from_entry or not to_entry:
+        return None
+    if from_entry[0] != to_entry[0]:
+        return None
+    return amount * from_entry[1] / to_entry[1]
+
+
+def _select_dataset_file(directory: Path, dataset_id: str | None) -> Path | None:
+    if not dataset_id:
+        return None
+    try:
+        return next(directory.glob(f"{dataset_id}_*.json"), None)
+    except FileNotFoundError:
+        return None
+
+
+def _load_json_dataset(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _extract_name_text(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and str(item.get("@xml:lang") or "").strip().lower() == "en":
+                text = str(item.get("#text") or "").strip()
+                if text:
+                    return text
+        for item in value:
+            if isinstance(item, dict):
+                text = str(item.get("#text") or "").strip()
+                if text:
+                    return text
+        return ""
+    if isinstance(value, dict):
+        text = str(value.get("#text") or "").strip()
+        return text
+    return str(value or "").strip()
+
+
+def _get_flow_property_info(flow_property_id: str | None) -> FlowPropertyInfo | None:
+    if not flow_property_id:
+        return None
+    cached = _FLOW_PROPERTY_CACHE.get(flow_property_id)
+    if cached:
+        return cached
+    path = _select_dataset_file(_FLOWPROPERTY_DIR, flow_property_id)
+    dataset = _load_json_dataset(path)
+    if not dataset:
+        return None
+    flow_property = dataset.get("flowPropertyDataSet") if isinstance(dataset, dict) else None
+    info = flow_property.get("flowPropertiesInformation") if isinstance(flow_property, dict) else None
+    data_info = info.get("dataSetInformation") if isinstance(info, dict) else None
+    name = _extract_name_text((data_info or {}).get("common:name")) or flow_property_id
+    quant_ref = info.get("quantitativeReference") if isinstance(info, dict) else None
+    ref_group = (quant_ref or {}).get("referenceToReferenceUnitGroup") if isinstance(quant_ref, dict) else None
+    unit_group_id = str((ref_group or {}).get("@refObjectId") or "").strip() or None
+    entry = FlowPropertyInfo(flow_property_id=flow_property_id, name=name, unit_group_id=unit_group_id)
+    _FLOW_PROPERTY_CACHE[flow_property_id] = entry
+    return entry
+
+
+def _get_unit_group_info(unit_group_id: str | None) -> UnitGroupInfo | None:
+    if not unit_group_id:
+        return None
+    cached = _UNIT_GROUP_CACHE.get(unit_group_id)
+    if cached:
+        return cached
+    path = _select_dataset_file(_UNIT_GROUP_DIR, unit_group_id)
+    dataset = _load_json_dataset(path)
+    if not dataset:
+        return None
+    unit_group = dataset.get("unitGroupDataSet") if isinstance(dataset, dict) else None
+    info = unit_group.get("unitGroupInformation") if isinstance(unit_group, dict) else None
+    data_info = info.get("dataSetInformation") if isinstance(info, dict) else None
+    name = _extract_name_text((data_info or {}).get("common:name")) or unit_group_id
+    quant_ref = info.get("quantitativeReference") if isinstance(info, dict) else None
+    ref_internal_id = str((quant_ref or {}).get("referenceToReferenceUnit") or "").strip()
+    units_block = unit_group.get("units") if isinstance(unit_group, dict) else None
+    units_raw = (units_block or {}).get("unit") if isinstance(units_block, dict) else None
+    units_list = units_raw if isinstance(units_raw, list) else [units_raw] if isinstance(units_raw, dict) else []
+    units: dict[str, float] = {}
+    reference_unit = ""
+    for unit in units_list:
+        if not isinstance(unit, dict):
+            continue
+        unit_name = str(unit.get("name") or "").strip()
+        if not unit_name:
+            continue
+        mean_value = _parse_amount_value(unit.get("meanValue"))
+        if mean_value is None:
+            continue
+        units[_normalize_unit_token(unit_name)] = mean_value
+        internal_id = str(unit.get("@dataSetInternalID") or "").strip()
+        if internal_id and internal_id == ref_internal_id:
+            reference_unit = unit_name
+    if not reference_unit and units_list:
+        reference_unit = str((units_list[0] or {}).get("name") or "").strip()
+    entry = UnitGroupInfo(unit_group_id=unit_group_id, name=name, reference_unit=reference_unit, units=units)
+    _UNIT_GROUP_CACHE[unit_group_id] = entry
+    return entry
+
+
+def _flow_reference_info_from_dataset(flow_dataset: dict[str, Any] | None) -> FlowReferenceInfo | None:
+    if not isinstance(flow_dataset, dict):
+        return None
+    flow_data = flow_dataset.get("flowDataSet") if isinstance(flow_dataset.get("flowDataSet"), dict) else None
+    if not flow_data:
+        return None
+    flow_info = flow_data.get("flowInformation") if isinstance(flow_data.get("flowInformation"), dict) else None
+    quant_ref = flow_info.get("quantitativeReference") if isinstance(flow_info, dict) else None
+    ref_internal_id = str((quant_ref or {}).get("referenceToReferenceFlowProperty") or "").strip()
+    properties_block = flow_data.get("flowProperties") if isinstance(flow_data.get("flowProperties"), dict) else None
+    properties_raw = (properties_block or {}).get("flowProperty")
+    properties = properties_raw if isinstance(properties_raw, list) else [properties_raw] if isinstance(properties_raw, dict) else []
+    selected = None
+    if properties and ref_internal_id:
+        for item in properties:
+            if isinstance(item, dict) and str(item.get("@dataSetInternalID") or "").strip() == ref_internal_id:
+                selected = item
+                break
+    if selected is None and properties:
+        selected = properties[0] if isinstance(properties[0], dict) else None
+    if not isinstance(selected, dict):
+        return None
+    flow_property_ref = selected.get("referenceToFlowPropertyDataSet") if isinstance(selected.get("referenceToFlowPropertyDataSet"), dict) else None
+    flow_property_id = str((flow_property_ref or {}).get("@refObjectId") or "").strip() or None
+    flow_property = _get_flow_property_info(flow_property_id)
+    unit_group = _get_unit_group_info(flow_property.unit_group_id) if flow_property else None
+    return FlowReferenceInfo(flow_property_id=flow_property_id, unit_group=unit_group)
+
+
+def _convert_amount_with_unit_group(amount: float, unit: str, unit_group: UnitGroupInfo) -> float | None:
+    unit_key = _normalize_unit_token(unit)
+    if not unit_key:
+        return None
+    factor = unit_group.units.get(unit_key)
+    if factor is None:
+        return None
+    return amount * factor
+
+
+def _unit_group_dimension(unit_group: UnitGroupInfo | None) -> str | None:
+    if not unit_group or not unit_group.name:
+        return None
+    name = unit_group.name.strip().lower()
+    if name == "units of mass":
+        return "mass"
+    if name == "units of energy":
+        return "energy"
+    return None
+
+
+def _format_balance_line(label: str, state: dict[str, Any]) -> str:
+    if not state.get("count"):
+        return f"{label} balance: insufficient data"
+    inputs = float(state.get("inputs") or 0.0)
+    outputs = float(state.get("outputs") or 0.0)
+    unit = str(state.get("unit") or "").strip()
+    count = int(state.get("count") or 0)
+    if inputs <= 0 or outputs <= 0:
+        return f"{label} balance: inputs={_format_amount_value(inputs)} {unit}, outputs={_format_amount_value(outputs)} {unit}, status=insufficient (n={count})"
+    ratio = outputs / inputs
+    status = "ok" if 0.8 <= ratio <= 1.2 else "check"
+    return f"{label} balance: inputs={_format_amount_value(inputs)} {unit}, " f"outputs={_format_amount_value(outputs)} {unit}, ratio={ratio:.3g}, status={status} (n={count})"
+
+
+def _build_balance_note(balance_state: dict[str, dict[str, Any]]) -> str | None:
+    lines: list[str] = []
+    for label in ("mass", "energy"):
+        state = balance_state.get(label)
+        if not state:
+            continue
+        if state.get("count") or state.get("inputs") or state.get("outputs"):
+            lines.append(_format_balance_line(label, state))
+    if not lines:
+        return None
+    return "Balance check: " + "; ".join(lines)
+
+
 def _normalize_exchange_value_candidates(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
@@ -1580,9 +1847,10 @@ def _normalize_exchange_value_candidates(raw: Any) -> list[dict[str, Any]]:
                 continue
             amount = _coerce_amount_text(item.get("amount"))
             unit = str(item.get("unit") or "").strip()
-            source_type = _normalize_source_type(
-                item.get("source_type") or item.get("sourceType") or (item.get("data_source") or {}).get("source_type")
-            )
+            basis_amount = _coerce_amount_text(item.get("basis_amount") or item.get("basisAmount"))
+            basis_unit = str(item.get("basis_unit") or item.get("basisUnit") or "").strip()
+            basis_flow = str(item.get("basis_flow") or item.get("basisFlow") or "").strip()
+            source_type = _normalize_source_type(item.get("source_type") or item.get("sourceType") or (item.get("data_source") or {}).get("source_type"))
             evidence = item.get("evidence") or item.get("citations") or []
             if isinstance(evidence, str):
                 evidence_list = [evidence]
@@ -1595,6 +1863,9 @@ def _normalize_exchange_value_candidates(raw: Any) -> list[dict[str, Any]]:
                     "exchangeName": name,
                     "amount": amount,
                     "unit": unit,
+                    "basis_amount": basis_amount,
+                    "basis_unit": basis_unit,
+                    "basis_flow": basis_flow,
                     "source_type": source_type,
                     "evidence": evidence_list,
                 }
@@ -1640,12 +1911,21 @@ def _apply_exchange_value_candidates(
             if candidate:
                 amount = candidate.get("amount")
                 unit = candidate.get("unit")
+                basis_amount = candidate.get("basis_amount")
+                basis_unit = candidate.get("basis_unit")
+                basis_flow = candidate.get("basis_flow")
                 source_type = candidate.get("source_type")
                 evidence = candidate.get("evidence") or []
                 if amount:
                     exchange["amount"] = amount
                 if unit:
                     exchange["unit"] = unit
+                if basis_amount:
+                    exchange["basis_amount"] = basis_amount
+                if basis_unit:
+                    exchange["basis_unit"] = basis_unit
+                if basis_flow:
+                    exchange["basis_flow"] = basis_flow
                 existing_ds = exchange.get("data_source") if isinstance(exchange.get("data_source"), dict) else {}
                 existing_evidence = _clean_evidence_list(exchange.get("evidence"))
                 citations, evidence = _normalize_citations_and_evidence(
@@ -1664,6 +1944,125 @@ def _apply_exchange_value_candidates(
             cleaned.append(exchange)
         updated.append({"process_id": process_id, "exchanges": cleaned})
     return updated
+
+
+def _parse_quantitative_reference(value: str | None) -> tuple[float | None, str | None, str | None]:
+    if not value:
+        return None, None, None
+    cleaned = re.sub(r"\s+", " ", str(value).strip())
+    if not cleaned:
+        return None, None, None
+    match = _QUANT_REF_PATTERN.match(cleaned)
+    if match:
+        amount = _parse_amount_value(match.group("amount"))
+        unit = match.group("unit").strip()
+        flow = match.group("flow").strip()
+        return amount, unit or None, flow or None
+    parts = cleaned.split(" ", 2)
+    if len(parts) < 2:
+        return None, None, None
+    amount = _parse_amount_value(parts[0])
+    unit = parts[1].strip()
+    flow = parts[2].strip() if len(parts) > 2 else ""
+    return amount, unit or None, flow or None
+
+
+def _flow_name_matches(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    left_norm = _normalize_exchange_name(left)
+    right_norm = _normalize_exchange_name(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    return left_norm in right_norm or right_norm in left_norm
+
+
+def _reference_basis_for_plan(
+    plan: dict[str, Any] | None,
+    exchanges: list[dict[str, Any]] | None,
+) -> tuple[float | None, str | None, str | None]:
+    name_parts = plan.get("name_parts") if isinstance((plan or {}).get("name_parts"), dict) else {}
+    quantitative_reference = str(name_parts.get("quantitative_reference") or "").strip()
+    amount, unit, flow = _parse_quantitative_reference(quantitative_reference)
+    if not flow:
+        flow = str((plan or {}).get("reference_flow_name") or "").strip() or None
+    if amount is None or not unit:
+        for exchange in exchanges or []:
+            if not isinstance(exchange, dict):
+                continue
+            if not bool(exchange.get("is_reference_flow")):
+                continue
+            amount = _parse_amount_value(exchange.get("amount"))
+            unit = str(exchange.get("unit") or "").strip() or unit
+            if not flow:
+                flow = str(exchange.get("exchangeName") or "").strip() or None
+            break
+    return amount, unit, flow
+
+
+def _is_exchange_adjustable(exchange: dict[str, Any]) -> bool:
+    data_source = exchange.get("data_source")
+    if isinstance(data_source, dict):
+        source_type = _normalize_source_type(data_source.get("source_type") or data_source.get("sourceType"))
+        citations = _clean_evidence_list(data_source.get("citations"))
+    else:
+        source_type = _normalize_source_type(exchange.get("dataSource") or data_source or "")
+        citations = []
+    return source_type == "expert_judgement" or not citations
+
+
+def _scale_exchange_amounts(
+    process_exchanges: list[dict[str, Any]],
+    process_plans: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    for proc in process_exchanges:
+        if not isinstance(proc, dict):
+            continue
+        process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+        exchanges = proc.get("exchanges") or []
+        if not isinstance(exchanges, list):
+            continue
+        plan = process_plans.get(process_id) if process_id else None
+        ref_amount, ref_unit, ref_flow = _reference_basis_for_plan(plan, exchanges)
+        if ref_amount is None or not ref_unit:
+            continue
+        for exchange in exchanges:
+            if not isinstance(exchange, dict):
+                continue
+            if not _is_exchange_adjustable(exchange):
+                continue
+            amount_value = _parse_amount_value(exchange.get("amount"))
+            if amount_value is None:
+                continue
+            basis_amount = _parse_amount_value(exchange.get("basis_amount"))
+            if basis_amount is None:
+                basis_amount = 1.0
+            basis_unit = str(exchange.get("basis_unit") or ref_unit or "").strip()
+            basis_flow = str(exchange.get("basis_flow") or ref_flow or "").strip()
+            if basis_flow and ref_flow and not _flow_name_matches(basis_flow, ref_flow):
+                continue
+            if not basis_unit:
+                continue
+            basis_amount_in_ref = _convert_amount_simple(basis_amount, basis_unit, ref_unit)
+            if basis_amount_in_ref is None:
+                if _normalize_unit_token(basis_unit) != _normalize_unit_token(ref_unit):
+                    continue
+                basis_amount_in_ref = basis_amount
+            if basis_amount_in_ref == 0:
+                continue
+            scale_factor = ref_amount / basis_amount_in_ref
+            if abs(scale_factor - 1.0) < 1.0e-9:
+                continue
+            exchange["amount"] = _format_amount_value(amount_value * scale_factor)
+            evidence = _clean_evidence_list(exchange.get("evidence"))
+            note_flow = f" of {ref_flow}" if ref_flow else ""
+            note = f"Scaled to reference flow {ref_amount:g} {ref_unit}{note_flow} " f"(basis {basis_amount:g} {basis_unit})."
+            if note not in evidence:
+                evidence.append(note)
+                exchange["evidence"] = evidence
+    return process_exchanges
 
 
 def _normalize_steps(value: Any) -> list[str]:
@@ -2220,6 +2619,11 @@ def _compose_industry_average_query(
     unit = str(exchange.get("unit") or "").strip() or "unit"
     process_name = str((process_plan or {}).get("name") or "").strip()
     reference_flow = str((process_plan or {}).get("reference_flow_name") or "").strip()
+    name_parts = (process_plan or {}).get("name_parts") if isinstance((process_plan or {}).get("name_parts"), dict) else {}
+    quantitative_reference = str(name_parts.get("quantitative_reference") or "").strip()
+    mix_location = str(name_parts.get("mix_and_location") or "").strip()
+    structure = (process_plan or {}).get("structure") if isinstance((process_plan or {}).get("structure"), dict) else {}
+    boundary = str(structure.get("boundary") or "").strip()
     base_flow = _first_nonempty(flow_summary.get("base_name_en"), flow_summary.get("base_name_zh"))
     flow_context = _flow_reference_context(flow_summary, include_comment=False)
     parts = [
@@ -2231,6 +2635,9 @@ def _compose_industry_average_query(
         operation,
         process_name,
         reference_flow,
+        quantitative_reference,
+        mix_location,
+        boundary,
         flow_context,
     ]
     cleaned = [item for item in (part.strip() for part in parts) if item]
@@ -2263,6 +2670,10 @@ _DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\])>,;\"']+", re.IGNORECASE)
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _URL_PATTERN = re.compile(r"https?://[^\s\])>]+", re.IGNORECASE)
 _FLOW_LABEL_PATTERN = re.compile(r"^f\\d+\\s*[:\\-]\\s*", re.IGNORECASE)
+_QUANT_REF_PATTERN = re.compile(
+    r"^(?P<amount>\\d+(?:\\.\\d+)?)\\s*(?P<unit>[^\\s]+)\\s+of\\s+(?P<flow>.+)$",
+    re.IGNORECASE,
+)
 _FLOW_NAME_FIELDS = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
 _FLOW_QUALIFIER_FIELDS = ("flowProperties",)
 _MEDIA_SUFFIXES = ("to air", "to water", "to soil")
@@ -3682,6 +4093,8 @@ def _build_langgraph(
         ) -> tuple[str | None, str | None, list[str], str | None]:
             name_parts = (process_plan or {}).get("name_parts") if isinstance((process_plan or {}).get("name_parts"), dict) else {}
             quantitative_reference = str(name_parts.get("quantitative_reference") or "").strip()
+            structure = (process_plan or {}).get("structure") if isinstance((process_plan or {}).get("structure"), dict) else {}
+            boundary = str(structure.get("boundary") or "").strip()
             payload = {
                 "prompt": INDUSTRY_AVERAGE_PROMPT,
                 "context": {
@@ -3689,6 +4102,7 @@ def _build_langgraph(
                     "operation": operation,
                     "process": process_plan or {},
                     "exchange": exchange,
+                    "boundary": boundary,
                     "quantitative_reference": quantitative_reference,
                     "references": references_text,
                     "allow_estimate_without_references": allow_estimate,
@@ -3706,12 +4120,18 @@ def _build_langgraph(
             exchanges = proc.get("exchanges") or []
             if not isinstance(exchanges, list):
                 continue
-            plan = process_plan_index.get(process_id)
+            plan = process_plan_index.get(process_id) or {}
+            name_parts = plan.get("name_parts") if isinstance(plan.get("name_parts"), dict) else {}
+            quantitative_reference = str(name_parts.get("quantitative_reference") or "").strip()
+            structure = plan.get("structure") if isinstance(plan.get("structure"), dict) else {}
+            boundary = str(structure.get("boundary") or "").strip()
             for exchange in exchanges:
                 if not isinstance(exchange, dict):
                     continue
                 amount = exchange.get("amount")
                 if amount not in (None, "", 0):
+                    continue
+                if not quantitative_reference or not boundary:
                     continue
                 query = _compose_industry_average_query(
                     exchange=exchange,
@@ -3768,6 +4188,7 @@ def _build_langgraph(
                         },
                         references=kb_refs,
                     )
+        updated_exchanges = _scale_exchange_amounts(updated_exchanges, process_plan_index)
         return {
             "process_exchanges": updated_exchanges,
             "exchange_value_candidates": candidates,
@@ -3882,15 +4303,13 @@ def _build_langgraph(
             source_references = _build_source_reference_entries(source_datasets)
         source_reference_items = _coerce_global_reference_items(source_references)
         default_reference_items = source_reference_items or _entry_level_compliance_reference()
-        source_reference_index = (
-            _build_source_reference_index(source_datasets, source_references) if source_datasets and source_references else {}
-        )
+        source_reference_index = _build_source_reference_index(source_datasets, source_references) if source_datasets and source_references else {}
 
         process_plans = {str(item.get("process_id") or ""): item for item in (state.get("processes") or []) if isinstance(item, dict)}
         exchange_plans = {str(item.get("process_id") or ""): item for item in (state.get("matched_process_exchanges") or []) if isinstance(item, dict)}
         results: list[dict[str, Any]] = []
         crud_client: DatabaseCrudClient | None = None
-        flow_name_cache: dict[str, dict[str, Any]] = {}
+        flow_cache: dict[str, dict[str, Any]] = {}
         if exchange_plans:
             crud_client = DatabaseCrudClient(settings)
 
@@ -3943,6 +4362,10 @@ def _build_langgraph(
                 process_reference_items: dict[str, GlobalReferenceTypeVariant1Item] = {}
                 reference_internal_id: str | None = None
                 next_internal_id = 1
+                balance_state = {
+                    "mass": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
+                    "energy": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
+                }
                 for exchange in exchanges_raw:
                     if not isinstance(exchange, dict):
                         continue
@@ -3954,6 +4377,8 @@ def _build_langgraph(
                         direction = "Input"
                     if bool(exchange.get("is_reference_flow")):
                         direction = reference_direction
+                    amount_value = _parse_amount_value(exchange.get("amount"))
+                    exchange_unit = str(exchange.get("unit") or "").strip()
                     selected_uuid = None
                     selected_version = None
                     selected_base_name = None
@@ -3970,7 +4395,7 @@ def _build_langgraph(
                                     break
                     if selected_uuid:
                         flow_uuid = str(selected_uuid)
-                        cached = flow_name_cache.get(flow_uuid)
+                        cached = flow_cache.get(flow_uuid)
                         if cached is None:
                             flow_dataset = None
                             if crud_client:
@@ -3984,8 +4409,13 @@ def _build_langgraph(
                                     )
                             short_desc = _flow_short_description_from_dataset(flow_dataset) if flow_dataset else None
                             version_override = _flow_dataset_version(flow_dataset) if flow_dataset else None
-                            cached = {"short_description": short_desc, "version": version_override}
-                            flow_name_cache[flow_uuid] = cached
+                            reference_info = _flow_reference_info_from_dataset(flow_dataset)
+                            cached = {
+                                "short_description": short_desc,
+                                "version": version_override,
+                                "reference_info": reference_info,
+                            }
+                            flow_cache[flow_uuid] = cached
                         candidate = FlowCandidate(
                             uuid=flow_uuid,
                             base_name=str(selected_base_name or name),
@@ -3996,8 +4426,27 @@ def _build_langgraph(
                             translator=translator,
                             short_description=cached.get("short_description"),
                         )
+                        reference_info = cached.get("reference_info")
                     else:
                         reference = _placeholder_flow_reference(name, translator=translator)
+                        reference_info = None
+
+                    if amount_value is not None and exchange_unit and isinstance(reference_info, FlowReferenceInfo):
+                        unit_group = reference_info.unit_group
+                        dimension = _unit_group_dimension(unit_group)
+                        if dimension and unit_group:
+                            converted = _convert_amount_with_unit_group(amount_value, exchange_unit, unit_group)
+                            if converted is not None:
+                                dim_state = balance_state[dimension]
+                                if dim_state["unit"] and dim_state["unit"] != unit_group.reference_unit:
+                                    pass
+                                else:
+                                    dim_state["unit"] = unit_group.reference_unit
+                                    if direction == "Input":
+                                        dim_state["inputs"] += converted
+                                    else:
+                                        dim_state["outputs"] += converted
+                                    dim_state["count"] += 1
 
                     amount = exchange.get("amount")
                     amount_text = _default_exchange_amount() if amount in (None, "", 0) else str(amount)
@@ -4026,9 +4475,7 @@ def _build_langgraph(
                         matched_sources = _match_source_references(evidence, source_reference_index)
                         matched_items = _coerce_global_reference_items(matched_sources)
                         if matched_items:
-                            exchange_item.references_to_data_source = ExchangeItemReferencesToDataSource(
-                                reference_to_data_source=matched_items
-                            )
+                            exchange_item.references_to_data_source = ExchangeItemReferencesToDataSource(reference_to_data_source=matched_items)
                             for item in matched_items:
                                 ref_id = _reference_item_id(item)
                                 if ref_id:
@@ -4126,13 +4573,13 @@ def _build_langgraph(
                 exchanges = ProcessesProcessDataSetExchanges(exchange=exchange_items)
                 process_reference_list = list(process_reference_items.values())
                 process_reference_items_final = process_reference_list or default_reference_items
+                balance_note = _build_balance_note(balance_state)
+                data_sources_kwargs: dict[str, Any] = {"reference_to_data_source": process_reference_items_final}
+                if balance_note:
+                    data_sources_kwargs["data_treatment_and_extrapolations_principles"] = _as_multilang_list(balance_note)
                 modelling_and_validation = ProcessesProcessDataSetModellingAndValidation(
                     lci_method_and_allocation=ProcessDataSetModellingAndValidationLCIMethodAndAllocation(type_of_data_set="Unit process, single operation"),
-                    data_sources_treatment_and_representativeness=(
-                        ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(
-                            reference_to_data_source=process_reference_items_final
-                        )
-                    ),
+                    data_sources_treatment_and_representativeness=(ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(**data_sources_kwargs)),
                     validation=ProcessDataSetModellingAndValidationValidation(review=ModellingAndValidationValidationReview(type="Not reviewed")),
                     compliance_declarations=_compliance_declarations(),
                 )

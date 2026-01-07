@@ -163,6 +163,80 @@ def _extract_source_version(source_payload: dict[str, Any]) -> str:
     return "01.01.000"
 
 
+def _collect_source_ref_ids(refs: Any, used: set[str]) -> None:
+    if not refs:
+        return
+    if isinstance(refs, Mapping):
+        refs_iter = [refs]
+    elif isinstance(refs, list):
+        refs_iter = refs
+    else:
+        return
+    for ref in refs_iter:
+        if not isinstance(ref, Mapping):
+            continue
+        ref_id = ref.get("@refObjectId")
+        if not isinstance(ref_id, str):
+            continue
+        ref_id = ref_id.strip()
+        if not ref_id:
+            continue
+        ref_type = str(ref.get("@type") or "").strip().lower()
+        if ref_type and ref_type != "source data set":
+            continue
+        used.add(ref_id)
+
+
+def _collect_used_source_ids(process_datasets: list[dict[str, Any]]) -> set[str]:
+    used: set[str] = set()
+    for payload in process_datasets:
+        dataset = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), Mapping) else payload
+        if not isinstance(dataset, Mapping):
+            continue
+        modelling = dataset.get("modellingAndValidation")
+        if isinstance(modelling, Mapping):
+            sources = modelling.get("dataSourcesTreatmentAndRepresentativeness")
+            if isinstance(sources, Mapping):
+                _collect_source_ref_ids(sources.get("referenceToDataSource"), used)
+        exchanges_block = dataset.get("exchanges")
+        if not isinstance(exchanges_block, Mapping):
+            continue
+        exchanges = exchanges_block.get("exchange", [])
+        if isinstance(exchanges, Mapping):
+            exchanges = [exchanges]
+        if not isinstance(exchanges, list):
+            continue
+        for exchange in exchanges:
+            if not isinstance(exchange, Mapping):
+                continue
+            refs_block = exchange.get("referencesToDataSource")
+            if isinstance(refs_block, Mapping):
+                _collect_source_ref_ids(refs_block.get("referenceToDataSource"), used)
+    return used
+
+
+def _filter_source_datasets_by_usage(
+    source_datasets: list[dict[str, Any]],
+    process_datasets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    used_ids = _collect_used_source_ids(process_datasets)
+    if not used_ids:
+        return []
+    filtered: list[dict[str, Any]] = []
+    for payload in source_datasets:
+        if not isinstance(payload, dict):
+            continue
+        uuid_value = _extract_source_uuid(payload)
+        if uuid_value in used_ids:
+            filtered.append(payload)
+    if len(filtered) != len(source_datasets):
+        print(
+            f"Filtered source datasets by usage: {len(filtered)}/{len(source_datasets)}",
+            file=sys.stderr,
+        )
+    return filtered
+
+
 def _ensure_run_root(run_id: str) -> Path:
     run_root = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id
     run_root.mkdir(parents=True, exist_ok=True)
@@ -382,9 +456,7 @@ def _build_flow_alignment_from_process_datasets(datasets: list[dict[str, Any]]) 
                     "exchangeName": exchange_name,
                     "exchangeDirection": exchange.get("exchangeDirection"),
                     "unit": exchange.get("unit"),
-                    "meanAmount": exchange.get("meanAmount")
-                    if exchange.get("meanAmount") is not None
-                    else exchange.get("resultingAmount", exchange.get("amount")),
+                    "meanAmount": exchange.get("meanAmount") if exchange.get("meanAmount") is not None else exchange.get("resultingAmount", exchange.get("amount")),
                     "generalComment": comment,
                     "referenceToFlowDataSet": sanitized_ref,
                 }
@@ -470,8 +542,15 @@ def _write_process_exports(datasets: list[dict[str, Any]], exports_dir: Path) ->
     return written
 
 
-def _publish_sources(datasets: list[dict[str, Any]], *, commit: bool) -> None:
+def _publish_sources(
+    datasets: list[dict[str, Any]],
+    *,
+    commit: bool,
+    process_datasets: list[dict[str, Any]] | None = None,
+) -> None:
     publishable = [item for item in datasets if isinstance(item, dict)]
+    if process_datasets is not None:
+        publishable = _filter_source_datasets_by_usage(publishable, process_datasets)
     if not publishable:
         return
     if not commit:
@@ -516,10 +595,7 @@ def _publish_sources(datasets: list[dict[str, Any]], *, commit: bool) -> None:
                     failed.append((uuid_value, str(exc), str(update_exc)))
 
     if failed:
-        details = "; ".join(
-            f"{uuid_value} insert failed: {insert_error}; update failed: {update_error}"
-            for uuid_value, insert_error, update_error in failed
-        )
+        details = "; ".join(f"{uuid_value} insert failed: {insert_error}; update failed: {update_error}" for uuid_value, insert_error, update_error in failed)
         raise SystemExit(f"Failed to publish {len(failed)} source dataset(s): {details}")
     print(f"Published {len(publishable)} source dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
 
@@ -566,7 +642,7 @@ def main() -> None:
                 if updated:
                     _write_process_exports(datasets, PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "exports")
         if source_datasets:
-            _publish_sources(source_datasets, commit=args.commit)
+            _publish_sources(source_datasets, commit=args.commit, process_datasets=datasets)
         _publish_processes(datasets, commit=args.commit)
         return
 
@@ -662,7 +738,7 @@ def main() -> None:
                 if updated:
                     _write_process_exports(datasets, exports_dir)
         if isinstance(source_payloads, list) and source_payloads:
-            _publish_sources(source_payloads, commit=args.commit)
+            _publish_sources(source_payloads, commit=args.commit, process_datasets=datasets)
         _publish_processes(datasets, commit=args.commit)
     if args.retain_runs:
         _cleanup_runs(retain=args.retain_runs, current_run_id=run_id)
