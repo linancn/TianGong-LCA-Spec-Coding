@@ -1,109 +1,163 @@
-# Process From Flow Workflow Guide
+# Process From Flow Workflow Guide (LangGraph Core + Origin Orchestration)
 
-This document describes the LangGraph workflow in `src/tiangong_lca_spec/process_from_flow/service.py`, focusing on step-by-step output structure and constraints.
+## Overview
+- Goal: Derive ILCD process datasets from a reference flow dataset (ILCD JSON). Exchange flow uuid/shortDescription must come from `search_flows` candidates; use placeholders only when no match exists.
+- Scope: This guide covers the LangGraph core flow in `src/tiangong_lca_spec/process_from_flow/service.py` and the orchestration layer under `scripts/origin/`.
+- Outputs: `process_datasets` / `source_datasets`, plus artifacts under `artifacts/process_from_flow/<run_id>/`.
+- References: `PROCESS_FROM_FLOW_FLOWCHART.zh.md` / `PROCESS_FROM_FLOW_FLOWCHART.zh.svg` for flowcharts.
 
-## Goals and Inputs
-- Goal: Derive an ILCD process dataset from a reference flow dataset (ILCD JSON). Flow uuid/shortDescription in exchanges must come from `search_flows` results; use placeholders only when no match is found.
-- Entry point: `ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`.
-- Dependencies: LLM is required for technology routes, unit process split, exchange generation, and candidate selection; also relies on flow search function `search_flows` (injectable) and a candidate selector (LLM selector recommended).
-- `stop_after` supports `"references"|"tech"|"processes"|"exchanges"|"matches"|"sources"` for early termination in debugging.
+## Cross References
+- CLI entrypoints: `scripts/origin/process_from_flow_langgraph.py` and `scripts/origin/process_from_flow_workflow.py` (see module docstrings and `--help`).
 
-## State Fields
-The workflow passes a state dict with key fields:
-- `flow_path`: input file path.
-- `flow_dataset` / `flow_summary`: parsed flow and summary (names, classification, comments, UUID, version).
-- `technical_description` / `assumptions` / `scope`: technology route and constraints (from the selected route summary and assumptions).
-- `technology_routes`: Step 1 output routes (route_id/route_name/route_summary/key inputs/outputs, etc.).
-- `process_routes` / `selected_route_id`: Step 2 route split and chosen route.
-- `processes`: unit process plan (ordered list with `reference_flow_name`, `name_parts`, structured fields, exchange keywords).
-- `process_exchanges`: per-process exchange list (structure only, no matching info).
-- `matched_process_exchanges`: exchanges with flow search results and selected candidates (uuid/shortDescription filled).
-- `process_datasets`: final ILCD process datasets.
-- `source_datasets`: ILCD source datasets derived from retrieved references.
-- `source_references`: source references ready for process/exchange `referenceToDataSource`.
-- `step_markers`: stage flags (step1/step2/step3) for inspection.
+## Architecture and Main Flow
+### Layer Responsibilities
+- LangGraph core layer: `ProcessFromFlowService` runs the main inference chain (references -> routes -> processes -> exchanges -> matching -> datasets).
+- Origin orchestration layer: `scripts/origin` handles SI download/parse, usability tagging, run/resume, publishing, and cleanup.
 
-## Node Order and Behavior
-Each node checks if its target fields already exist to avoid rework.
-- 0) load_flow: read `flow_path` JSON and build `flow_summary` (multi-language names, classification, general comment); this flow is the reference flow.
-- 1a) reference_search: search technology-route literature (topK=10), write to `scientific_references.step_1a_reference_search`.
-- 1b) reference_fulltext: dedupe DOIs from Step 1a and fetch full text via DOI filter, write to `scientific_references.step_1b_reference_fulltext` (`filter: {"doi": [...]}` + `topK=1` + `extK`).
-- 1b-optional) reference_usability: optional screening step to determine whether Step 1b full text is sufficient to support process split and exchange generation; mark a reference as unusable when it only reports LCIA impact indicators or lacks any quantitative LCI table rows; also flag `si_hint` when the text points to Supporting Information/Appendix that may contain inventory tables; output to `scientific_references.usability`.
-- 1c) reference_clusters: cluster DOIs by boundary, main chain, and key intermediate flows using Step 1b full text and usability, write to `scientific_references.step_1c_reference_clusters` (include `reference_summaries` with `si_hint`/`si_reason` for later SI triage).
-- 1d) reference_si_download_and_parse: when `si_hint` is `likely/possible` or the main text includes explicit SI links, download SI originals and register metadata; store originals under `artifacts/process_from_flow/<run_id>/input/si/` and parsed outputs under `input/si_mineru/`.
-  - PDFs/images: run `scripts/origin/mineru_for_process_si.py` to split into JSON (keep page/table blocks).
-  - Spreadsheets/text (xls/xlsx/csv/doc/docx/txt/md): keep originals and capture readable snapshots (use mineru or direct text read).
-  - Metadata should include `doi`/`si_url`/`file_type`/`local_path`/`mineru_output_path`/`status`/`error`.
-- 1e) reference_usage_tagging: tag each reference as `tech_route`/`process_split`/`exchange_values`/`background_only`, stored in `reference_summaries[*].usage_tags` or a separate index. Script: `uv run python scripts/origin/process_from_flow_reference_usage_tagging.py --run-id <run_id>`.
-- 1f) reference_sources: generate ILCD source datasets from Step 1a/1b/Step 2/Step 3 references via `tidas_sdk.create_source`, store in `source_datasets`, and produce `source_references` for later process linking. Sources are filtered to keep only references tagged as used (non-`background_only`), and each article is written as its own source dataset. (In LangGraph, `build_sources` runs after Step 4 and before Step 5.)
-- Stop-rule evaluation: call the coverage-based stop rules to decide whether to continue retrieval or switch to `expert_judgement`.
-- If any of Step 1a/1b/1c lacks usable references (including usability results all marked unusable), Steps 1-3 fall back to common sense: do not use literature evidence, and Steps 2/3 do not issue retrievals; still tag data sources in processes/exchanges as `expert_judgement` with reasons.
-- 1) Describe technology (Step 1): use the reference flow plus Step 1c primary cluster (and si_snippets when available) to output plausible technology/process routes (route1/route2...), each with route_summary, key inputs/outputs, key unit processes, assumptions, and scope; include `supported_dois` and `route_evidence` so the summary stays traceable to evidence.
-- 2) Split into unit processes (Step 2): output ordered unit processes per route; the reference flow of process i must appear as an input of process i+1, and the last process produces/treats `load_flow`. Each process outputs:
-  - Structured fields: `technology` / `inputs` / `outputs` / `boundary` / `assumptions`.
-  - `inputs`/`outputs` labeled `f1:`/`f2:` per flow (chain intermediates must match).
-  - Exchange keywords: `exchange_keywords.inputs` / `exchange_keywords.outputs`.
-  - Name parts: `name_parts` with `base_name` / `treatment_and_route` / `mix_and_location` / `quantitative_reference`.
-  - Quantitative reference: numeric expression like `1 kg of <reference_flow_name>` or `1 unit of <reference_flow_name>`.
-  - Explicit main output: `reference_flow_name` for the process, consistent with chain inputs.
-  - Keep `processes` as an iterative plan; Step 5 produces the ILCD datasets so future references can refine the plan.
-  - When exchange values only cover aggregated steps, record `aggregation_scope`/`allocation_strategy` under assumptions and adjust granularity if needed.
-  - Record sources (DOI + SI file/table/page) in technology/boundary/assumptions for later exchange traceability.
-- 3) generate_exchanges: use `EXCHANGES_PROMPT` to generate exchanges per process (each must mark `is_reference_flow` matching `reference_flow_name`; production uses Output, treatment uses Input). Exchange names must be searchable, no composite flows; add unit and amount (placeholder if unknown); evidence selection follows the Step 1c primary cluster.
-  - Emission exchanges add media suffix (`to air` / `to water` / `to soil`) to reduce ambiguity.
-  - Exchanges include `flow_type` (product/elementary/waste/service) and `search_hints` aliases.
-  - Every exchange includes `data_source`/`evidence`; inferred values must be marked `source_type=expert_judgement` with justification.
-- 3b) exchange_amounts: use `EXCHANGE_VALUE_PROMPT` to extract verifiable exchange amounts/units from fulltext and SI; only use explicit evidence. Missing values keep placeholders and `expert_judgement`. Extracted values are merged into `process_exchanges` and used for `meanAmount/resultingAmount`, and evidence is used to attach exchange `referencesToDataSource` from `source_references`.
-- 4) match_flows: search flows for each exchange (keep top 10 candidates), select with LLM selector (no similarity fallback); record reasoning and unmatched items; exchange uuid/shortDescription must come from selected candidates.
-  - match_flows must not overwrite `data_source`/`evidence`.
-- 5) build_process_datasets: assemble ILCD process datasets (reference direction depends on operation; if Translator provided, add Chinese fields):
-  - Use `ProcessClassifier`; fall back to Manufacturing on failure.
-  - Use matched flows; missing matches use placeholders (no invented uuid/shortDescription).
-  - Ensure a reference exchange; empty amounts fall back to `"1.0"`.
-  - Fill functional unit, time/region, compliance, data entry, copyright; validate with `tidas_sdk.create_process` (log warning on failure).
-  - Process-level `referenceToDataSource` is the union of all exchange-level source references for that process (fallback to entry-level compliance if none).
+### Main Flow Outline
+- Step 0 load_flow: Parse reference flow and build summary.
+- Step 1 references + tech routes: 1a search -> 1b fulltext -> 1c clustering -> technology routes.
+- Step 2 split processes: Split unit processes into an ordered chain.
+- Step 3 generate exchanges: Create per-process input/output exchanges.
+- Step 3b enrich exchange amounts: Extract or estimate amounts/units from text and SI.
+- Step 4 match flows: Search flows and select candidates to fill uuid/shortDescription.
+- Step 1f build sources: Generate ILCD source datasets and references.
+- Step 5 build process datasets: Emit final ILCD process datasets.
 
-## SI Integration (Actual Injection Points)
-- Step 1 uses `si_snippets` in the prompt context (`TECH_DESCRIPTION_PROMPT`).
-- Step 2 uses `si_snippets` in the prompt context (`PROCESS_SPLIT_PROMPT`).
-- Step 3 uses `si_snippets` in the prompt context (`EXCHANGES_PROMPT`).
-- Step 3b uses `fulltext_references` + `si_snippets` in the prompt context (`EXCHANGE_VALUE_PROMPT`).
+## LangGraph Core Workflow (ProcessFromFlowService)
+### Entry and Dependencies
+- Entry: `ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`.
+- Dependencies: LLM (routes/split/exchanges/selection), flow search `search_flows`, candidate selector (LLM selector recommended), optional Translator/MCP client.
+- `stop_after`: `references`/`tech`/`processes`/`exchanges`/`matches`/`sources` (CLI also supports `datasets`, see Origin orchestration).
+
+### Node Details (from coarse to fine)
+0) load_flow
+- Read `flow_path`, build `flow_dataset` and `flow_summary` (multi-lang names, classification, comments, UUID, version).
+
+1) references + tech routes
+- 1a reference_search: search technical route literature -> `scientific_references.step_1a_reference_search` (default topK=10).
+- 1b reference_fulltext: dedupe DOIs and fetch fulltext (`filter: {"doi": [...]}` + `topK=1` + `extK`) -> `scientific_references.step_1b_reference_fulltext`.
+- 1c reference_clusters: cluster by system boundary/main chain/intermediate flows -> `scientific_references.step_1c_reference_clusters`.
+- Step 1 route output: produce `technology_routes` with route_summary, key inputs/outputs, key unit processes, assumptions/scope, and attach `supported_dois` + `route_evidence`.
+- If Step 1a/1b/1c has no usable references, Steps 1-3 fall back to common sense and must mark `expert_judgement` with reasons.
+
+2) split_processes
+- Split each route into ordered unit processes; chain intermediates must match and the last process produces/treats `load_flow`.
+- Required fields: `technology`/`inputs`/`outputs`/`boundary`/`assumptions` + `exchange_keywords`.
+- `name_parts` must include `base_name`/`treatment_and_route`/`mix_and_location`/`quantitative_reference`, where `quantitative_reference` is numeric.
+- When evidence is aggregated, mark `aggregation_scope`/`allocation_strategy` in `assumptions`.
+- If references are usable, extra split evidence can be retrieved and stored in `scientific_references.step2`.
+
+3) generate_exchanges
+- Use `EXCHANGES_PROMPT` to generate exchanges; `is_reference_flow` aligns with `reference_flow_name` (Output for production, Input for treatment).
+- Exchange names must be searchable and not composite; fill unit/amount (placeholders if unknown).
+- Emissions add media suffix (`to air`/`to water`/`to soil`), plus `flow_type` and `search_hints`.
+- Every exchange records `data_source`/`evidence`; inferred items must mark `source_type=expert_judgement`.
+- If references are usable, extra exchange evidence can be retrieved and stored in `scientific_references.step3`.
+
+3b) enrich_exchange_amounts
+- Use `EXCHANGE_VALUE_PROMPT` with fulltext and SI to extract verifiable values, writing `value_citations`/`value_evidence` and filling amount/unit.
+- Missing values remain placeholders; if boundary + quantitative reference exist, `INDUSTRY_AVERAGE_PROMPT` may estimate and store `scientific_references.industry_average`.
+- Scalable exchanges use `basis_*` for conversion and add scaling notes.
+
+4) match_flows
+- Search flows for each exchange (top 10 candidates), then select with LLM selector (no similarity fallback when LLM is enabled).
+- Record `flow_search.query/candidates/selected_uuid/selected_reason/selector/unmatched` and fill uuid/shortDescription.
+- Only add matching info; do not overwrite `data_source`/`evidence`.
+
+1f) build_sources
+- Generate ILCD source datasets from references (`tidas_sdk.create_source`), writing `source_datasets` and `source_references`.
+- Infer usage from `usage_tagging`/Step 1c summaries/Step 1b usability/industry_average and filter out `background_only`.
+
+5) build_process_datasets
+- Build ILCD process datasets (reference direction follows `operation`; optional Translator adds Chinese fields).
+- `ProcessClassifier` falls back to Manufacturing on failure; missing flows use placeholders only.
+- Try `DatabaseCrudClient.select_flow` to fill flow version/shortDescription and flowProperty/unit group.
+- Ensure reference flow exchange; empty amounts fall back to `"1.0"`; validate via `tidas_sdk.create_process` (warnings only).
+- Exchange `referencesToDataSource` prefer `value_citations`/`value_evidence`; remaining evidence is rolled up to process level.
+
+## Origin Orchestration Workflow (scripts/origin)
+### Goal and Order
+- Goal: Write SI and usage tagging back before Steps 1-3 so prompts can read SI evidence.
+- Orchestration order:
+  Step 0 -> Step 1a -> Step 1b -> 1b-usability -> Step 1c -> Step 1d -> Step 1e -> Step 1 -> Step 2 -> Step 3 -> Step 3b -> Step 4 -> Step 1f -> Step 5
+
+### Key Scripts and Tools
+- `process_from_flow_workflow.py`: main orchestrator, runs 1b-usability/1d/1e before resuming the main flow.
+- `process_from_flow_langgraph.py`: LangGraph CLI (run/resume/cleanup/publish), supports `--stop-after` and `--publish/--commit`.
+- `process_from_flow_reference_usability.py`: Step 1b usability screening (LCIA vs LCI).
+- `process_from_flow_download_si.py`: download SI originals and write SI metadata.
+- `mineru_for_process_si.py`: parse PDF/image SI into JSON structure.
+- `process_from_flow_reference_usage_tagging.py`: tag reference usage.
+- `process_from_flow_build_sources.py`: backfill source datasets from cached state.
+
+### Run Notes
+- `process_from_flow_workflow.py` does not support `--no-llm` (Step 1b/1e require LLM).
+- `--min-si-hint` controls SI download threshold (none|possible|likely), with `--si-max-links`/`--si-timeout`.
+- `process_from_flow_langgraph.py --stop-after datasets` means run through dataset writeout; other values stop early and save state.
+
+## State Fields (state)
+- Input/context: `flow_path`, `flow_dataset`, `flow_summary`, `operation`, `scientific_references`.
+- Routes/processes: `technology_routes`, `process_routes`, `selected_route_id`, `technical_description`, `assumptions`, `scope`, `processes`.
+- Exchanges/matching: `process_exchanges`, `exchange_value_candidates`, `exchange_values_applied`, `matched_process_exchanges`.
+- Outputs: `process_datasets`, `source_datasets`, `source_references`.
+- Evaluation/markers: `coverage_metrics`, `coverage_history`, `stop_rule_decision`, `step_markers`, `stop_after`.
+
+## SI Injection Points (Actual Behavior)
+- Step 1: `TECH_DESCRIPTION_PROMPT` reads `si_snippets`.
+- Step 2: `PROCESS_SPLIT_PROMPT` reads `si_snippets`.
+- Step 3: `EXCHANGES_PROMPT` reads `si_snippets`.
+- Step 3b: `EXCHANGE_VALUE_PROMPT` reads `fulltext_references` + `si_snippets`.
 - Step 4/Step 5 do not read SI directly.
-- SI must be written back to `process_from_flow_state.json` before Step 1; otherwise rerun Step 1-3 after SI is available.
-
-## Workflow Orchestration Script (with SI)
-To ensure SI is fetched and injected before Step 1-3, use:
-`scripts/origin/process_from_flow_workflow.py`.
-This script runs Step 1b usability, Step 1d SI download/parse, and Step 1e usage tagging before resuming Step 1-5.
-
-Orchestration order:
-Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e (optional) → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 1f → Step 5
-
-Example:
-```bash
-uv run python scripts/origin/process_from_flow_workflow.py --flow <flow.json> --operation produce
-```
+- SI must be written back to `process_from_flow_state.json` before Step 1; otherwise rerun Step 1-3.
 
 ## Outputs and Debugging
-- Normal runs return full state; `process_datasets` is the final output list and `source_datasets` can be written to `exports/sources/`.
-- To backfill source files from cached state: `uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`.
-- CLI writes only under `artifacts/process_from_flow/<run_id>/` with `input/`, `cache/`, and `exports/`; state file is `cache/process_from_flow_state.json`.
-- Use `stop_after` for debugging (e.g., `"matches"` to stop after flow matching).
+- Output root: `artifacts/process_from_flow/<run_id>/` with `input/`, `cache/`, and `exports/`.
+- State file: `cache/process_from_flow_state.json`.
+- Resume: `uv run python scripts/origin/process_from_flow_langgraph.py --resume --run-id <run_id>`.
+- Backfill sources: `uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`.
+- Publish existing run: `uv run python scripts/origin/process_from_flow_langgraph.py --publish-only --run-id <run_id> [--publish-flows] [--commit]`.
+- Cleanup old runs: `uv run python scripts/origin/process_from_flow_langgraph.py --cleanup-only --retain-runs 3`.
+
+## Publishing Flow (Flow/Source/Process)
+Recommended order: flows -> sources -> processes to avoid missing references.
+
+### Dependencies and Configuration
+- Entrypoints: `FlowPublisher` / `ProcessPublisher` / `DatabaseCrudClient`.
+- MCP service: configure `tiangong_lca_remote` in `.secrets/secrets.toml` (`Database_CRUD_Tool`).
+- LLM optional: used for flow type and product category inference.
+
+### Step 0: Publish sources (optional but recommended)
+- `--publish/--publish-only` publishes sources before processes.
+- Only publish sources referenced by process/exchange `referenceToDataSource`.
+
+### Step 1: Prepare alignment structure (for FlowPublisher)
+- Structure: `[{ "process_name": "...", "origin_exchanges": { "<exchangeName>": [<exchange dict>, ...] } }]`.
+- Each exchange dict must include: `exchangeName`, `exchangeDirection`, `unit`, `meanAmount|resultingAmount|amount`, `generalComment`, `referenceToFlowDataSet`.
+- Optionally add `matchingDetail.selectedCandidate` mapped from `flow_search` for better classification/property selection.
+
+### Step 2: Publish/update flows
+- `FlowPublisher.prepare_from_alignment()` builds `FlowPublishPlan`:
+  - Placeholder `referenceToFlowDataSet` -> insert.
+  - Matched but missing flow property -> update (version +1).
+  - Elementary flows are not created; Product/Waste flows generate ILCD flow datasets.
+- Auto inference:
+  - `FlowTypeClassifier`: LLM first, fallback rules.
+  - `FlowProductCategorySelector`: pick product category level by level.
+  - `FlowPropertyRegistry`: defaults to Mass (override per exchange if needed).
+- After publish, use `FlowPublishPlan.exchange_ref` to replace placeholders in process datasets.
+
+### Step 3: Publish processes
+- `ProcessPublisher.publish(process_datasets)` defaults to dry-run; `--commit` writes.
+- Always `close()` MCP clients after publishing.
 
 ## Literature Service Configuration and Operation
-
 ### Retrieval Strategy
-- Build queries from flow name, operation (produce/treat), and technical description.
-- Step 1b uses `filter: {"doi": [...]}` + `topK=1` + `extK` (default `extK=200`) to fetch full text; `query` must be non-empty and can use merged content or a short summary.
-- Step 1c outputs `clusters` + `primary_cluster_id` + `selection_guidance` for evidence selection and merging in Step 2/Step 3.
-
-**Resource management:**
-- MCP client auto-created when LLM is available.
-- Connection closes at workflow end.
-- Retrieval failures log warnings and do not block execution.
+- Build queries from flow name, operation, and technical description.
+- Step 2/Step 3 can add retrievals, stored in `scientific_references.step2/step3`.
+- Step 1b uses `filter: {"doi": [...]}` + `topK=1` + `extK` (default `extK=200`).
 
 ### Configuration
-
 Configure `tiangong_kb_remote` in `.secrets/secrets.toml`:
 
 ```toml
@@ -115,50 +169,45 @@ api_key = "<YOUR_TG_KB_REMOTE_API_KEY>"
 timeout = 180
 ```
 
-If not configured or API key is invalid, the workflow falls back to common sense without literature.
+If not configured or invalid, the workflow falls back to LLM common sense only.
 
 ### Logs
-
 - `process_from_flow.mcp_client_created`: MCP client created
 - `process_from_flow.search_references`: literature search succeeded (query + count)
-- `process_from_flow.search_references_failed`: literature search failed (error, non-blocking)
+- `process_from_flow.search_references_failed`: literature search failed (non-blocking)
 - `process_from_flow.mcp_client_closed`: MCP client closed
 
 ### Performance
-
-- Each literature search takes ~1-2 seconds
-- Step 1b fulltext retrieval time depends on DOI count and extK
-- Workflow adds ~3-6 seconds (excluding extra fulltext fetch time)
-- Reliability unaffected
+- Each literature search takes ~1-2 seconds.
+- Step 1b fulltext time depends on DOI count and extK.
+- Full workflow adds ~3-6 seconds (excluding extra fulltext retrieval).
 
 ### Testing
-
 ```bash
 uv run python test/test_scientific_references.py
 ```
 
 ### Reference Usability Screening
-
-- Optional step: evaluate whether Step 1b fulltext is sufficient to support Step 1c process split/exchange generation.
-- Mark `unusable` when the fulltext only reports LCIA impacts (e.g., ADP/AP/GWP/EP/PED/RI) or impact units like `kg CO2 eq`, `kg SO2 eq`, `kg Sb eq`, `kg PO4 eq`, and does not provide any LCI table rows with physical flows/units (kg, g, t, m2, m3, pcs, kWh, MJ as inventory).
-- Record `si_hint` (`likely|possible|none`) and `si_reason` when the article points to Supporting Information, supplementary material, or appendices that may contain LCI tables; keep `decision=unusable` unless the main text itself provides LCI tables.
-- Prompt template: `src/tiangong_lca_spec/process_from_flow/prompts.py` `REFERENCE_USABILITY_PROMPT`.
+- Optional step: check if Step 1b fulltext supports route/process/exchange needs.
+- Mark `unusable` if the text only reports LCIA impact indicators (e.g., ADP/AP/GWP/EP/PED/RI) or impact units like `kg CO2 eq`, `kg SO2 eq`, `kg Sb eq`, `kg PO4 eq`, with no LCI inventory rows (kg, g, t, m2, m3, pcs, kWh, MJ).
+- If the paper hints Supporting Information/Appendix for inventory tables, record `si_hint` (`likely|possible|none`) and `si_reason`; still keep `decision=unusable` if the main text has no LCI tables.
+- Prompt: `src/tiangong_lca_spec/process_from_flow/prompts.py` `REFERENCE_USABILITY_PROMPT`.
 - Script: `uv run python scripts/origin/process_from_flow_reference_usability.py --run-id <run_id>`.
 - Output: `scientific_references.usability` in `process_from_flow_state.json`.
 
 ## Usage Notes
-- Ensure LLM is configured; do not run without it.
-- Configure `tiangong_kb_remote` to enable literature integration (optional but recommended).
-- Keep flow search/selector interface consistent (`FlowQuery` -> `(candidates, unmatched)`; candidates include uuid/base_name, etc.).
-- CLI adds Chinese translations by default (disable with `--no-translate-zh`).
+- Ensure LLM is configured; `process_from_flow_workflow.py` does not allow `--no-llm`.
+- Keep flow search/selector interfaces consistent (`FlowQuery` -> `(candidates, unmatched)`).
+- CLI adds Chinese translations by default; disable with `--no-translate-zh`.
 
 ## Stop Rules
-- Stop rules rely on coverage rather than raw retrieval counts; the workflow calls this section, so thresholds can evolve without changing node order.
+- Stop rules rely on coverage, not retrieval count; thresholds can evolve without changing the node order.
 - Coverage definitions:
   - `process_coverage` = processes with evidence / total planned processes.
   - `exchange_value_coverage` = key exchanges with evidence / total key exchanges.
+- `stop_rule_decision` records `should_stop/action/reason/coverage_delta`; `coverage_history` stores each evaluation time.
 - Default thresholds (adjustable):
-  - Stop retrieval when `process_coverage >= 0.5` AND `exchange_value_coverage >= 0.6`.
-  - If two consecutive retrieval rounds improve coverage by < 0.1, stop further retrieval.
-- If coverage is still below thresholds and usability results show `unusable` with `si_hint=none`, switch to `expert_judgement` and log reasons.
-- Key exchanges include: reference flow, main energy input, main raw materials, and major emissions named in the paper/SI (top 3-5).
+  - Stop when `process_coverage >= 0.5` and `exchange_value_coverage >= 0.6`.
+  - Stop when coverage delta vs previous evaluation is < 0.1.
+- If below thresholds and usability shows `unusable` with `si_hint=none`, switch to `expert_judgement` and log reasons.
+- Key exchanges: explicit `is_key_exchange`/`isKeyExchange`, `is_reference_flow`, `flow_type=elementary`, or input-side energy (electricity/diesel/gasoline/heat). If none, treat all exchanges as key exchanges.
