@@ -60,6 +60,8 @@ except ModuleNotFoundError:  # pragma: no cover
         load_secrets,
     )
 
+from tiangong_lca_spec.workflow.artifacts import build_export_filename, resolve_dataset_version
+
 DEFAULT_FLOW_PATH = Path("artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json")
 PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
 LATEST_RUN_ID_PATH = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / ".latest_run_id"
@@ -106,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish-flows",
         action="store_true",
-        help="Also publish placeholder flow datasets and rewrite process references (disabled by default).",
+        help="Also publish placeholder flow datasets, rewrite process references, and export flow JSONs (disabled by default).",
     )
     parser.add_argument(
         "--commit",
@@ -507,6 +509,7 @@ def _publish_flows(
     *,
     commit: bool,
     llm: Any | None = None,
+    exports_dir: Path | None = None,
 ) -> list[Any]:
     from tiangong_lca_spec.publishing import FlowPublisher
 
@@ -518,6 +521,8 @@ def _publish_flows(
         plans = publisher.prepare_from_alignment(alignment)
         if not plans:
             return []
+        if exports_dir is not None:
+            _write_flow_exports(plans, exports_dir)
         publisher.publish()
         if commit:
             print(f"Published {len(plans)} flow dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
@@ -526,6 +531,27 @@ def _publish_flows(
         return plans
     finally:
         publisher.close()
+
+
+def _write_flow_exports(plans: list[Any], exports_dir: Path) -> list[Path]:
+    written: list[Path] = []
+    flows_dir = exports_dir / "flows"
+    flows_dir.mkdir(parents=True, exist_ok=True)
+    for plan in plans:
+        dataset = getattr(plan, "dataset", None)
+        uuid_value = getattr(plan, "uuid", None)
+        if not isinstance(dataset, Mapping):
+            continue
+        if not isinstance(uuid_value, str) or not uuid_value.strip():
+            continue
+        dataset_version = resolve_dataset_version(dataset)
+        filename = build_export_filename(uuid_value, dataset_version)
+        target = flows_dir / filename
+        dump_json({"flowDataSet": dataset}, target)
+        written.append(target)
+    if written:
+        print(f"Wrote {len(written)} flow dataset(s) to {flows_dir}", file=sys.stderr)
+    return written
 
 
 def _write_process_exports(datasets: list[dict[str, Any]], exports_dir: Path) -> list[Path]:
@@ -629,6 +655,7 @@ def main() -> None:
         return
     if args.publish_only:
         run_id = _resolve_run_id(args.run_id)
+        exports_dir = ensure_run_exports_dir(run_id)
         llm = None
         if args.publish_flows and not args.no_llm and args.secrets.exists():
             api_key, model, base_url = load_secrets(args.secrets)
@@ -636,11 +663,11 @@ def main() -> None:
         source_datasets = _load_source_datasets(run_id)
         datasets = _load_process_datasets(run_id)
         if args.publish_flows:
-            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm)
+            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm, exports_dir=exports_dir)
             if args.commit and flow_plans:
                 updated = _apply_flow_refs_to_processes(datasets, flow_plans)
                 if updated:
-                    _write_process_exports(datasets, PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "exports")
+                    _write_process_exports(datasets, exports_dir)
         if source_datasets:
             _publish_sources(source_datasets, commit=args.commit, process_datasets=datasets)
         _publish_processes(datasets, commit=args.commit)
@@ -732,7 +759,7 @@ def main() -> None:
         print(f"Wrote {len(source_written)} source dataset(s) to {exports_dir / 'sources'}", file=sys.stderr)
     if args.publish:
         if args.publish_flows:
-            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm)
+            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm, exports_dir=exports_dir)
             if args.commit and flow_plans:
                 updated = _apply_flow_refs_to_processes(datasets, flow_plans)
                 if updated:

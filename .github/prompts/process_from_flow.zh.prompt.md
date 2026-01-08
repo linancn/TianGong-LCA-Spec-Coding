@@ -11,7 +11,7 @@
 
 ## 分层架构与主干流程
 ### 分层职责
-- LangGraph 核心层：`ProcessFromFlowService` 负责“检索 → 路径 → 拆分 → 交换 → 匹配 → 数据集”的主干推理与结构化输出。
+- LangGraph 核心层：`ProcessFromFlowService` 负责“检索 → 路径 → 拆分 → 交换 → 匹配 → 数据集 → 占位符补全”的主干推理与结构化输出。
 - Origin 编排层：`scripts/origin` 负责 SI 获取/解析、可用性/用途标注、运行与恢复、发布与清理。
 
 ### 主干流程（一步概览）
@@ -23,12 +23,13 @@
 - Step 4 match flows：flow 搜索 + 候选选择，回填 uuid/shortDescription。
 - Step 1f build sources：生成 source 数据集与引用。
 - Step 5 build process datasets：输出最终 ILCD process 数据集。
+- Step 6 resolve placeholders：对占位符 exchange 进行二次检索与筛选，回填匹配结果并输出占位符报告。
 
 ## LangGraph 核心工作流（ProcessFromFlowService）
 ### 入口与依赖
 - 入口：`ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`。
 - 依赖：LLM（路线/拆分/交换/候选选择）、flow 搜索 `search_flows`、候选选择器（推荐 LLM 版本），可选 Translator/MCP 客户端。
-- `stop_after`：`references`/`tech`/`processes`/`exchanges`/`matches`/`sources`（CLI 额外支持 `datasets`，见 Origin 编排层）。
+- `stop_after`：`references`/`tech`/`processes`/`exchanges`/`matches`/`sources`（CLI 额外支持 `datasets`；占位符补全在 datasets 之后执行，无单独 stop_after）。
 
 ### 节点细节（由粗到细）
 0) load_flow
@@ -76,11 +77,18 @@
 - 强制参考流交换；空量值回退 `"1.0"`；`tidas_sdk.create_process` 做校验（失败仅记录警告）。
 - exchange 的 `referencesToDataSource` 优先使用 `value_citations`/`value_evidence` 匹配，其余 evidence 聚合到 process 层。
 
+6) resolve_placeholders（占位符补全，后处理）
+- 仅在 `build_process_datasets` 之后运行：扫描 `referenceToFlowDataSet.unmatched:placeholder=true` 的 exchange。
+- 对应回溯 `matched_process_exchanges`，取 exchangeName/Direction/unit/flow_type/search_hints/generalComment 构造二次 `flow_search` 查询。
+- 过滤候选：优先匹配 flow_type；若为 elementary，则按介质（air/water/soil）过滤候选。
+- 通过候选选择器（LLM/规则）二次选择；写回 `flow_search.secondary_query/resolution_*`，并更新 process_datasets 中占位符引用。
+- 若仍未命中则保留占位符，并记录 `resolution_status/reason` 供人工复核。
+
 ## Origin 编排工作流（scripts/origin）
 ### 目标与顺序
 - 目标：在 Step 1-3 前写回 SI/用途标注，保证提示词能读取 SI 证据。
 - 编排顺序：
-  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 1f → Step 5
+  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 1f → Step 5 → Step 6
 
 ### 核心脚本与工具
 - `process_from_flow_workflow.py`：主编排脚本，负责前置 1b-usability/1d/1e 并 resume 主流程。
@@ -90,11 +98,13 @@
 - `mineru_for_process_si.py`：解析 PDF/图像 SI 为 JSON 结构。
 - `process_from_flow_reference_usage_tagging.py`：标注文献用途 `usage_tagging`。
 - `process_from_flow_build_sources.py`：从缓存 state 补写 source 数据集。
+- `process_from_flow_placeholder_report.py`：生成占位符补全报告（默认写入 `cache/placeholder_report.json` 并更新 state）。
 
 ### 运行要点
 - `process_from_flow_workflow.py` 不支持 `--no-llm`（Step 1b/1e 需要 LLM）。
 - `--min-si-hint` 控制 SI 下载阈值（none|possible|likely），可配 `--si-max-links`/`--si-timeout`。
-- `process_from_flow_langgraph.py` 的 `--stop-after datasets` 等价完整跑完后写出 datasets；其他值会提前停并保存 state。
+- `process_from_flow_langgraph.py` 的 `--stop-after datasets` 等价完整跑完（含占位符补全）后写出 datasets；其他值会提前停并保存 state。
+- 占位符补全默认仅执行一次；需重跑时手动清空 `placeholder_resolution_applied`/`placeholder_resolutions` 后再 `--resume`。
 
 ## 状态字段（state）
 - 输入与上下文：`flow_path`、`flow_dataset`、`flow_summary`、`operation`、`scientific_references`。
@@ -102,6 +112,7 @@
 - 交换与匹配：`process_exchanges`、`exchange_value_candidates`、`exchange_values_applied`、`matched_process_exchanges`。
 - 产出：`process_datasets`、`source_datasets`、`source_references`。
 - 评估与标记：`coverage_metrics`、`coverage_history`、`stop_rule_decision`、`step_markers`、`stop_after`。
+- 占位符补全：`placeholder_report`、`placeholder_resolutions`、`placeholder_resolution_applied`。
 
 ## SI 注入点（实际行为）
 - Step 1：`TECH_DESCRIPTION_PROMPT` 读取 `si_snippets`。
@@ -114,8 +125,10 @@
 ## 产出与调试
 - 运行输出目录：`artifacts/process_from_flow/<run_id>/`（`input/`、`cache/`、`exports/`）。
 - 状态文件：`cache/process_from_flow_state.json`。
+- 占位符报告：`cache/placeholder_report.json`（来自 `resolve_placeholders` 或 `process_from_flow_placeholder_report.py`）。
 - 恢复/补写：`uv run python scripts/origin/process_from_flow_langgraph.py --resume --run-id <run_id>`。
 - 补写 source：`uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`。
+- 生成占位符报告：`uv run python scripts/origin/process_from_flow_placeholder_report.py --run-id <run_id>`（`--no-update-state` 可避免写回 state）。
 - 仅发布已有 run：`uv run python scripts/origin/process_from_flow_langgraph.py --publish-only --run-id <run_id> [--publish-flows] [--commit]`。
 - 清理旧 run：`uv run python scripts/origin/process_from_flow_langgraph.py --cleanup-only --retain-runs 3`。
 

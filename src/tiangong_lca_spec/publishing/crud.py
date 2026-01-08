@@ -1067,6 +1067,9 @@ class FlowPublisher:
             "administrativeInformation": self._build_administrative_section(version),
             "flowProperties": flow_property_block,
         }
+        dataset["administrativeInformation"]["publicationAndOwnership"][
+            "common:permanentDataSetURI"
+        ] = build_portal_uri("flow", uuid_value, version)
 
         uri = build_portal_uri("flow", uuid_value, version)
         exchange_ref = {
@@ -1101,6 +1104,8 @@ class FlowPublisher:
         base_version = _coerce_text(candidate.get("version")) if candidate else ""
         if not base_version and existing_ref:
             base_version = _coerce_text(existing_ref.get("@version"))
+        if base_version == "00.00.000":
+            base_version = "01.01.000"
         if not base_version:
             base_version = "01.01.000"
         if mode == "update":
