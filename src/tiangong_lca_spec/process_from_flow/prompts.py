@@ -56,6 +56,10 @@ PROCESS_SPLIT_PROMPT = (
     "- Each process MUST define reference_flow_name (the main output flow of the process).\n"
     "- Process name must include four modules: base_name, treatment_and_route, mix_and_location, quantitative_reference.\n"
     "- quantitative_reference must be a numeric expression like '1 kg of <reference_flow_name>' or '1 unit of <reference_flow_name>'. If unit is unknown, use 'unit'.\n"
+    "- For each process, provide a geography decision describing where the process occurs.\n"
+    "- Use ILCD/TIDAS location codes (see input_data/location). Choose the most specific code supported by evidence.\n"
+    "- If the process is located in China but some inputs use non-China datasets, keep location_code=CN and explain the substitution in description_of_restrictions.\n"
+    "- If the geography is mixed or unclear, use GLO and explain why.\n"
     "- Ensure chain consistency: the reference_flow_name of process i must appear verbatim in process i+1 inputs.\n"
     "- Provide inputs/outputs as clean flow names (no f1/f2 labels); labels are added in post-processing.\n"
     "- If step_1c_reference_clusters are provided in the context, prioritize the primary cluster and only use supplementary clusters "
@@ -87,6 +91,12 @@ PROCESS_SPLIT_PROMPT = (
     '            "outputs": ["..."],\n'
     '            "boundary": "...",\n'
     '            "assumptions": ["..."]\n'
+    "          },\n"
+    '          "geography": {\n'
+    '            "location_code": "CN|GLO|...",\n'
+    '            "location_name": "...",\n'
+    '            "description_of_restrictions_en": "...",\n'
+    '            "description_of_restrictions_zh": "..."\n'
     "          },\n"
     '          "is_reference_flow_process": true|false\n'
     "        }\n"

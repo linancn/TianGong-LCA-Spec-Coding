@@ -45,6 +45,7 @@
 - Split each route into ordered unit processes; chain intermediates must match and the last process produces/treats `load_flow`.
 - Required fields: `technology`/`inputs`/`outputs`/`boundary`/`assumptions` + `exchange_keywords`.
 - `name_parts` must include `base_name`/`treatment_and_route`/`mix_and_location`/`quantitative_reference`, where `quantitative_reference` is numeric.
+- Provide a geography decision per process (ILCD location code) and document any representativeness limits in `descriptionOfRestrictions` (e.g., non-local input datasets).
 - When evidence is aggregated, mark `aggregation_scope`/`allocation_strategy` in `assumptions`.
 - If references are usable, extra split evidence can be retrieved and stored in `scientific_references.step2`.
 

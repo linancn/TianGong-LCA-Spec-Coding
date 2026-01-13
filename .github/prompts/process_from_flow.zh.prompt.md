@@ -46,6 +46,7 @@
 - 每条路线拆分为有序单元过程，链式中间流必须一致，最后一个过程直接生产/处置 `load_flow`。
 - 过程字段：`technology`/`inputs`/`outputs`/`boundary`/`assumptions` + `exchange_keywords`。
 - `name_parts` 必含 `base_name`/`treatment_and_route`/`mix_and_location`/`quantitative_reference`，`quantitative_reference` 为数值表达。
+- 每个过程需给出地理判定（ILCD location code），并在 `descriptionOfRestrictions` 说明代表性限制（如使用非本地输入数据）。
 - 证据为聚合层级时，在 `assumptions` 标记 `aggregation_scope`/`allocation_strategy`。
 - 可用文献时会额外检索拆分证据，写入 `scientific_references.step2`。
 
@@ -167,6 +168,7 @@
 ## 文献服务配置与运行
 ### 检索策略
 - 基于 flow 名称、operation、技术描述构建 query。
+- 默认优先中国检索：先用 `China/Chinese/中国` 追加到 query，若结果中出现中国相关命中则采用；否则回退为不带国家的全局检索（不影响 DOI 全文拉取）。
 - Step 2/Step 3 可追加检索，写入 `scientific_references.step2/step3`。
 - Step 1b 使用 `filter: {"doi": [...]}` + `topK=1` + `extK` 拉取全文（默认 `extK=200`）。
 

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -59,8 +60,6 @@ except ModuleNotFoundError:  # pragma: no cover
         generate_run_id,
         load_secrets,
     )
-
-from tiangong_lca_spec.workflow.artifacts import build_export_filename, resolve_dataset_version
 
 DEFAULT_FLOW_PATH = Path("artifacts/cache/manual_flows/01132_bdbb913b-620c-42a0-baf6-c5802a2b6c4b_01.01.000.json")
 PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
@@ -163,6 +162,26 @@ def _extract_source_version(source_payload: dict[str, Any]) -> str:
     if isinstance(version, str) and version.strip():
         return version.strip()
     return "01.01.000"
+
+
+def _resolve_flow_dataset_version(dataset: Mapping[str, Any]) -> str:
+    admin = dataset.get("administrativeInformation") if isinstance(dataset.get("administrativeInformation"), Mapping) else {}
+    pub = admin.get("publicationAndOwnership") if isinstance(admin.get("publicationAndOwnership"), Mapping) else {}
+    version = pub.get("common:dataSetVersion")
+    if isinstance(version, str) and version.strip():
+        return version.strip()
+    return "01.01.000"
+
+
+def _build_export_filename(uuid_value: str, dataset_version: str) -> str:
+    safe_uuid = (uuid_value or "").strip()
+    if not safe_uuid:
+        raise ValueError("UUID required to build export filename.")
+    version = (dataset_version or "").strip() or "01.01.000"
+    safe_version = re.sub(r"[^0-9A-Za-z._-]", "_", version)
+    if not safe_version:
+        safe_version = "01.01.000"
+    return f"{safe_uuid}_{safe_version}.json"
 
 
 def _collect_source_ref_ids(refs: Any, used: set[str]) -> None:
@@ -544,8 +563,8 @@ def _write_flow_exports(plans: list[Any], exports_dir: Path) -> list[Path]:
             continue
         if not isinstance(uuid_value, str) or not uuid_value.strip():
             continue
-        dataset_version = resolve_dataset_version(dataset)
-        filename = build_export_filename(uuid_value, dataset_version)
+        dataset_version = _resolve_flow_dataset_version(dataset)
+        filename = _build_export_filename(uuid_value, dataset_version)
         target = flows_dir / filename
         dump_json({"flowDataSet": dataset}, target)
         written.append(target)

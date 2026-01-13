@@ -9,6 +9,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -86,7 +87,8 @@ from tiangong_lca_spec.flow_alignment.selector import (
     SimilarityCandidateSelector,
 )
 from tiangong_lca_spec.flow_search import search_flows
-from tiangong_lca_spec.process_extraction.extractors import ProcessClassifier
+from tiangong_lca_spec.location import extract_location_response, get_location_catalog
+from tiangong_lca_spec.process_extraction.extractors import LocationNormalizer, ProcessClassifier
 from tiangong_lca_spec.process_extraction.tidas_mapping import (
     COMPLIANCE_DEFAULT_PREFERENCES,
     ILCD_ENTRY_LEVEL_REFERENCE_ID,
@@ -111,6 +113,12 @@ SCIENTIFIC_REFERENCE_FULLTEXT_EXT_K = 200
 REFERENCE_CLUSTER_MAX_CHARS = 1200
 REFERENCE_CLUSTER_MAX_RECORDS = 2
 INDUSTRY_AVERAGE_TOP_K = 5
+REFERENCE_COUNTRY_PREFERENCE = "China"
+REFERENCE_COUNTRY_ALIASES = ("China", "Chinese", "中国")
+_LOCATION_DATA_DIR = Path(__file__).resolve().parents[3] / "input_data" / "location"
+_LOCATION_EN_PATH = _LOCATION_DATA_DIR / "tidas_locations.json"
+_LOCATION_ZH_PATH = _LOCATION_DATA_DIR / "tidas_locations_zh.json"
+_LOCATION_SPLIT_PATTERN = re.compile(r"[;,/|>]+")
 
 REFERENCE_SEARCH_KEY = "step_1a_reference_search"
 REFERENCE_FULLTEXT_KEY = "step_1b_reference_fulltext"
@@ -169,6 +177,9 @@ def _search_scientific_references(
     ext_k: int | None = None,
     limit: int | None = None,
     keep_all: bool = False,
+    country_preference: str | None = None,
+    country_aliases: tuple[str, ...] | None = None,
+    fallback_to_global: bool = True,
 ) -> list[dict[str, Any]]:
     """Search scientific literature using tiangong_kb_remote search_Sci_Tool.
 
@@ -180,6 +191,9 @@ def _search_scientific_references(
         ext_k: Optional extK parameter for retrieving extended content
         limit: Optional max results to keep (defaults to top_k)
         keep_all: Whether to keep all returned records without trimming
+        country_preference: Optional country hint for a first-pass query
+        country_aliases: Strings that count as a country hit in results
+        fallback_to_global: Whether to retry without country hint if no hits
 
     Returns:
         List of reference dictionaries with keys like 'content', 'metadata', 'score'
@@ -187,68 +201,108 @@ def _search_scientific_references(
     if not query or not query.strip():
         return []
 
+    def _has_country_hit(records: list[dict[str, Any]], aliases: tuple[str, ...]) -> bool:
+        if not records:
+            return False
+        lowered_aliases = [alias.casefold() for alias in aliases if alias]
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            for key in ("content", "source", "title", "snippet", "abstract"):
+                value = record.get(key)
+                if not isinstance(value, str):
+                    continue
+                text = value.casefold()
+                if any(alias in text for alias in lowered_aliases):
+                    return True
+        return False
+
     should_close_client = False
-    if mcp_client is None:
-        mcp_client = MCPToolClient()
+    client = mcp_client
+    if client is None:
+        client = MCPToolClient()
         should_close_client = True
 
-    try:
-        arguments: dict[str, Any] = {
-            "query": query.strip(),
-            "topK": top_k,
-        }
-        if filters:
-            arguments["filter"] = filters
-        if ext_k is not None:
-            arguments["extK"] = ext_k
+    def _run_query(search_query: str) -> list[dict[str, Any]]:
+        try:
+            arguments: dict[str, Any] = {
+                "query": search_query.strip(),
+                "topK": top_k,
+            }
+            if filters:
+                arguments["filter"] = filters
+            if ext_k is not None:
+                arguments["extK"] = ext_k
 
-        result = mcp_client.invoke_json_tool(
-            server_name="TianGong_KB_Remote",
-            tool_name="Search_Sci_Tool",
-            arguments=arguments,
-        )
+            result = client.invoke_json_tool(
+                server_name="TianGong_KB_Remote",
+                tool_name="Search_Sci_Tool",
+                arguments=arguments,
+            )
 
-        if not result:
+            if not result:
+                return []
+
+            references: list[dict[str, Any]] = []
+            if isinstance(result, dict):
+                records = result.get("records") or result.get("results") or result.get("data") or []
+                if isinstance(records, list):
+                    references = [item for item in records if isinstance(item, dict)]
+            elif isinstance(result, list):
+                references = [item for item in result if isinstance(item, dict)]
+
+            LOGGER.info(
+                "process_from_flow.search_references",
+                query_preview=search_query[:100],
+                count=len(references),
+            )
+            trimmed = references
+            max_keep = top_k if limit is None else limit
+            if not keep_all and max_keep is not None:
+                trimmed = references[:max_keep]
+            return [
+                {
+                    **item,
+                    "no": idx,
+                }
+                for idx, item in enumerate(trimmed, start=1)
+            ]
+        except Exception as exc:
+            LOGGER.warning(
+                "process_from_flow.search_references_failed",
+                query_preview=search_query[:100],
+                error=str(exc),
+            )
             return []
 
-        # Extract references from result structure
-        references: list[dict[str, Any]] = []
-        if isinstance(result, dict):
-            # Handle different possible response structures
-            records = result.get("records") or result.get("results") or result.get("data") or []
-            if isinstance(records, list):
-                references = [item for item in records if isinstance(item, dict)]
-        elif isinstance(result, list):
-            references = [item for item in result if isinstance(item, dict)]
-
-        LOGGER.info(
-            "process_from_flow.search_references",
-            query_preview=query[:100],
-            count=len(references),
-        )
-        trimmed = references
-        max_keep = top_k if limit is None else limit
-        if not keep_all and max_keep is not None:
-            trimmed = references[:max_keep]
-        numbered = [
-            {
-                **item,
-                "no": idx,
-            }
-            for idx, item in enumerate(trimmed, start=1)
-        ]
-        return numbered
-
-    except Exception as exc:
-        LOGGER.warning(
-            "process_from_flow.search_references_failed",
-            query_preview=query[:100],
-            error=str(exc),
-        )
-        return []
+    try:
+        if country_preference and not (filters and "doi" in filters):
+            aliases = country_aliases or (country_preference,)
+            preferred_queries: list[str] = []
+            for token in (country_preference, *aliases):
+                token_text = str(token).strip()
+                if not token_text:
+                    continue
+                preferred = f"{query} {token_text}"
+                if preferred not in preferred_queries:
+                    preferred_queries.append(preferred)
+            fallback_records: list[dict[str, Any]] = []
+            for preferred in preferred_queries:
+                records = _run_query(preferred)
+                if records:
+                    if not fallback_records:
+                        fallback_records = records
+                    if _has_country_hit(records, aliases):
+                        return records
+            if fallback_to_global:
+                global_records = _run_query(query)
+                if global_records:
+                    return global_records
+            return fallback_records
+        return _run_query(query)
     finally:
-        if should_close_client and mcp_client:
-            mcp_client.close()
+        if should_close_client and client:
+            client.close()
 
 
 def _format_references_for_prompt(references: list[dict[str, Any]]) -> str:
@@ -345,6 +399,185 @@ def _first_nonempty(*values: Any) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _normalize_location_key(value: str) -> str:
+    return "".join(char.lower() for char in value if char.isalnum())
+
+
+def _clean_location_hint(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if any(token in lowered for token in ("unspecified", "unknown", "not specified", "n/a", "mix/location")):
+        return ""
+    if any(token in text for token in ("未指定", "未知")):
+        return ""
+    return text
+
+
+@lru_cache(maxsize=1)
+def _load_location_maps() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    code_to_en: dict[str, str] = {}
+    code_to_zh: dict[str, str] = {}
+    name_to_code: dict[str, str] = {}
+    for path, target in ((_LOCATION_EN_PATH, code_to_en), (_LOCATION_ZH_PATH, code_to_zh)):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            LOGGER.warning("process_from_flow.location_mapping_load_failed", path=str(path), error=str(exc))
+            continue
+        locations = data.get("ILCDLocations", {}).get("location", [])
+        if isinstance(locations, dict):
+            locations = [locations]
+        if not isinstance(locations, list):
+            continue
+        for item in locations:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("@value") or "").strip()
+            name = str(item.get("#text") or "").strip()
+            if not code:
+                continue
+            target[code] = name
+            code_key = _normalize_location_key(code)
+            if code_key and code_key not in name_to_code:
+                name_to_code[code_key] = code
+            if name:
+                name_key = _normalize_location_key(name)
+                if name_key and name_key not in name_to_code:
+                    name_to_code[name_key] = code
+    for alias, code in {"global": "GLO", "world": "GLO", "china": "CN", "cn": "CN"}.items():
+        alias_key = _normalize_location_key(alias)
+        if alias_key and alias_key not in name_to_code:
+            name_to_code[alias_key] = code
+    return code_to_en, code_to_zh, name_to_code
+
+
+def _lookup_location_code(value: str | None, name_to_code: dict[str, str]) -> str | None:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    key = _normalize_location_key(raw)
+    if key:
+        match = name_to_code.get(key)
+        if match:
+            return match
+    for part in _LOCATION_SPLIT_PATTERN.split(raw):
+        chunk = part.strip()
+        if not chunk:
+            continue
+        key = _normalize_location_key(chunk)
+        if not key:
+            continue
+        match = name_to_code.get(key)
+        if match:
+            return match
+    return None
+
+
+def _normalize_location_code(value: str | None, valid_codes: set[str]) -> str | None:
+    if not value:
+        return None
+    cleaned = re.sub(r"[^A-Za-z0-9-]+", "-", str(value).strip().upper()).strip("-")
+    if not cleaned:
+        return None
+    if valid_codes:
+        return cleaned if cleaned in valid_codes else None
+    return cleaned
+
+
+def _resolve_location_code_rule_based(candidates: list[str], mix_location: str | None) -> str | None:
+    code_to_en, code_to_zh, name_to_code = _load_location_maps()
+    valid_codes = set(code_to_en) | set(code_to_zh)
+    for candidate in candidates:
+        code = _normalize_location_code(candidate, valid_codes)
+        if code:
+            return code
+    for candidate in candidates:
+        code = _lookup_location_code(candidate, name_to_code)
+        if code:
+            return code
+    mix_hint = _clean_location_hint(mix_location)
+    if mix_hint:
+        code = _lookup_location_code(mix_hint, name_to_code)
+        if code:
+            return code
+    return None
+
+
+def _build_location_candidates(raw_hint: str) -> list[dict[str, str]]:
+    if not raw_hint:
+        return []
+    try:
+        catalog = get_location_catalog()
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning("process_from_flow.location_catalog_load_failed", error=str(exc))
+        return []
+    try:
+        return catalog.build_candidate_list(raw_hint, depth=2, limit=80)
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning("process_from_flow.location_candidate_build_failed", hint=raw_hint, error=str(exc))
+        return []
+
+
+def _resolve_location_code_with_llm(
+    *,
+    llm: LanguageModelProtocol,
+    process_info: dict[str, Any],
+    raw_hint: str,
+) -> str | None:
+    if not raw_hint:
+        return None
+    candidates = _build_location_candidates(raw_hint)
+    try:
+        normalizer = LocationNormalizer(llm)
+        response = normalizer.run(
+            process_info,
+            hint=raw_hint,
+            candidates=candidates or None,
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning("process_from_flow.location_llm_failed", error=str(exc))
+        return None
+    code, payload = extract_location_response(response)
+    code_to_en, code_to_zh, name_to_code = _load_location_maps()
+    valid_codes = set(code_to_en) | set(code_to_zh)
+    normalized = _normalize_location_code(code, valid_codes)
+    if normalized:
+        return normalized
+    if isinstance(payload, dict):
+        hint_text = _first_nonempty(payload.get("description"), payload.get("subLocation"))
+        if hint_text:
+            resolved = _lookup_location_code(hint_text, name_to_code)
+            if resolved:
+                return resolved
+    return None
+
+
+def _resolve_location_code(
+    *,
+    candidates: list[str],
+    mix_location: str | None,
+    llm: LanguageModelProtocol | None,
+    process_info: dict[str, Any],
+) -> str:
+    rule_based = _resolve_location_code_rule_based(candidates, mix_location)
+    if rule_based:
+        return rule_based
+    raw_hint = _clean_location_hint(_first_nonempty(*candidates, mix_location))
+    if llm is not None and raw_hint:
+        llm_code = _resolve_location_code_with_llm(llm=llm, process_info=process_info, raw_hint=raw_hint)
+        if llm_code:
+            return llm_code
+    return "GLO"
 
 
 def _compact_text(value: str, *, limit: int = 160) -> str:
@@ -3647,6 +3880,7 @@ def _normalize_route_processes(
         is_reference_flow_process = bool(proc.get("is_reference_flow_process"))
         name_parts = proc.get("name_parts") if isinstance(proc.get("name_parts"), dict) else {}
         structure = proc.get("structure") if isinstance(proc.get("structure"), dict) else {}
+        geography = proc.get("geography") if isinstance(proc.get("geography"), dict) else {}
         structure_inputs = [_strip_flow_label(val) for val in _clean_string_list(structure.get("inputs"))]
         structure_outputs = [_strip_flow_label(val) for val in _clean_string_list(structure.get("outputs"))]
         structure_assumptions = _clean_string_list(structure.get("assumptions"))
@@ -3710,6 +3944,7 @@ def _normalize_route_processes(
                 "is_reference_flow_process": is_reference_flow_process,
                 "reference_flow_name": reference_flow_name,
                 "name_parts": name_parts,
+                "geography": geography,
                 "structure": {
                     **structure,
                     "inputs": structure_inputs,
@@ -3844,7 +4079,13 @@ def _build_langgraph(
             if isinstance(stored, list):
                 references = stored
         if not references:
-            references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+            references = _search_scientific_references(
+                search_query,
+                mcp_client=use_mcp_client,
+                top_k=SCIENTIFIC_REFERENCE_TOP_K,
+                country_preference=REFERENCE_COUNTRY_PREFERENCE,
+                country_aliases=REFERENCE_COUNTRY_ALIASES,
+            )
             scientific_references = _update_scientific_references(
                 state,
                 step=REFERENCE_SEARCH_KEY,
@@ -4039,6 +4280,7 @@ def _build_langgraph(
                 "is_reference_flow_process": True,
                 "reference_flow_name": flow_name,
                 "name_parts": name_parts,
+                "geography": {},
                 "structure": {
                     "technology": state.get("technical_description") or "",
                     "inputs": [],
@@ -4082,7 +4324,13 @@ def _build_langgraph(
                 if isinstance(stored, list):
                     references = stored
             if not references:
-                references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+                references = _search_scientific_references(
+                    search_query,
+                    mcp_client=use_mcp_client,
+                    top_k=SCIENTIFIC_REFERENCE_TOP_K,
+                    country_preference=REFERENCE_COUNTRY_PREFERENCE,
+                    country_aliases=REFERENCE_COUNTRY_ALIASES,
+                )
                 scientific_references = _update_scientific_references(
                     {"scientific_references": scientific_references},
                     step="step2",
@@ -4132,6 +4380,12 @@ def _build_langgraph(
                     name = str(item.get("name") or "").strip()
                     description = str(item.get("description") or "").strip()
                     structure = item.get("structure") if isinstance(item.get("structure"), dict) else {}
+                    geo_raw = item.get("geography")
+                    geography: dict[str, Any] = {}
+                    if isinstance(geo_raw, dict):
+                        geography = geo_raw
+                    elif isinstance(geo_raw, str) and geo_raw.strip():
+                        geography = {"description_of_restrictions_en": geo_raw.strip()}
                     reference_flow_name = str(item.get("reference_flow_name") or item.get("referenceFlowName") or "").strip()
                     cleaned_processes.append(
                         {
@@ -4142,6 +4396,7 @@ def _build_langgraph(
                             "reference_flow_name": reference_flow_name,
                             "name_parts": name_parts,
                             "structure": structure,
+                            "geography": geography,
                         }
                     )
                 if not cleaned_processes:
@@ -4197,12 +4452,19 @@ def _build_langgraph(
             process_id = str(item.get("process_id") or item.get("processId") or "").strip()
             if not process_id:
                 continue
+            geo_raw = item.get("geography")
+            geography: dict[str, Any] = {}
+            if isinstance(geo_raw, dict):
+                geography = geo_raw
+            elif isinstance(geo_raw, str) and geo_raw.strip():
+                geography = {"description_of_restrictions_en": geo_raw.strip()}
             cleaned.append(
                 {
                     "process_id": process_id,
                     "name": str(item.get("name") or "").strip(),
                     "description": str(item.get("description") or "").strip(),
                     "is_reference_flow_process": bool(item.get("is_reference_flow_process")),
+                    "geography": geography,
                 }
             )
         if not cleaned:
@@ -4301,7 +4563,13 @@ def _build_langgraph(
                 if isinstance(stored, list):
                     references = stored
             if not references:
-                references = _search_scientific_references(search_query, mcp_client=use_mcp_client, top_k=SCIENTIFIC_REFERENCE_TOP_K)
+                references = _search_scientific_references(
+                    search_query,
+                    mcp_client=use_mcp_client,
+                    top_k=SCIENTIFIC_REFERENCE_TOP_K,
+                    country_preference=REFERENCE_COUNTRY_PREFERENCE,
+                    country_aliases=REFERENCE_COUNTRY_ALIASES,
+                )
                 scientific_references = _update_scientific_references(
                     {"scientific_references": scientific_references},
                     step="step3",
@@ -4563,7 +4831,13 @@ def _build_langgraph(
                     flow_summary=flow_summary,
                     operation=operation,
                 )
-                kb_refs = _search_scientific_references(query, mcp_client=use_mcp_client, top_k=INDUSTRY_AVERAGE_TOP_K)
+                kb_refs = _search_scientific_references(
+                    query,
+                    mcp_client=use_mcp_client,
+                    top_k=INDUSTRY_AVERAGE_TOP_K,
+                    country_preference=REFERENCE_COUNTRY_PREFERENCE,
+                    country_aliases=REFERENCE_COUNTRY_ALIASES,
+                )
                 references_text = _format_references_for_prompt(kb_refs) if kb_refs else ""
                 avg_amount, avg_unit, avg_evidence, _ = estimate_industry_average(
                     exchange=exchange,
@@ -4758,9 +5032,6 @@ def _build_langgraph(
                 if is_reference_flow_process or not process_reference_flow:
                     process_reference_flow = target_flow_name
 
-                proc_uuid = str(uuid4())
-                version = "01.01.000"
-
                 process_info_for_classifier = {
                     "dataSetInformation": {
                         "name": {
@@ -4771,6 +5042,46 @@ def _build_langgraph(
                         "common:generalComment": process_desc,
                     }
                 }
+
+                geo_plan = plan.get("geography") if isinstance(plan.get("geography"), dict) else {}
+                geo_candidates = [
+                    value.strip()
+                    for value in (
+                        geo_plan.get("location_code"),
+                        geo_plan.get("location"),
+                        geo_plan.get("@location"),
+                        geo_plan.get("code"),
+                        geo_plan.get("location_name"),
+                        geo_plan.get("location_name_en"),
+                        geo_plan.get("location_name_zh"),
+                    )
+                    if isinstance(value, str) and value.strip()
+                ]
+                location_code = _resolve_location_code(
+                    candidates=geo_candidates,
+                    mix_location=mix_location,
+                    llm=llm,
+                    process_info=process_info_for_classifier,
+                )
+                restriction_en = _first_nonempty(
+                    geo_plan.get("description_of_restrictions_en"),
+                    geo_plan.get("descriptionOfRestrictions"),
+                    geo_plan.get("description_of_restrictions"),
+                    geo_plan.get("description"),
+                )
+                restriction_zh = _first_nonempty(
+                    geo_plan.get("description_of_restrictions_zh"),
+                    geo_plan.get("descriptionOfRestrictionsZh"),
+                )
+                restriction_entries = _build_multilang_entries(
+                    restriction_en,
+                    translator=translator,
+                    zh_text=restriction_zh,
+                )
+
+                proc_uuid = str(uuid4())
+                version = "01.01.000"
+
                 classification_path: list[dict[str, Any]] = []
                 if llm is not None:
                     try:
@@ -4993,7 +5304,10 @@ def _build_langgraph(
                     functional_unit_or_other=_as_multilang_list(functional_unit_entries or functional_unit),
                 )
                 time_info = ProcessDataSetProcessInformationTime(common_reference_year=int(datetime.now(timezone.utc).strftime("%Y")))
-                location = ProcessInformationGeographyLocationOfOperationSupplyOrProduction(location="GLO")
+                location_kwargs: dict[str, Any] = {"location": location_code}
+                if restriction_entries:
+                    location_kwargs["description_of_restrictions"] = _as_multilang_list(restriction_entries)
+                location = ProcessInformationGeographyLocationOfOperationSupplyOrProduction(**location_kwargs)
                 geography = ProcessDataSetProcessInformationGeography(location_of_operation_supply_or_production=location)
                 process_info_kwargs = {
                     "data_set_information": data_set_information,
