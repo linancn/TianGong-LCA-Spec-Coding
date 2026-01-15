@@ -126,6 +126,9 @@ EXCHANGES_PROMPT = (
     "or waterborne pollutants (e.g., nitrate, phosphate, pesticides) when relevant.\n"
     "- For labor, split by activity if multiple (e.g., 'Labor, harvesting' and 'Labor, post-harvest handling').\n"
     "- Add flow_type for each exchange: product | elementary | waste | service.\n"
+    "- Add material_role for each exchange: raw_material | auxiliary | catalyst | energy | emission | product | waste | service | unknown.\n"
+    "- Use auxiliary/catalyst for inputs that are not embodied in the main product; set balance_exclude=true for those.\n"
+    "- Provide role_reason to justify the material_role choice when it is not obvious.\n"
     "- For emissions, include 'to air' / 'to water' / 'to soil' in exchangeName when applicable.\n"
     "- Provide unit for each exchange (e.g., kg, kWh, MJ, m3, unit). If unsure, use 'unit'.\n"
     "- Provide amount as a numeric string; use null when unknown (placeholders are filled later).\n"
@@ -152,6 +155,9 @@ EXCHANGES_PROMPT = (
     '          "amount": null,\n'
     '          "is_reference_flow": true|false,\n'
     '          "flow_type": "product|elementary|waste|service",\n'
+    '          "material_role": "raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown",\n'
+    '          "balance_exclude": true|false,\n'
+    '          "role_reason": "...",\n'
     '          "data_source": {"source_type": "literature|si|expert_judgement", "citations": ["DOI ..."]},\n'
     '          "evidence": ["..."]\n'
     "        }\n"
@@ -216,6 +222,28 @@ INDUSTRY_AVERAGE_PROMPT = (
     '  "amount": "0.0" | null,\n'
     '  "unit": "kg|MJ|kWh|m3|unit" | null,\n'
     '  "evidence": ["..."],\n'
+    '  "notes": "short rationale"\n'
+    "}\n"
+)
+
+DENSITY_ESTIMATE_PROMPT = (
+    "You are estimating density for unit conversion between mass and volume.\n"
+    "Use common-sense values grounded in the process context and technical description.\n"
+    "\n"
+    "Rules:\n"
+    "- Only estimate density for product/waste flows when mass<->volume conversion is required.\n"
+    "- If density cannot be inferred from the context, return null for density_value.\n"
+    "- Provide a single numeric density_value (no ranges).\n"
+    "- density_unit must be one of: kg/m3, g/cm3, kg/L, g/L, g/mL.\n"
+    "- assumptions must describe temperature/pressure/concentration/phase if relevant.\n"
+    "- source_type must be expert_judgement.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "density_value": "0.0" | null,\n'
+    '  "density_unit": "kg/m3|g/cm3|kg/L|g/L|g/mL" | null,\n'
+    '  "assumptions": "...",\n'
+    '  "source_type": "expert_judgement",\n'
     '  "notes": "short rationale"\n'
     "}\n"
 )

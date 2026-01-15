@@ -85,6 +85,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-llm", action="store_true", help="Run without an LLM (uses minimal deterministic fallbacks).")
     parser.add_argument("--no-translate-zh", action="store_true", help="Skip adding Chinese translations to multi-language fields.")
     parser.add_argument(
+        "--allow-density-conversion",
+        action="store_true",
+        help="Allow LLM-based density estimates for mass<->volume conversions (product/waste flows only).",
+    )
+    parser.add_argument(
         "--retain-runs",
         type=int,
         help="Manually clean process_from_flow run directories, keeping only the most recent N runs under artifacts/process_from_flow/.",
@@ -735,6 +740,11 @@ def main() -> None:
     translator = None
     if llm is not None and not args.no_translate_zh:
         translator = Translator(llm=llm)
+
+    if args.allow_density_conversion:
+        if initial_state is None:
+            initial_state = {}
+        initial_state["allow_density_conversion"] = True
 
     service = ProcessFromFlowService(llm=llm, translator=translator)
     stop_after = None if args.stop_after == "datasets" else args.stop_after

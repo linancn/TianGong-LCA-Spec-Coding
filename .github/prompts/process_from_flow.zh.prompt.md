@@ -11,7 +11,7 @@
 
 ## 分层架构与主干流程
 ### 分层职责
-- LangGraph 核心层：`ProcessFromFlowService` 负责“检索 → 路径 → 拆分 → 交换 → 匹配 → 数据集 → 占位符补全”的主干推理与结构化输出。
+- LangGraph 核心层：`ProcessFromFlowService` 负责“检索 → 路径 → 拆分 → 交换 → 匹配 → 单位对齐 → 密度换算（可选） → 数据集 → 占位符补全 → 质量/能量平衡校验”的主干推理与结构化输出。
 - Origin 编排层：`scripts/origin` 负责 SI 获取/解析、可用性/用途标注、运行与恢复、发布与清理。
 
 ### 主干流程（一步概览）
@@ -21,15 +21,18 @@
 - Step 3 generate exchanges：生成每个过程的输入/输出 exchange。
 - Step 3b enrich exchange amounts：从正文/SI 抽取或估算量值。
 - Step 4 match flows：flow 搜索 + 候选选择，回填 uuid/shortDescription。
+- Step 4b align exchange units：校验 flow unit group 兼容性；同量纲自动换算到 flow 参考单位并回写 amount/unit，跨量纲标记为待复核。
+- Step 4c density conversion（可选）：仅对 product/waste flow 且 mass↔volume 不匹配时，使用 LLM 依据技术描述/过程上下文进行密度估计并换算，保留原始值与假设，写入 dataTreatmentAndExtrapolationsPrinciples。
 - Step 1f build sources：生成 source 数据集与引用。
 - Step 5 build process datasets：输出最终 ILCD process 数据集。
 - Step 6 resolve placeholders：对占位符 exchange 进行二次检索与筛选，回填匹配结果并输出占位符报告。
+- Step 7 balance review：对每个 process 的 mass/energy 进行平衡校验，生成 review 报告（不拦截流程）。
 
 ## LangGraph 核心工作流（ProcessFromFlowService）
 ### 入口与依赖
 - 入口：`ProcessFromFlowService.run(flow_path, operation="produce", initial_state=None, stop_after=None)`。
 - 依赖：LLM（路线/拆分/交换/候选选择）、flow 搜索 `search_flows`、候选选择器（推荐 LLM 版本），可选 Translator/MCP 客户端。
-- `stop_after`：`references`/`tech`/`processes`/`exchanges`/`matches`/`sources`（CLI 额外支持 `datasets`；占位符补全在 datasets 之后执行，无单独 stop_after）。
+- `stop_after`：`references`/`tech`/`processes`/`exchanges`/`matches`/`sources`（CLI 额外支持 `datasets`；单位对齐/密度换算/占位符补全与 balance review 在 datasets 之后执行，无单独 stop_after）。
 
 ### 节点细节（由粗到细）
 0) load_flow
@@ -54,6 +57,7 @@
 - `EXCHANGES_PROMPT` 生成交换清单，`is_reference_flow` 与 `reference_flow_name` 对齐；生产用 Output，处置/处理用 Input。
 - Exchange 名称必须可搜索且不复合；补全 unit/amount（缺失用占位符）。
 - 对排放类自动补充介质标签（`to air`/`to water`/`to soil`），并标注 `flow_type` 与 `search_hints`。
+- 为每条 exchange 标注 `material_role`（`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`），对不进入产品的辅料/催化剂输入设置 `balance_exclude=true`。
 - 每条 exchange 写入 `data_source`/`evidence`，推断项标记 `source_type=expert_judgement`。
 - 可用文献时会额外检索交换证据，写入 `scientific_references.step3`。
 
@@ -66,6 +70,16 @@
 - 对每个 exchange 执行 flow 搜索（候选最多 10 条），LLM 选择器挑选，禁止相似度兜底。
 - 写入 `flow_search.query/candidates/selected_uuid/selected_reason/selector/unmatched`，并回填 uuid/shortDescription。
 - 仅补充匹配信息，不覆盖 `data_source`/`evidence`。
+
+4b) align_exchange_units
+- 对已匹配的 exchange 进行 unit group 兼容性校验（读取 flow 单位组），同量纲自动换算到 flow 参考单位并回写 amount/unit。
+- 跨量纲（如 kg vs m3）标记 `flow_search.unit_check.status=mismatch` 供人工复核；未知单位则标记 `review`。
+
+4c) density_conversion（可选）
+- 仅当 `allow_density_conversion=true` 或 CLI 传入 `--allow-density-conversion` 时启用。
+- 触发条件：unit_check 为 mass↔volume mismatch，且 flow_type 为 product/waste。
+- LLM 输出 `density_value`/`density_unit`/`assumptions`（`source_type=expert_judgement`），换算后标记 `unit_check.status=converted_by_density` 并记录 `density_used`，保留原始值以便回溯。
+- 生成的密度假设与换算说明写入 process 的 `dataTreatmentAndExtrapolationsPrinciples`。
 
 1f) build_sources
 - 基于检索结果生成 ILCD source 数据集（`tidas_sdk.create_source`），写入 `source_datasets` 与 `source_references`。
@@ -85,11 +99,17 @@
 - 通过候选选择器（LLM/规则）二次选择；写回 `flow_search.secondary_query/resolution_*`，并更新 process_datasets 中占位符引用。
 - 若仍未命中则保留占位符，并记录 `resolution_status/reason` 供人工复核。
 
+7) balance_review（质量/能量平衡校验，后处理）
+- 基于 `matched_process_exchanges`（必要时回退 `process_exchanges`）汇总 mass/energy 的输入/输出，优先用 flow unit group 换算单位，失败时回退到内置单位映射。
+- 对 `material_role=auxiliary|catalyst` 或 `balance_exclude=true` 的 exchange 不计入平衡统计。
+- 输出 `balance_review`/`balance_review_summary`，标记 `ok|check|insufficient` 并记录 warning；不改写 exchange 数值。
+- 同时记录 `unit_mismatches` 与 `density_estimates` 以便人工复核。
+
 ## Origin 编排工作流（scripts/origin）
 ### 目标与顺序
 - 目标：在 Step 1-3 前写回 SI/用途标注，保证提示词能读取 SI 证据。
 - 编排顺序：
-  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 1f → Step 5 → Step 6
+  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 4b → Step 4c → Step 1f → Step 5 → Step 6
 
 ### 核心脚本与工具
 - `process_from_flow_workflow.py`：主编排脚本，负责前置 1b-usability/1d/1e 并 resume 主流程。
@@ -105,6 +125,7 @@
 - `process_from_flow_workflow.py` 不支持 `--no-llm`（Step 1b/1e 需要 LLM）。
 - `--min-si-hint` 控制 SI 下载阈值（none|possible|likely），可配 `--si-max-links`/`--si-timeout`。
 - `process_from_flow_langgraph.py` 的 `--stop-after datasets` 等价完整跑完（含占位符补全）后写出 datasets；其他值会提前停并保存 state。
+- `--allow-density-conversion` 允许 LLM 基于技术描述估计密度并进行 mass↔volume 换算（仅 product/waste flow）。
 - 占位符补全默认仅执行一次；需重跑时手动清空 `placeholder_resolution_applied`/`placeholder_resolutions` 后再 `--resume`。
 
 ## 状态字段（state）
@@ -113,7 +134,9 @@
 - 交换与匹配：`process_exchanges`、`exchange_value_candidates`、`exchange_values_applied`、`matched_process_exchanges`。
 - 产出：`process_datasets`、`source_datasets`、`source_references`。
 - 评估与标记：`coverage_metrics`、`coverage_history`、`stop_rule_decision`、`step_markers`、`stop_after`。
+- 单位对齐/密度换算：`unit_alignment_applied`、`unit_alignment_summary`、`allow_density_conversion`、`density_conversion_applied`、`density_conversion_summary`。
 - 占位符补全：`placeholder_report`、`placeholder_resolutions`、`placeholder_resolution_applied`。
+- 平衡校验：`balance_review`、`balance_review_summary`。
 
 ## SI 注入点（实际行为）
 - Step 1：`TECH_DESCRIPTION_PROMPT` 读取 `si_snippets`。

@@ -53,6 +53,7 @@
 - Use `EXCHANGES_PROMPT` to generate exchanges; `is_reference_flow` aligns with `reference_flow_name` (Output for production, Input for treatment).
 - Exchange names must be searchable and not composite; fill unit/amount (placeholders if unknown).
 - Emissions add media suffix (`to air`/`to water`/`to soil`), plus `flow_type` and `search_hints`.
+- Assign `material_role` for each exchange (`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`); set `balance_exclude=true` for auxiliary/catalyst inputs not embodied in the product.
 - Every exchange records `data_source`/`evidence`; inferred items must mark `source_type=expert_judgement`.
 - If references are usable, extra exchange evidence can be retrieved and stored in `scientific_references.step3`.
 

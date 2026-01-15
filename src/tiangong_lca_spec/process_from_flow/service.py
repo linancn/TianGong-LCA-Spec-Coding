@@ -98,6 +98,7 @@ from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 from tiangong_lca_spec.utils.translate import Translator
 
 from .prompts import (
+    DENSITY_ESTIMATE_PROMPT,
     EXCHANGE_VALUE_PROMPT,
     EXCHANGES_PROMPT,
     INDUSTRY_AVERAGE_PROMPT,
@@ -1865,6 +1866,13 @@ _UNIT_DIMENSIONS: dict[str, tuple[str, float]] = {
     "j": ("energy", 1.0e-6),
     "kwh": ("energy", 3.6),
     "mwh": ("energy", 3600.0),
+    "m3": ("volume", 1.0),
+    "l": ("volume", 0.001),
+    "liter": ("volume", 0.001),
+    "litre": ("volume", 0.001),
+    "dm3": ("volume", 0.001),
+    "cm3": ("volume", 1.0e-6),
+    "ml": ("volume", 1.0e-6),
 }
 
 
@@ -2034,6 +2042,67 @@ def _unit_group_dimension(unit_group: UnitGroupInfo | None) -> str | None:
     return None
 
 
+def _unit_group_category(unit_group: UnitGroupInfo | None) -> str | None:
+    if not unit_group or not unit_group.name:
+        return None
+    name = unit_group.name.strip().lower()
+    if name == "units of mass":
+        return "mass"
+    if name == "units of energy":
+        return "energy"
+    if name == "units of volume":
+        return "volume"
+    if name == "units of items":
+        return "items"
+    if name == "units of area":
+        return "area"
+    if name == "units of length":
+        return "length"
+    if name == "units of mole":
+        return "mole"
+    return None
+
+
+def _unit_dimension_from_unit(unit: str | None) -> str | None:
+    unit_key = _normalize_unit_token(unit)
+    if not unit_key:
+        return None
+    entry = _UNIT_DIMENSIONS.get(unit_key)
+    if not entry:
+        return None
+    return entry[0]
+
+
+def _normalize_density_unit(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value).strip().lower()
+    text = text.replace(" ", "")
+    text = text.replace("^", "")
+    text = text.replace("³", "3")
+    text = text.replace("liter", "l")
+    text = text.replace("litre", "l")
+    return text
+
+
+def _density_to_kg_per_m3(value: float, unit: str) -> float | None:
+    unit_key = _normalize_density_unit(unit)
+    if not unit_key:
+        return None
+    factors = {
+        "kg/m3": 1.0,
+        "g/cm3": 1000.0,
+        "g/ml": 1000.0,
+        "kg/l": 1000.0,
+        "g/l": 1.0,
+        "t/m3": 1000.0,
+    }
+    factor = factors.get(unit_key)
+    if factor is None:
+        return None
+    return value * factor
+
+
 def _format_balance_line(label: str, state: dict[str, Any]) -> str:
     if not state.get("count"):
         return f"{label} balance: insufficient data"
@@ -2059,6 +2128,182 @@ def _build_balance_note(balance_state: dict[str, dict[str, Any]]) -> str | None:
     if not lines:
         return None
     return "Balance check: " + "; ".join(lines)
+
+
+def _collect_density_notes(exchanges: list[dict[str, Any]]) -> list[str]:
+    notes: list[str] = []
+    for exchange in exchanges:
+        if not isinstance(exchange, dict):
+            continue
+        density_used = exchange.get("density_used")
+        if not isinstance(density_used, dict):
+            continue
+        name = str(exchange.get("exchangeName") or "").strip() or "unknown_exchange"
+        density_value = density_used.get("density_value")
+        density_unit = density_used.get("density_unit")
+        assumptions = str(density_used.get("assumptions") or "").strip() or None
+        source_type = str(density_used.get("source_type") or "").strip() or None
+        original_amount = density_used.get("original_amount")
+        original_unit = density_used.get("original_unit")
+        converted_amount = density_used.get("converted_amount")
+        converted_unit = density_used.get("converted_unit")
+        bits: list[str] = []
+        if density_value and density_unit:
+            bits.append(f"density={density_value} {density_unit}")
+        if assumptions:
+            bits.append(f"assumptions: {assumptions}")
+        if source_type:
+            bits.append(f"source: {source_type}")
+        if original_amount and original_unit and converted_amount and converted_unit:
+            bits.append(f"conversion: {original_amount} {original_unit} -> {converted_amount} {converted_unit}")
+        if not bits:
+            continue
+        notes.append(f"Density estimate used for exchange '{name}': " + "; ".join(bits))
+    return notes
+
+
+def _balance_state_summary(state: dict[str, Any]) -> dict[str, Any]:
+    inputs = float(state.get("inputs") or 0.0)
+    outputs = float(state.get("outputs") or 0.0)
+    unit = str(state.get("unit") or "").strip() or None
+    count = int(state.get("count") or 0)
+    ratio = None
+    status = "insufficient"
+    if count and inputs > 0 and outputs > 0:
+        ratio = outputs / inputs
+        status = "ok" if 0.8 <= ratio <= 1.2 else "check"
+    return {
+        "inputs": inputs,
+        "outputs": outputs,
+        "unit": unit,
+        "count": count,
+        "ratio": round(ratio, 3) if ratio is not None else None,
+        "status": status,
+    }
+
+
+def _merge_balance_status(*statuses: str | None) -> str:
+    if any(status == "check" for status in statuses):
+        return "check"
+    if any(status == "ok" for status in statuses):
+        return "ok"
+    return "insufficient"
+
+
+def _default_balance_unit(dimension: str) -> str:
+    return "kg" if dimension == "mass" else "MJ"
+
+
+def _convert_exchange_amount_for_balance(
+    amount: float,
+    unit: str,
+    reference_info: FlowReferenceInfo | None,
+) -> tuple[str | None, float | None, str | None]:
+    unit_text = str(unit or "").strip()
+    if not unit_text:
+        return None, None, None
+    if reference_info and reference_info.unit_group:
+        unit_group = reference_info.unit_group
+        dimension = _unit_group_dimension(unit_group)
+        if dimension:
+            converted = _convert_amount_with_unit_group(amount, unit_text, unit_group)
+            unit_label = unit_group.reference_unit
+            if converted is None and unit_label:
+                converted = _convert_amount_simple(amount, unit_text, unit_label)
+            if converted is not None:
+                return dimension, converted, unit_label or _default_balance_unit(dimension)
+    unit_key = _normalize_unit_token(unit_text)
+    entry = _UNIT_DIMENSIONS.get(unit_key)
+    if entry:
+        dimension = entry[0]
+        if dimension not in {"mass", "energy"}:
+            return None, None, None
+        target_unit = _default_balance_unit(dimension)
+        converted = _convert_amount_simple(amount, unit_text, target_unit)
+        if converted is not None:
+            return dimension, converted, target_unit
+    return None, None, None
+
+
+def _assess_unit_compatibility(
+    *,
+    unit: str | None,
+    amount: float | None,
+    reference_info: FlowReferenceInfo | None,
+) -> tuple[dict[str, Any], float | None, str | None]:
+    unit_text = str(unit or "").strip()
+    if not unit_text:
+        return (
+            {"status": "missing_unit", "reason": "exchange_unit_missing"},
+            None,
+            None,
+        )
+    if not reference_info or not reference_info.unit_group:
+        return (
+            {
+                "status": "review",
+                "reason": "flow_unit_group_missing",
+                "exchange_unit": unit_text,
+            },
+            None,
+            None,
+        )
+
+    unit_group = reference_info.unit_group
+    reference_unit = unit_group.reference_unit
+    unit_key = _normalize_unit_token(unit_text)
+    reference_key = _normalize_unit_token(reference_unit)
+    exchange_dimension = _unit_dimension_from_unit(unit_text)
+    flow_dimension = _unit_group_category(unit_group)
+    unit_check: dict[str, Any] = {
+        "exchange_unit": unit_text,
+        "flow_reference_unit": reference_unit or None,
+        "flow_unit_group": unit_group.name,
+        "exchange_dimension": exchange_dimension,
+        "flow_dimension": flow_dimension,
+    }
+
+    if unit_key in unit_group.units:
+        if amount is None:
+            unit_check["status"] = "ok"
+            return unit_check, None, reference_unit
+        converted = _convert_amount_with_unit_group(amount, unit_text, unit_group)
+        if converted is None:
+            unit_check["status"] = "review"
+            unit_check["reason"] = "conversion_failed"
+            return unit_check, None, reference_unit
+        if reference_key and unit_key != reference_key:
+            unit_check["status"] = "converted"
+        else:
+            unit_check["status"] = "ok"
+        return unit_check, converted, reference_unit
+
+    if flow_dimension and exchange_dimension and flow_dimension != exchange_dimension:
+        unit_check["status"] = "mismatch"
+        unit_check["reason"] = f"dimension_mismatch: exchange={exchange_dimension}, flow={flow_dimension}"
+        return unit_check, None, reference_unit
+
+    if (
+        amount is not None
+        and flow_dimension
+        and exchange_dimension
+        and flow_dimension == exchange_dimension
+        and reference_unit
+    ):
+        converted = _convert_amount_simple(amount, unit_text, reference_unit)
+        if converted is not None:
+            unit_check["status"] = "converted"
+            unit_check["reason"] = "converted_by_dimension"
+            return unit_check, converted, reference_unit
+
+    unit_check["status"] = "review"
+    if exchange_dimension is None:
+        unit_check["reason"] = "exchange_unit_dimension_unknown"
+    elif flow_dimension is None:
+        unit_check["reason"] = "flow_unit_group_dimension_unknown"
+    else:
+        unit_check["reason"] = "unit_not_in_group"
+    return unit_check, None, reference_unit
 
 
 def _normalize_exchange_value_candidates(raw: Any) -> list[dict[str, Any]]:
@@ -2495,6 +2740,17 @@ def _parse_industry_average_response(data: dict[str, Any]) -> tuple[str | None, 
     evidence = _clean_evidence_list(data.get("evidence"))
     notes = str(data.get("notes") or "").strip() or None
     return amount, unit, evidence, notes
+
+
+def _parse_density_estimate_response(data: dict[str, Any]) -> tuple[float | None, str | None, str | None, str, str | None]:
+    density_value = _parse_amount_value(data.get("density_value") or data.get("densityValue"))
+    density_unit = str(data.get("density_unit") or data.get("densityUnit") or "").strip() or None
+    assumptions = str(data.get("assumptions") or "").strip() or None
+    notes = str(data.get("notes") or "").strip() or None
+    source_type = _normalize_source_type(data.get("source_type") or data.get("sourceType")) or "expert_judgement"
+    if density_value is None or density_value <= 0 or not density_unit:
+        return None, None, assumptions, source_type, notes
+    return density_value, density_unit, assumptions, source_type, notes
 
 
 def _merge_industry_average_block(
@@ -3099,6 +3355,32 @@ _EMISSION_KEYWORDS = (
 _WATER_KEYWORDS = ("water", "wastewater", "runoff", "leaching", "leachate", "effluent", "drainage")
 _SOIL_KEYWORDS = ("soil", "land", "ground", "field", "sediment")
 _ENERGY_KEYWORDS = ("electricity", "diesel", "gasoline", "natural gas", "steam", "heat", "fuel", "coal")
+_MATERIAL_ROLES = {
+    "raw_material",
+    "auxiliary",
+    "catalyst",
+    "energy",
+    "emission",
+    "product",
+    "waste",
+    "service",
+    "unknown",
+}
+_MATERIAL_ROLE_ALIASES = {
+    "raw": "raw_material",
+    "raw material": "raw_material",
+    "feedstock": "raw_material",
+    "auxiliary material": "auxiliary",
+    "additive": "auxiliary",
+    "catalyst": "catalyst",
+    "energy": "energy",
+    "emission": "emission",
+    "product": "product",
+    "waste": "waste",
+    "service": "service",
+    "unknown": "unknown",
+}
+_BALANCE_EXCLUDE_ROLES = {"auxiliary", "catalyst"}
 
 
 class ProcessFromFlowState(TypedDict, total=False):
@@ -3107,6 +3389,7 @@ class ProcessFromFlowState(TypedDict, total=False):
     flow_summary: dict[str, Any]
     operation: str
     stop_after: str
+    allow_density_conversion: bool
     technical_description: str
     assumptions: list[str]
     scope: str
@@ -3124,6 +3407,12 @@ class ProcessFromFlowState(TypedDict, total=False):
     placeholder_report: list[dict[str, Any]]
     placeholder_resolutions: list[dict[str, Any]]
     placeholder_resolution_applied: bool
+    unit_alignment_applied: bool
+    unit_alignment_summary: dict[str, Any]
+    density_conversion_applied: bool
+    density_conversion_summary: dict[str, Any]
+    balance_review: list[dict[str, Any]]
+    balance_review_summary: dict[str, Any]
     step_markers: dict[str, bool]
     scientific_references: dict[str, Any]
     coverage_metrics: dict[str, Any]
@@ -3581,6 +3870,34 @@ def _normalize_flow_type(value: Any) -> str | None:
     }.get(text, text)
     if normalized in {"product", "elementary", "waste", "service"}:
         return normalized
+    return None
+
+
+def _normalize_material_role(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    normalized = _MATERIAL_ROLE_ALIASES.get(text, text)
+    if normalized in _MATERIAL_ROLES:
+        return normalized
+    return None
+
+
+def _normalize_balance_exclude(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "yes", "y", "1"}:
+            return True
+        if text in {"false", "no", "n", "0"}:
+            return False
     return None
 
 
@@ -4674,6 +4991,18 @@ def _build_langgraph(
                     "exchangeDirection": exchange_direction,
                     "flow_type": flow_type,
                 }
+                material_role = _normalize_material_role(exchange.get("material_role") or exchange.get("materialRole"))
+                if material_role:
+                    cleaned_exchange["material_role"] = material_role
+                role_reason = str(exchange.get("role_reason") or exchange.get("roleReason") or "").strip()
+                if role_reason:
+                    cleaned_exchange["role_reason"] = role_reason
+                balance_exclude = _normalize_balance_exclude(exchange.get("balance_exclude") or exchange.get("balanceExclude"))
+                if balance_exclude is not None:
+                    cleaned_exchange["balance_exclude"] = balance_exclude
+                cleaned_exchange.pop("materialRole", None)
+                cleaned_exchange.pop("roleReason", None)
+                cleaned_exchange.pop("balanceExclude", None)
                 cleaned_exchange = _apply_exchange_evidence_defaults(
                     cleaned_exchange,
                     use_references=use_references,
@@ -4907,6 +5236,14 @@ def _build_langgraph(
             exchanges = proc.get("exchanges") or []
             if not process_id or not isinstance(exchanges, list):
                 continue
+            reference_flow_name = None
+            for exchange in exchanges:
+                if not isinstance(exchange, dict):
+                    continue
+                if exchange.get("is_reference_flow"):
+                    reference_flow_name = str(exchange.get("exchangeName") or "").strip() or None
+                    if reference_flow_name:
+                        break
             matched_exchanges: list[dict[str, Any]] = []
             for exchange in exchanges:
                 if not isinstance(exchange, dict):
@@ -4925,7 +5262,11 @@ def _build_langgraph(
                 selector_exchange = {
                     "exchangeName": query.exchange_name,
                     "generalComment": comment,
+                    "exchangeDirection": exchange.get("exchangeDirection"),
+                    "is_reference_flow": exchange.get("is_reference_flow"),
+                    "reference_flow_name": reference_flow_name,
                     "flow_type": exchange.get("flow_type"),
+                    "material_role": exchange.get("material_role"),
                     "search_hints": exchange.get("search_hints") or [],
                 }
                 decision = selector.select(query, selector_exchange, candidates)
@@ -4965,6 +5306,391 @@ def _build_langgraph(
                 )
             matched.append({"process_id": process_id, "exchanges": matched_exchanges})
         return {"matched_process_exchanges": matched}
+
+    def align_exchange_units(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if state.get("unit_alignment_applied"):
+            return {}
+        matched_process_exchanges = state.get("matched_process_exchanges")
+        summary = {
+            "exchange_checked": 0,
+            "exchange_converted": 0,
+            "exchange_mismatch": 0,
+            "exchange_review": 0,
+            "exchange_missing_unit": 0,
+        }
+        if not isinstance(matched_process_exchanges, list):
+            return {
+                "unit_alignment_applied": True,
+                "unit_alignment_summary": summary,
+                "step_markers": _update_step_markers(state, "unit_alignment"),
+            }
+
+        updated_matches = copy.deepcopy(matched_process_exchanges)
+        flow_cache: dict[str, FlowReferenceInfo | None] = {}
+        crud_client: DatabaseCrudClient | None = None
+        should_close_crud = False
+        needs_crud = False
+        for proc in updated_matches:
+            exchanges = proc.get("exchanges") if isinstance(proc, dict) else None
+            if not isinstance(exchanges, list):
+                continue
+            for exchange in exchanges:
+                if not isinstance(exchange, dict):
+                    continue
+                flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                if flow_search.get("selected_uuid"):
+                    needs_crud = True
+                    break
+            if needs_crud:
+                break
+        if needs_crud:
+            try:
+                crud_client = DatabaseCrudClient(settings)
+                should_close_crud = True
+            except Exception as exc:  # pylint: disable=broad-except
+                LOGGER.warning("process_from_flow.unit_alignment_crud_init_failed", error=str(exc))
+                crud_client = None
+
+        try:
+            for proc in updated_matches:
+                exchanges = proc.get("exchanges") if isinstance(proc, dict) else None
+                if not isinstance(exchanges, list):
+                    continue
+                for exchange in exchanges:
+                    if not isinstance(exchange, dict):
+                        continue
+                    flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                    selected_uuid = str(flow_search.get("selected_uuid") or "").strip() or None
+                    if not selected_uuid:
+                        continue
+                    unit_text = str(exchange.get("unit") or "").strip()
+                    amount_value = _parse_amount_value(exchange.get("amount"))
+                    reference_info = None
+                    if selected_uuid in flow_cache:
+                        reference_info = flow_cache[selected_uuid]
+                    else:
+                        flow_dataset = None
+                        if crud_client:
+                            try:
+                                flow_dataset = crud_client.select_flow(selected_uuid)
+                            except Exception as exc:  # pylint: disable=broad-except
+                                LOGGER.warning(
+                                    "process_from_flow.unit_alignment_flow_select_failed",
+                                    flow_id=selected_uuid,
+                                    error=str(exc),
+                                )
+                        reference_info = _flow_reference_info_from_dataset(flow_dataset) if flow_dataset else None
+                        flow_cache[selected_uuid] = reference_info
+
+                    unit_check, converted_amount, reference_unit = _assess_unit_compatibility(
+                        unit=unit_text,
+                        amount=amount_value,
+                        reference_info=reference_info,
+                    )
+                    unit_check["original_unit"] = unit_text or None
+                    original_amount = exchange.get("amount")
+                    unit_check["original_amount"] = str(original_amount).strip() if original_amount is not None else None
+                    unit_check["review_required"] = unit_check.get("status") in {"mismatch", "review", "missing_unit"}
+
+                    summary["exchange_checked"] += 1
+                    status = unit_check.get("status")
+                    if status == "converted" and converted_amount is not None and reference_unit:
+                        exchange["amount"] = _format_amount_value(converted_amount)
+                        exchange["unit"] = reference_unit
+                        unit_check["converted_amount"] = exchange["amount"]
+                        unit_check["converted_unit"] = reference_unit
+                        summary["exchange_converted"] += 1
+                    elif status == "mismatch":
+                        summary["exchange_mismatch"] += 1
+                        LOGGER.warning(
+                            "process_from_flow.unit_alignment_mismatch",
+                            exchange_name=str(exchange.get("exchangeName") or "").strip(),
+                            exchange_unit=unit_check.get("exchange_unit"),
+                            flow_unit_group=unit_check.get("flow_unit_group"),
+                            reason=unit_check.get("reason"),
+                        )
+                    elif status == "review":
+                        summary["exchange_review"] += 1
+                    elif status == "missing_unit":
+                        summary["exchange_missing_unit"] += 1
+
+                    flow_search["unit_check"] = unit_check
+                    exchange["flow_search"] = flow_search
+        finally:
+            if should_close_crud and crud_client:
+                crud_client.close()
+
+        LOGGER.info("process_from_flow.unit_alignment_completed", **summary)
+        return {
+            "matched_process_exchanges": updated_matches,
+            "unit_alignment_applied": True,
+            "unit_alignment_summary": summary,
+            "step_markers": _update_step_markers(state, "unit_alignment"),
+        }
+
+    def density_conversion(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if state.get("density_conversion_applied"):
+            return {}
+        summary = {
+            "exchange_considered": 0,
+            "exchange_converted": 0,
+            "exchange_no_density": 0,
+            "exchange_failed": 0,
+            "exchange_skipped": 0,
+        }
+        if not state.get("allow_density_conversion"):
+            summary["exchange_skipped"] = 0
+            summary["skipped_reason"] = "disabled"
+            return {
+                "density_conversion_applied": True,
+                "density_conversion_summary": summary,
+                "step_markers": _update_step_markers(state, "density_conversion"),
+            }
+        if llm is None:
+            summary["exchange_skipped"] = 0
+            summary["skipped_reason"] = "llm_unavailable"
+            return {
+                "density_conversion_applied": True,
+                "density_conversion_summary": summary,
+                "step_markers": _update_step_markers(state, "density_conversion"),
+            }
+        matched_process_exchanges = state.get("matched_process_exchanges")
+        if not isinstance(matched_process_exchanges, list):
+            return {
+                "density_conversion_applied": True,
+                "density_conversion_summary": summary,
+                "step_markers": _update_step_markers(state, "density_conversion"),
+            }
+
+        updated_matches = copy.deepcopy(matched_process_exchanges)
+        flow_summary = state.get("flow_summary") or {}
+        technical_description = str(state.get("technical_description") or "").strip()
+        assumptions = [str(item).strip() for item in (state.get("assumptions") or []) if str(item).strip()]
+        reference_direction = _reference_direction(state.get("operation"))
+        process_plans = {
+            str(item.get("process_id") or item.get("processId") or ""): item
+            for item in (state.get("processes") or [])
+            if isinstance(item, dict)
+        }
+        flow_cache: dict[str, FlowReferenceInfo | None] = {}
+        crud_client: DatabaseCrudClient | None = None
+        should_close_crud = False
+        needs_crud = False
+        for proc in updated_matches:
+            exchanges = proc.get("exchanges") if isinstance(proc, dict) else None
+            if not isinstance(exchanges, list):
+                continue
+            for exchange in exchanges:
+                if not isinstance(exchange, dict):
+                    continue
+                flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                if flow_search.get("selected_uuid"):
+                    needs_crud = True
+                    break
+            if needs_crud:
+                break
+        if needs_crud:
+            try:
+                crud_client = DatabaseCrudClient(settings)
+                should_close_crud = True
+            except Exception as exc:  # pylint: disable=broad-except
+                LOGGER.warning("process_from_flow.density_conversion_crud_init_failed", error=str(exc))
+                crud_client = None
+
+        try:
+            for proc in updated_matches:
+                if not isinstance(proc, dict):
+                    continue
+                process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+                process_plan = process_plans.get(process_id) or {}
+                exchanges = proc.get("exchanges") if isinstance(proc.get("exchanges"), list) else []
+                for exchange in exchanges:
+                    if not isinstance(exchange, dict):
+                        continue
+                    flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                    selected_uuid = str(flow_search.get("selected_uuid") or "").strip() or None
+                    if not selected_uuid:
+                        continue
+                    unit_check = flow_search.get("unit_check") if isinstance(flow_search.get("unit_check"), dict) else None
+                    amount_value = _parse_amount_value(exchange.get("amount"))
+                    unit_text = str(exchange.get("unit") or "").strip()
+                    if unit_check is None:
+                        reference_info = flow_cache.get(selected_uuid)
+                        if reference_info is None:
+                            flow_dataset = None
+                            if crud_client:
+                                try:
+                                    flow_dataset = crud_client.select_flow(selected_uuid)
+                                except Exception as exc:  # pylint: disable=broad-except
+                                    LOGGER.warning(
+                                        "process_from_flow.density_conversion_flow_select_failed",
+                                        flow_id=selected_uuid,
+                                        error=str(exc),
+                                    )
+                            reference_info = _flow_reference_info_from_dataset(flow_dataset) if flow_dataset else None
+                            flow_cache[selected_uuid] = reference_info
+                        unit_check, _, _ = _assess_unit_compatibility(
+                            unit=unit_text,
+                            amount=amount_value,
+                            reference_info=reference_info,
+                        )
+                        unit_check["original_unit"] = unit_text or None
+                        original_amount = exchange.get("amount")
+                        unit_check["original_amount"] = str(original_amount).strip() if original_amount is not None else None
+                    if unit_check.get("status") != "mismatch":
+                        continue
+                    exchange_dimension = unit_check.get("exchange_dimension")
+                    flow_dimension = unit_check.get("flow_dimension")
+                    if {exchange_dimension, flow_dimension} != {"mass", "volume"}:
+                        continue
+                    direction = _exchange_direction_for_dedupe(exchange, reference_direction=reference_direction)
+                    flow_type = _exchange_flow_type_for_dedupe(exchange, direction=direction)
+                    if flow_type not in {"product", "waste"}:
+                        continue
+                    if amount_value is None or not unit_text:
+                        summary["exchange_skipped"] += 1
+                        continue
+
+                    reference_info = flow_cache.get(selected_uuid)
+                    if reference_info is None:
+                        flow_dataset = None
+                        if crud_client:
+                            try:
+                                flow_dataset = crud_client.select_flow(selected_uuid)
+                            except Exception as exc:  # pylint: disable=broad-except
+                                LOGGER.warning(
+                                    "process_from_flow.density_conversion_flow_select_failed",
+                                    flow_id=selected_uuid,
+                                    error=str(exc),
+                                )
+                        reference_info = _flow_reference_info_from_dataset(flow_dataset) if flow_dataset else None
+                        flow_cache[selected_uuid] = reference_info
+                    unit_group = reference_info.unit_group if reference_info else None
+                    flow_reference_unit = unit_check.get("flow_reference_unit") or (unit_group.reference_unit if unit_group else None)
+                    if not flow_reference_unit:
+                        summary["exchange_failed"] += 1
+                        continue
+
+                    context_exchange = {
+                        "exchangeName": exchange.get("exchangeName"),
+                        "generalComment": exchange.get("generalComment"),
+                        "unit": unit_text,
+                        "amount": exchange.get("amount"),
+                        "exchangeDirection": exchange.get("exchangeDirection"),
+                        "flow_type": flow_type,
+                    }
+                    payload = {
+                        "prompt": DENSITY_ESTIMATE_PROMPT,
+                        "context": {
+                            "flow": flow_summary,
+                            "process": process_plan,
+                            "exchange": context_exchange,
+                            "technical_description": technical_description,
+                            "assumptions": assumptions,
+                            "unit_mismatch": unit_check,
+                        },
+                        "response_format": {"type": "json_object"},
+                    }
+                    summary["exchange_considered"] += 1
+                    try:
+                        raw = llm.invoke(payload)
+                        data = _ensure_dict(raw)
+                    except Exception as exc:  # pylint: disable=broad-except
+                        summary["exchange_failed"] += 1
+                        LOGGER.warning(
+                            "process_from_flow.density_conversion_failed",
+                            exchange_name=str(exchange.get("exchangeName") or "").strip(),
+                            error=str(exc),
+                        )
+                        continue
+                    density_value, density_unit, density_assumptions, source_type, notes = _parse_density_estimate_response(data)
+                    if density_value is None or not density_unit:
+                        summary["exchange_no_density"] += 1
+                        continue
+                    density_kg_per_m3 = _density_to_kg_per_m3(density_value, density_unit)
+                    if density_kg_per_m3 is None or density_kg_per_m3 <= 0:
+                        summary["exchange_failed"] += 1
+                        continue
+
+                    converted_amount = None
+                    converted_unit = flow_reference_unit
+                    conversion_direction = "volume_to_mass" if exchange_dimension == "volume" else "mass_to_volume"
+                    if exchange_dimension == "volume" and flow_dimension == "mass":
+                        volume_m3 = _convert_amount_simple(amount_value, unit_text, "m3")
+                        if volume_m3 is None:
+                            summary["exchange_failed"] += 1
+                            continue
+                        mass_kg = volume_m3 * density_kg_per_m3
+                        if unit_group:
+                            converted_amount = _convert_amount_with_unit_group(mass_kg, "kg", unit_group)
+                        if converted_amount is None:
+                            converted_amount = _convert_amount_simple(mass_kg, "kg", flow_reference_unit)
+                    elif exchange_dimension == "mass" and flow_dimension == "volume":
+                        mass_kg = _convert_amount_simple(amount_value, unit_text, "kg")
+                        if mass_kg is None:
+                            summary["exchange_failed"] += 1
+                            continue
+                        volume_m3 = mass_kg / density_kg_per_m3
+                        if unit_group:
+                            converted_amount = _convert_amount_with_unit_group(volume_m3, "m3", unit_group)
+                        if converted_amount is None:
+                            converted_amount = _convert_amount_simple(volume_m3, "m3", flow_reference_unit)
+
+                    if converted_amount is None:
+                        summary["exchange_failed"] += 1
+                        continue
+
+                    converted_text = _format_amount_value(converted_amount)
+                    density_value_text = _format_amount_value(density_value)
+                    density_kg_text = _format_amount_value(density_kg_per_m3)
+                    original_amount_text = str(exchange.get("amount") or "").strip() or None
+                    original_unit_text = unit_text or None
+                    exchange["amount"] = converted_text
+                    exchange["unit"] = flow_reference_unit
+                    assumption_text = density_assumptions or ""
+                    if notes:
+                        assumption_text = f"{assumption_text} {notes}".strip() if assumption_text else notes
+                    density_used = {
+                        "density_value": density_value_text,
+                        "density_unit": density_unit,
+                        "density_kg_per_m3": density_kg_text,
+                        "assumptions": assumption_text or None,
+                        "notes": notes,
+                        "source_type": source_type,
+                        "conversion_direction": conversion_direction,
+                        "original_amount": original_amount_text,
+                        "original_unit": original_unit_text,
+                        "converted_amount": converted_text,
+                        "converted_unit": flow_reference_unit,
+                        "flow_uuid": selected_uuid,
+                    }
+                    exchange["density_used"] = density_used
+
+                    unit_check["status"] = "converted_by_density"
+                    unit_check["density_value"] = density_value_text
+                    unit_check["density_unit"] = density_unit
+                    unit_check["density_kg_per_m3"] = density_kg_text
+                    unit_check["density_assumptions"] = density_assumptions or None
+                    unit_check["density_source_type"] = source_type
+                    unit_check["density_conversion_direction"] = conversion_direction
+                    unit_check["converted_amount"] = converted_text
+                    unit_check["converted_unit"] = flow_reference_unit
+                    unit_check["reason"] = "converted_by_density_estimate"
+                    unit_check["review_required"] = True
+                    flow_search["unit_check"] = unit_check
+                    exchange["flow_search"] = flow_search
+                    summary["exchange_converted"] += 1
+        finally:
+            if should_close_crud and crud_client:
+                crud_client.close()
+
+        LOGGER.info("process_from_flow.density_conversion_completed", **summary)
+        return {
+            "matched_process_exchanges": updated_matches,
+            "density_conversion_applied": True,
+            "density_conversion_summary": summary,
+            "step_markers": _update_step_markers(state, "density_conversion"),
+        }
 
     def build_sources(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if state.get("source_datasets") or state.get("source_references"):
@@ -5323,9 +6049,15 @@ def _build_langgraph(
                 process_reference_list = list(process_reference_items.values())
                 process_reference_items_final = process_reference_list or default_reference_items
                 balance_note = _build_balance_note(balance_state)
-                data_sources_kwargs: dict[str, Any] = {"reference_to_data_source": process_reference_items_final}
+                density_notes = _collect_density_notes(exchanges_raw) if isinstance(exchanges_raw, list) else []
+                data_treatment_notes: list[str] = []
                 if balance_note:
-                    data_sources_kwargs["data_treatment_and_extrapolations_principles"] = _as_multilang_list(balance_note)
+                    data_treatment_notes.append(balance_note)
+                if density_notes:
+                    data_treatment_notes.extend(density_notes)
+                data_sources_kwargs: dict[str, Any] = {"reference_to_data_source": process_reference_items_final}
+                if data_treatment_notes:
+                    data_sources_kwargs["data_treatment_and_extrapolations_principles"] = _as_multilang_list(data_treatment_notes)
                 modelling_and_validation = ProcessesProcessDataSetModellingAndValidation(
                     lci_method_and_allocation=ProcessDataSetModellingAndValidationLCIMethodAndAllocation(type_of_data_set="Unit process, single operation"),
                     data_sources_treatment_and_representativeness=(ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(**data_sources_kwargs)),
@@ -5535,15 +6267,245 @@ def _build_langgraph(
             "step_markers": _update_step_markers(state, "placeholders"),
         }
 
+    def balance_review(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if "balance_review" in state:
+            return {}
+        process_exchanges = state.get("matched_process_exchanges")
+        if not isinstance(process_exchanges, list):
+            process_exchanges = state.get("process_exchanges")
+        if not isinstance(process_exchanges, list):
+            process_exchanges = []
+        process_plans = {
+            str(item.get("process_id") or item.get("processId") or ""): item
+            for item in (state.get("processes") or [])
+            if isinstance(item, dict)
+        }
+        summary = {
+            "process_total": 0,
+            "process_ok": 0,
+            "process_check": 0,
+            "process_insufficient": 0,
+            "unit_mismatch_total": 0,
+            "unit_mismatch_processes": 0,
+            "density_estimate_total": 0,
+            "density_estimate_processes": 0,
+            "balance_excluded_total": 0,
+            "balance_excluded_processes": 0,
+            "role_missing_total": 0,
+            "role_missing_processes": 0,
+        }
+        if not process_exchanges:
+            return {
+                "balance_review": [],
+                "balance_review_summary": summary,
+                "step_markers": _update_step_markers(state, "balance_review"),
+            }
+
+        reference_direction = _reference_direction(state.get("operation"))
+        flow_cache: dict[str, FlowReferenceInfo | None] = {}
+        crud_client: DatabaseCrudClient | None = None
+        should_close_crud = False
+        needs_crud = False
+        for proc in process_exchanges:
+            exchanges = proc.get("exchanges") if isinstance(proc, dict) else None
+            if not isinstance(exchanges, list):
+                continue
+            for exchange in exchanges:
+                if not isinstance(exchange, dict):
+                    continue
+                flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                if flow_search.get("selected_uuid"):
+                    needs_crud = True
+                    break
+            if needs_crud:
+                break
+        if needs_crud:
+            try:
+                crud_client = DatabaseCrudClient(settings)
+                should_close_crud = True
+            except Exception as exc:  # pylint: disable=broad-except
+                LOGGER.warning("process_from_flow.balance_crud_init_failed", error=str(exc))
+                crud_client = None
+
+        reviews: list[dict[str, Any]] = []
+        try:
+            for index, proc in enumerate(process_exchanges):
+                if not isinstance(proc, dict):
+                    continue
+                process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+                plan = process_plans.get(process_id) if process_id else None
+                process_name = ""
+                if isinstance(plan, dict):
+                    process_name = str(plan.get("name") or "").strip()
+                    if not process_name:
+                        name_parts = plan.get("name_parts") if isinstance(plan.get("name_parts"), dict) else {}
+                        process_name = str(name_parts.get("base_name") or "").strip()
+                if not process_name:
+                    process_name = f"Process {process_id or (index + 1)}"
+                exchanges = proc.get("exchanges") if isinstance(proc.get("exchanges"), list) else []
+                balance_state = {
+                    "mass": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
+                    "energy": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
+                }
+                unit_mismatches: list[dict[str, Any]] = []
+                density_estimates: list[dict[str, Any]] = []
+                excluded_count = 0
+                missing_role_count = 0
+                for exchange in exchanges:
+                    if not isinstance(exchange, dict):
+                        continue
+                    material_role = _normalize_material_role(exchange.get("material_role") or exchange.get("materialRole"))
+                    if not material_role or material_role == "unknown":
+                        missing_role_count += 1
+                    balance_exclude = _normalize_balance_exclude(exchange.get("balance_exclude") or exchange.get("balanceExclude"))
+                    if balance_exclude is True or (material_role in _BALANCE_EXCLUDE_ROLES):
+                        excluded_count += 1
+                        continue
+                    amount_value = _parse_amount_value(exchange.get("amount"))
+                    exchange_unit = str(exchange.get("unit") or "").strip()
+                    direction = str(exchange.get("exchangeDirection") or "").strip()
+                    if direction not in {"Input", "Output"}:
+                        direction = "Input"
+                    if bool(exchange.get("is_reference_flow")):
+                        direction = reference_direction
+                    flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                    selected_uuid = str(flow_search.get("selected_uuid") or "").strip() or None
+                    reference_info = None
+                    if selected_uuid:
+                        if selected_uuid in flow_cache:
+                            reference_info = flow_cache[selected_uuid]
+                        else:
+                            flow_dataset = None
+                            if crud_client:
+                                try:
+                                    flow_dataset = crud_client.select_flow(selected_uuid)
+                                except Exception as exc:  # pylint: disable=broad-except
+                                    LOGGER.warning(
+                                        "process_from_flow.balance_flow_select_failed",
+                                        flow_id=selected_uuid,
+                                        error=str(exc),
+                                    )
+                            reference_info = _flow_reference_info_from_dataset(flow_dataset) if flow_dataset else None
+                            flow_cache[selected_uuid] = reference_info
+
+                    if selected_uuid and exchange_unit:
+                        unit_check = flow_search.get("unit_check") if isinstance(flow_search.get("unit_check"), dict) else None
+                        if unit_check is None:
+                            unit_check, _, _ = _assess_unit_compatibility(
+                                unit=exchange_unit,
+                                amount=amount_value,
+                                reference_info=reference_info,
+                            )
+                        if unit_check.get("status") == "mismatch":
+                            unit_mismatches.append(
+                                {
+                                    "exchange_name": str(exchange.get("exchangeName") or "").strip(),
+                                    "exchange_unit": unit_check.get("exchange_unit") or exchange_unit or None,
+                                    "flow_unit_group": unit_check.get("flow_unit_group"),
+                                    "flow_reference_unit": unit_check.get("flow_reference_unit"),
+                                    "flow_uuid": selected_uuid,
+                                    "reason": unit_check.get("reason"),
+                                }
+                            )
+                    density_used = exchange.get("density_used")
+                    if isinstance(density_used, dict):
+                        density_estimates.append(
+                            {
+                                "exchange_name": str(exchange.get("exchangeName") or "").strip(),
+                                "density_value": density_used.get("density_value"),
+                                "density_unit": density_used.get("density_unit"),
+                                "assumptions": density_used.get("assumptions"),
+                                "source_type": density_used.get("source_type"),
+                            }
+                        )
+
+                    if amount_value is None or not exchange_unit:
+                        continue
+                    dimension, converted, unit_label = _convert_exchange_amount_for_balance(amount_value, exchange_unit, reference_info)
+                    if dimension and converted is not None:
+                        dim_state = balance_state[dimension]
+                        if dim_state["unit"] and unit_label and dim_state["unit"] != unit_label:
+                            continue
+                        if unit_label:
+                            dim_state["unit"] = unit_label
+                        if direction == "Input":
+                            dim_state["inputs"] += converted
+                        else:
+                            dim_state["outputs"] += converted
+                        dim_state["count"] += 1
+
+                mass_summary = _balance_state_summary(balance_state["mass"])
+                energy_summary = _balance_state_summary(balance_state["energy"])
+                status = _merge_balance_status(mass_summary.get("status"), energy_summary.get("status"))
+                note = _build_balance_note(balance_state)
+                reviews.append(
+                    {
+                        "process_id": process_id,
+                        "process_name": process_name,
+                        "status": status,
+                        "mass": mass_summary,
+                        "energy": energy_summary,
+                        "note": note,
+                        "unit_mismatches": unit_mismatches,
+                        "unit_mismatch_count": len(unit_mismatches),
+                        "density_estimates": density_estimates,
+                        "density_estimate_count": len(density_estimates),
+                        "balance_excluded_count": excluded_count,
+                        "role_missing_count": missing_role_count,
+                        "exchange_count": len(exchanges),
+                    }
+                )
+                summary["process_total"] += 1
+                if unit_mismatches:
+                    summary["unit_mismatch_total"] += len(unit_mismatches)
+                    summary["unit_mismatch_processes"] += 1
+                if density_estimates:
+                    summary["density_estimate_total"] += len(density_estimates)
+                    summary["density_estimate_processes"] += 1
+                if excluded_count:
+                    summary["balance_excluded_total"] += excluded_count
+                    summary["balance_excluded_processes"] += 1
+                if missing_role_count:
+                    summary["role_missing_total"] += missing_role_count
+                    summary["role_missing_processes"] += 1
+                if status == "check":
+                    summary["process_check"] += 1
+                    LOGGER.warning(
+                        "process_from_flow.balance_review_flagged",
+                        process_id=process_id,
+                        process_name=process_name,
+                        mass_status=mass_summary.get("status"),
+                        mass_ratio=mass_summary.get("ratio"),
+                        energy_status=energy_summary.get("status"),
+                        energy_ratio=energy_summary.get("ratio"),
+                    )
+                elif status == "ok":
+                    summary["process_ok"] += 1
+                else:
+                    summary["process_insufficient"] += 1
+        finally:
+            if should_close_crud and crud_client:
+                crud_client.close()
+
+        LOGGER.info("process_from_flow.balance_review_completed", **summary)
+        return {
+            "balance_review": reviews,
+            "balance_review_summary": summary,
+            "step_markers": _update_step_markers(state, "balance_review"),
+        }
+
     graph.add_node("load_flow", load_flow)
     graph.add_node("describe_technology", describe_technology)
     graph.add_node("split_processes", split_processes)
     graph.add_node("generate_exchanges", generate_exchanges)
     graph.add_node("enrich_exchange_amounts", enrich_exchange_amounts)
     graph.add_node("match_flows", match_flows)
+    graph.add_node("align_exchange_units", align_exchange_units)
+    graph.add_node("density_conversion", density_conversion)
     graph.add_node("build_sources", build_sources)
     graph.add_node("build_process_datasets", build_process_datasets)
     graph.add_node("resolve_placeholders", resolve_placeholders)
+    graph.add_node("balance_review", balance_review)
 
     graph.set_entry_point("load_flow")
     graph.add_edge("load_flow", "describe_technology")
@@ -5565,14 +6527,17 @@ def _build_langgraph(
     )
     graph.add_conditional_edges(
         "match_flows",
-        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "matches") else "build_sources",
+        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "matches") else "align_exchange_units",
     )
+    graph.add_edge("align_exchange_units", "density_conversion")
+    graph.add_edge("density_conversion", "build_sources")
     graph.add_conditional_edges(
         "build_sources",
         lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "sources") else "build_process_datasets",
     )
     graph.add_edge("build_process_datasets", "resolve_placeholders")
-    graph.add_edge("resolve_placeholders", END)
+    graph.add_edge("resolve_placeholders", "balance_review")
+    graph.add_edge("balance_review", END)
 
     return graph.compile()
 
