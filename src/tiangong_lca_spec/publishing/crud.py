@@ -705,11 +705,15 @@ class DatabaseCrudClient:
             }
         )
 
-    def select_flow(self, flow_uuid: str) -> dict[str, Any] | None:
+    def select_flow(self, flow_uuid: str, *, version: str | None = None) -> dict[str, Any] | None:
         uuid_value = _coerce_text(flow_uuid)
         if not uuid_value:
             return None
-        raw = self._invoke({"operation": "select", "table": "flows", "id": uuid_value})
+        payload = {"operation": "select", "table": "flows", "id": uuid_value}
+        version_value = _coerce_text(version)
+        if version_value:
+            payload["version"] = version_value
+        raw = self._invoke(payload)
         if isinstance(raw, dict):
             if isinstance(raw.get("flowDataSet"), dict):
                 return raw.get("flowDataSet")

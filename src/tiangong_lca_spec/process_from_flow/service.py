@@ -4106,6 +4106,48 @@ def _filter_placeholder_candidates(
     }
 
 
+def _version_sort_key(version: str | None) -> tuple[int, ...]:
+    if not version:
+        return (-1, -1, -1)
+    parts: list[int] = []
+    for token in str(version).split("."):
+        token = token.strip()
+        if not token:
+            parts.append(0)
+            continue
+        try:
+            parts.append(int(token))
+        except ValueError:
+            digits = "".join(ch for ch in token if ch.isdigit())
+            parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _dedupe_candidates_by_uuid_version(candidates: list[FlowCandidate]) -> list[FlowCandidate]:
+    if not candidates:
+        return []
+    ordered: list[FlowCandidate] = []
+    best_by_uuid: dict[str, tuple[FlowCandidate, tuple[int, ...], int]] = {}
+    for candidate in candidates:
+        uuid_value = (candidate.uuid or "").strip()
+        if not uuid_value:
+            ordered.append(candidate)
+            continue
+        version_key = _version_sort_key(candidate.version)
+        existing = best_by_uuid.get(uuid_value)
+        if existing is None:
+            best_by_uuid[uuid_value] = (candidate, version_key, len(ordered))
+            ordered.append(candidate)
+            continue
+        _, best_key, index = existing
+        if version_key > best_key:
+            best_by_uuid[uuid_value] = (candidate, version_key, index)
+            ordered[index] = candidate
+    return ordered
+
+
 def _serialize_candidate_list(candidates: list[FlowCandidate], *, limit: int = 10) -> list[dict[str, Any]]:
     serialized: list[dict[str, Any]] = []
     for candidate in candidates[:limit]:
@@ -5257,6 +5299,7 @@ def _build_langgraph(
                         comment = f"{comment} | search_hints: {hint_text}" if comment else f"search_hints: {hint_text}"
                 query = FlowQuery(exchange_name=name or reference_name or "unknown_exchange", description=comment)
                 candidates, unmatched = flow_search_fn(query)
+                candidates = _dedupe_candidates_by_uuid_version(candidates)
                 candidates = candidates[:10]
                 # Build a minimal exchange dict for selector context.
                 selector_exchange = {
@@ -5734,7 +5777,7 @@ def _build_langgraph(
         exchange_plans = {str(item.get("process_id") or ""): item for item in (state.get("matched_process_exchanges") or []) if isinstance(item, dict)}
         results: list[dict[str, Any]] = []
         crud_client: DatabaseCrudClient | None = None
-        flow_cache: dict[str, dict[str, Any]] = {}
+        flow_cache: dict[tuple[str, str | None], dict[str, Any]] = {}
         if exchange_plans:
             crud_client = DatabaseCrudClient(settings)
 
@@ -5862,12 +5905,16 @@ def _build_langgraph(
                                     break
                     if selected_uuid:
                         flow_uuid = str(selected_uuid)
-                        cached = flow_cache.get(flow_uuid)
+                        selected_version_value = str(selected_version).strip() if selected_version is not None else None
+                        if selected_version_value == "":
+                            selected_version_value = None
+                        cache_key = (flow_uuid, selected_version_value)
+                        cached = flow_cache.get(cache_key)
                         if cached is None:
                             flow_dataset = None
                             if crud_client:
                                 try:
-                                    flow_dataset = crud_client.select_flow(flow_uuid)
+                                    flow_dataset = crud_client.select_flow(flow_uuid, version=selected_version_value)
                                 except Exception as exc:  # pylint: disable=broad-except
                                     LOGGER.warning(
                                         "process_from_flow.flow_select_failed",
@@ -5882,11 +5929,13 @@ def _build_langgraph(
                                 "version": version_override,
                                 "reference_info": reference_info,
                             }
-                            flow_cache[flow_uuid] = cached
+                            flow_cache[cache_key] = cached
                         candidate = FlowCandidate(
                             uuid=flow_uuid,
                             base_name=str(selected_base_name or name),
-                            version=str(cached.get("version") or selected_version) if (cached.get("version") or selected_version) else None,
+                            version=str(cached.get("version") or selected_version_value)
+                            if (cached.get("version") or selected_version_value)
+                            else None,
                         )
                         reference = _candidate_reference(
                             candidate,
