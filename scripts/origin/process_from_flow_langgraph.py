@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -84,6 +85,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-llm", action="store_true", help="Run without an LLM (uses minimal deterministic fallbacks).")
     parser.add_argument("--no-translate-zh", action="store_true", help="Skip adding Chinese translations to multi-language fields.")
     parser.add_argument(
+        "--allow-density-conversion",
+        action="store_true",
+        help="Allow LLM-based density estimates for mass<->volume conversions (product/waste flows only).",
+    )
+    parser.add_argument(
         "--retain-runs",
         type=int,
         help="Manually clean process_from_flow run directories, keeping only the most recent N runs under artifacts/process_from_flow/.",
@@ -106,7 +112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish-flows",
         action="store_true",
-        help="Also publish placeholder flow datasets and rewrite process references (disabled by default).",
+        help="Also publish placeholder flow datasets, rewrite process references, and export flow JSONs (disabled by default).",
     )
     parser.add_argument(
         "--commit",
@@ -161,6 +167,100 @@ def _extract_source_version(source_payload: dict[str, Any]) -> str:
     if isinstance(version, str) and version.strip():
         return version.strip()
     return "01.01.000"
+
+
+def _resolve_flow_dataset_version(dataset: Mapping[str, Any]) -> str:
+    admin = dataset.get("administrativeInformation") if isinstance(dataset.get("administrativeInformation"), Mapping) else {}
+    pub = admin.get("publicationAndOwnership") if isinstance(admin.get("publicationAndOwnership"), Mapping) else {}
+    version = pub.get("common:dataSetVersion")
+    if isinstance(version, str) and version.strip():
+        return version.strip()
+    return "01.01.000"
+
+
+def _build_export_filename(uuid_value: str, dataset_version: str) -> str:
+    safe_uuid = (uuid_value or "").strip()
+    if not safe_uuid:
+        raise ValueError("UUID required to build export filename.")
+    version = (dataset_version or "").strip() or "01.01.000"
+    safe_version = re.sub(r"[^0-9A-Za-z._-]", "_", version)
+    if not safe_version:
+        safe_version = "01.01.000"
+    return f"{safe_uuid}_{safe_version}.json"
+
+
+def _collect_source_ref_ids(refs: Any, used: set[str]) -> None:
+    if not refs:
+        return
+    if isinstance(refs, Mapping):
+        refs_iter = [refs]
+    elif isinstance(refs, list):
+        refs_iter = refs
+    else:
+        return
+    for ref in refs_iter:
+        if not isinstance(ref, Mapping):
+            continue
+        ref_id = ref.get("@refObjectId")
+        if not isinstance(ref_id, str):
+            continue
+        ref_id = ref_id.strip()
+        if not ref_id:
+            continue
+        ref_type = str(ref.get("@type") or "").strip().lower()
+        if ref_type and ref_type != "source data set":
+            continue
+        used.add(ref_id)
+
+
+def _collect_used_source_ids(process_datasets: list[dict[str, Any]]) -> set[str]:
+    used: set[str] = set()
+    for payload in process_datasets:
+        dataset = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), Mapping) else payload
+        if not isinstance(dataset, Mapping):
+            continue
+        modelling = dataset.get("modellingAndValidation")
+        if isinstance(modelling, Mapping):
+            sources = modelling.get("dataSourcesTreatmentAndRepresentativeness")
+            if isinstance(sources, Mapping):
+                _collect_source_ref_ids(sources.get("referenceToDataSource"), used)
+        exchanges_block = dataset.get("exchanges")
+        if not isinstance(exchanges_block, Mapping):
+            continue
+        exchanges = exchanges_block.get("exchange", [])
+        if isinstance(exchanges, Mapping):
+            exchanges = [exchanges]
+        if not isinstance(exchanges, list):
+            continue
+        for exchange in exchanges:
+            if not isinstance(exchange, Mapping):
+                continue
+            refs_block = exchange.get("referencesToDataSource")
+            if isinstance(refs_block, Mapping):
+                _collect_source_ref_ids(refs_block.get("referenceToDataSource"), used)
+    return used
+
+
+def _filter_source_datasets_by_usage(
+    source_datasets: list[dict[str, Any]],
+    process_datasets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    used_ids = _collect_used_source_ids(process_datasets)
+    if not used_ids:
+        return []
+    filtered: list[dict[str, Any]] = []
+    for payload in source_datasets:
+        if not isinstance(payload, dict):
+            continue
+        uuid_value = _extract_source_uuid(payload)
+        if uuid_value in used_ids:
+            filtered.append(payload)
+    if len(filtered) != len(source_datasets):
+        print(
+            f"Filtered source datasets by usage: {len(filtered)}/{len(source_datasets)}",
+            file=sys.stderr,
+        )
+    return filtered
 
 
 def _ensure_run_root(run_id: str) -> Path:
@@ -382,9 +482,7 @@ def _build_flow_alignment_from_process_datasets(datasets: list[dict[str, Any]]) 
                     "exchangeName": exchange_name,
                     "exchangeDirection": exchange.get("exchangeDirection"),
                     "unit": exchange.get("unit"),
-                    "meanAmount": exchange.get("meanAmount")
-                    if exchange.get("meanAmount") is not None
-                    else exchange.get("resultingAmount", exchange.get("amount")),
+                    "meanAmount": exchange.get("meanAmount") if exchange.get("meanAmount") is not None else exchange.get("resultingAmount", exchange.get("amount")),
                     "generalComment": comment,
                     "referenceToFlowDataSet": sanitized_ref,
                 }
@@ -435,6 +533,7 @@ def _publish_flows(
     *,
     commit: bool,
     llm: Any | None = None,
+    exports_dir: Path | None = None,
 ) -> list[Any]:
     from tiangong_lca_spec.publishing import FlowPublisher
 
@@ -446,6 +545,8 @@ def _publish_flows(
         plans = publisher.prepare_from_alignment(alignment)
         if not plans:
             return []
+        if exports_dir is not None:
+            _write_flow_exports(plans, exports_dir)
         publisher.publish()
         if commit:
             print(f"Published {len(plans)} flow dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
@@ -454,6 +555,27 @@ def _publish_flows(
         return plans
     finally:
         publisher.close()
+
+
+def _write_flow_exports(plans: list[Any], exports_dir: Path) -> list[Path]:
+    written: list[Path] = []
+    flows_dir = exports_dir / "flows"
+    flows_dir.mkdir(parents=True, exist_ok=True)
+    for plan in plans:
+        dataset = getattr(plan, "dataset", None)
+        uuid_value = getattr(plan, "uuid", None)
+        if not isinstance(dataset, Mapping):
+            continue
+        if not isinstance(uuid_value, str) or not uuid_value.strip():
+            continue
+        dataset_version = _resolve_flow_dataset_version(dataset)
+        filename = _build_export_filename(uuid_value, dataset_version)
+        target = flows_dir / filename
+        dump_json({"flowDataSet": dataset}, target)
+        written.append(target)
+    if written:
+        print(f"Wrote {len(written)} flow dataset(s) to {flows_dir}", file=sys.stderr)
+    return written
 
 
 def _write_process_exports(datasets: list[dict[str, Any]], exports_dir: Path) -> list[Path]:
@@ -470,8 +592,15 @@ def _write_process_exports(datasets: list[dict[str, Any]], exports_dir: Path) ->
     return written
 
 
-def _publish_sources(datasets: list[dict[str, Any]], *, commit: bool) -> None:
+def _publish_sources(
+    datasets: list[dict[str, Any]],
+    *,
+    commit: bool,
+    process_datasets: list[dict[str, Any]] | None = None,
+) -> None:
     publishable = [item for item in datasets if isinstance(item, dict)]
+    if process_datasets is not None:
+        publishable = _filter_source_datasets_by_usage(publishable, process_datasets)
     if not publishable:
         return
     if not commit:
@@ -516,10 +645,7 @@ def _publish_sources(datasets: list[dict[str, Any]], *, commit: bool) -> None:
                     failed.append((uuid_value, str(exc), str(update_exc)))
 
     if failed:
-        details = "; ".join(
-            f"{uuid_value} insert failed: {insert_error}; update failed: {update_error}"
-            for uuid_value, insert_error, update_error in failed
-        )
+        details = "; ".join(f"{uuid_value} insert failed: {insert_error}; update failed: {update_error}" for uuid_value, insert_error, update_error in failed)
         raise SystemExit(f"Failed to publish {len(failed)} source dataset(s): {details}")
     print(f"Published {len(publishable)} source dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
 
@@ -553,6 +679,7 @@ def main() -> None:
         return
     if args.publish_only:
         run_id = _resolve_run_id(args.run_id)
+        exports_dir = ensure_run_exports_dir(run_id)
         llm = None
         if args.publish_flows and not args.no_llm and args.secrets.exists():
             api_key, model, base_url = load_secrets(args.secrets)
@@ -560,13 +687,13 @@ def main() -> None:
         source_datasets = _load_source_datasets(run_id)
         datasets = _load_process_datasets(run_id)
         if args.publish_flows:
-            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm)
+            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm, exports_dir=exports_dir)
             if args.commit and flow_plans:
                 updated = _apply_flow_refs_to_processes(datasets, flow_plans)
                 if updated:
-                    _write_process_exports(datasets, PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "exports")
+                    _write_process_exports(datasets, exports_dir)
         if source_datasets:
-            _publish_sources(source_datasets, commit=args.commit)
+            _publish_sources(source_datasets, commit=args.commit, process_datasets=datasets)
         _publish_processes(datasets, commit=args.commit)
         return
 
@@ -614,6 +741,11 @@ def main() -> None:
     if llm is not None and not args.no_translate_zh:
         translator = Translator(llm=llm)
 
+    if args.allow_density_conversion:
+        if initial_state is None:
+            initial_state = {}
+        initial_state["allow_density_conversion"] = True
+
     service = ProcessFromFlowService(llm=llm, translator=translator)
     stop_after = None if args.stop_after == "datasets" else args.stop_after
     result_state = service.run(
@@ -656,13 +788,13 @@ def main() -> None:
         print(f"Wrote {len(source_written)} source dataset(s) to {exports_dir / 'sources'}", file=sys.stderr)
     if args.publish:
         if args.publish_flows:
-            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm)
+            flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm, exports_dir=exports_dir)
             if args.commit and flow_plans:
                 updated = _apply_flow_refs_to_processes(datasets, flow_plans)
                 if updated:
                     _write_process_exports(datasets, exports_dir)
         if isinstance(source_payloads, list) and source_payloads:
-            _publish_sources(source_payloads, commit=args.commit)
+            _publish_sources(source_payloads, commit=args.commit, process_datasets=datasets)
         _publish_processes(datasets, commit=args.commit)
     if args.retain_runs:
         _cleanup_runs(retain=args.retain_runs, current_run_id=run_id)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from anyio import ClosedResourceError
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from httpx import HTTPStatusError
 from mcp import ClientSession, McpError, types
@@ -69,7 +70,17 @@ class MCPToolClient:
         if self._closed:
             raise RuntimeError("Cannot invoke MCP tool on a closed client")
         connection = self._ensure_connection(server_name)
-        payload, attachments = self._call_tool(connection, server_name, tool_name, arguments)
+        try:
+            payload, attachments = self._call_tool(connection, server_name, tool_name, arguments)
+        except ClosedResourceError as exc:
+            LOGGER.warning(
+                "mcp_tool_client.connection_reset",
+                server=server_name,
+                error=str(exc),
+            )
+            self._reset_connection(server_name)
+            connection = self._ensure_connection(server_name)
+            payload, attachments = self._call_tool(connection, server_name, tool_name, arguments)
         return payload, attachments
 
     def invoke_json_tool(
@@ -171,6 +182,19 @@ class MCPToolClient:
         self._connections[server_name] = connection
         LOGGER.debug("mcp_tool_client.session_opened", server=server_name)
         return connection
+
+    def _reset_connection(self, server_name: str) -> None:
+        connection = self._connections.pop(server_name, None)
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except Exception as exc:  # pragma: no cover - best effort cleanup
+            LOGGER.warning(
+                "mcp_tool_client.connection_close_failed",
+                server=server_name,
+                error=str(exc),
+            )
 
     def _call_tool(
         self,

@@ -111,10 +111,18 @@ class LLMCandidateSelector:
         "prevent matching.\n"
         "4. **Secondary Attributes:** Consider **Classification**, **Physical State** (if applicable), "
         "and **General Comment** for final tie-breaking.\n"
+        "5. **Role Constraints:** Use exchange direction/role hints when provided. "
+        "If `exchangeDirection=Input` and `is_reference_flow=false`, avoid selecting candidates marked "
+        "as finished products when semi-finished or raw material options exist. If the exchange name "
+        "contains 'ingot' or 'billet', prefer candidates with those terms in base_name or treatment "
+        "fields. If `reference_flow_name` is provided, avoid selecting a candidate whose base_name "
+        "matches that reference flow for non-reference inputs unless the exchange explicitly describes "
+        "recycling or internal reuse.\n"
         "\n"
         "Respond with `best_index: null` if no candidate is appropriate. Prefer candidates whose flow "
         "name, geography, classification, and general comments best align with the exchange details. "
-        "The exchange may include a `flow_type` hint (product/elementary/waste/service) and `search_hints` aliases; use them. "
+        "The exchange may include `flow_type`, `material_role`, `exchangeDirection`, `is_reference_flow`, "
+        "`reference_flow_name`, and `search_hints` aliases; use them. "
         "Candidates include `name_parts` (baseName, treatmentStandardsRoutes, mixAndLocationTypes, flowProperties) and "
         "`flow_type`.\n"
         "Return strict JSON with keys:\n"
@@ -193,8 +201,11 @@ class LLMCandidateSelector:
                 "exchange_name": query.exchange_name,
                 "description": query.description,
                 "direction": exchange.get("exchangeDirection") or exchange.get("direction"),
+                "is_reference_flow": exchange.get("is_reference_flow"),
+                "reference_flow_name": exchange.get("reference_flow_name"),
                 "general_comment": self._stringify_comment(exchange),
                 "flow_type": exchange.get("flow_type"),
+                "material_role": exchange.get("material_role"),
                 "search_hints": exchange.get("search_hints") or [],
             },
             "candidates": [

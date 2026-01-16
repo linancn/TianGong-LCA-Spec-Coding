@@ -705,11 +705,15 @@ class DatabaseCrudClient:
             }
         )
 
-    def select_flow(self, flow_uuid: str) -> dict[str, Any] | None:
+    def select_flow(self, flow_uuid: str, *, version: str | None = None) -> dict[str, Any] | None:
         uuid_value = _coerce_text(flow_uuid)
         if not uuid_value:
             return None
-        raw = self._invoke({"operation": "select", "table": "flows", "id": uuid_value})
+        payload = {"operation": "select", "table": "flows", "id": uuid_value}
+        version_value = _coerce_text(version)
+        if version_value:
+            payload["version"] = version_value
+        raw = self._invoke(payload)
         if isinstance(raw, dict):
             if isinstance(raw.get("flowDataSet"), dict):
                 return raw.get("flowDataSet")
@@ -1067,6 +1071,9 @@ class FlowPublisher:
             "administrativeInformation": self._build_administrative_section(version),
             "flowProperties": flow_property_block,
         }
+        dataset["administrativeInformation"]["publicationAndOwnership"][
+            "common:permanentDataSetURI"
+        ] = build_portal_uri("flow", uuid_value, version)
 
         uri = build_portal_uri("flow", uuid_value, version)
         exchange_ref = {
@@ -1101,6 +1108,8 @@ class FlowPublisher:
         base_version = _coerce_text(candidate.get("version")) if candidate else ""
         if not base_version and existing_ref:
             base_version = _coerce_text(existing_ref.get("@version"))
+        if base_version == "00.00.000":
+            base_version = "01.01.000"
         if not base_version:
             base_version = "01.01.000"
         if mode == "update":
