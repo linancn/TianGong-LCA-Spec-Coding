@@ -2283,13 +2283,7 @@ def _assess_unit_compatibility(
         unit_check["reason"] = f"dimension_mismatch: exchange={exchange_dimension}, flow={flow_dimension}"
         return unit_check, None, reference_unit
 
-    if (
-        amount is not None
-        and flow_dimension
-        and exchange_dimension
-        and flow_dimension == exchange_dimension
-        and reference_unit
-    ):
+    if amount is not None and flow_dimension and exchange_dimension and flow_dimension == exchange_dimension and reference_unit:
         converted = _convert_amount_simple(amount, unit_text, reference_unit)
         if converted is not None:
             unit_check["status"] = "converted"
@@ -4978,16 +4972,8 @@ def _build_langgraph(
             if is_reference_flow_process:
                 plan_reference_flow = target_flow_name
             structure = plan.get("structure") if isinstance(plan.get("structure"), dict) else {}
-            structure_inputs = {
-                _normalize_exchange_name(_strip_flow_label(value))
-                for value in _clean_string_list(structure.get("inputs"))
-                if _strip_flow_label(value).strip()
-            }
-            structure_outputs = {
-                _normalize_exchange_name(_strip_flow_label(value))
-                for value in _clean_string_list(structure.get("outputs"))
-                if _strip_flow_label(value).strip()
-            }
+            structure_inputs = {_normalize_exchange_name(_strip_flow_label(value)) for value in _clean_string_list(structure.get("inputs")) if _strip_flow_label(value).strip()}
+            structure_outputs = {_normalize_exchange_name(_strip_flow_label(value)) for value in _clean_string_list(structure.get("outputs")) if _strip_flow_label(value).strip()}
             cleaned_exchanges: list[dict[str, Any]] = []
             matched_reference = False
             for exchange in exchanges:
@@ -5510,11 +5496,7 @@ def _build_langgraph(
         technical_description = str(state.get("technical_description") or "").strip()
         assumptions = [str(item).strip() for item in (state.get("assumptions") or []) if str(item).strip()]
         reference_direction = _reference_direction(state.get("operation"))
-        process_plans = {
-            str(item.get("process_id") or item.get("processId") or ""): item
-            for item in (state.get("processes") or [])
-            if isinstance(item, dict)
-        }
+        process_plans = {str(item.get("process_id") or item.get("processId") or ""): item for item in (state.get("processes") or []) if isinstance(item, dict)}
         flow_cache: dict[str, FlowReferenceInfo | None] = {}
         crud_client: DatabaseCrudClient | None = None
         should_close_crud = False
@@ -5656,7 +5638,6 @@ def _build_langgraph(
                         continue
 
                     converted_amount = None
-                    converted_unit = flow_reference_unit
                     conversion_direction = "volume_to_mass" if exchange_dimension == "volume" else "mass_to_volume"
                     if exchange_dimension == "volume" and flow_dimension == "mass":
                         volume_m3 = _convert_amount_simple(amount_value, unit_text, "m3")
@@ -5933,9 +5914,7 @@ def _build_langgraph(
                         candidate = FlowCandidate(
                             uuid=flow_uuid,
                             base_name=str(selected_base_name or name),
-                            version=str(cached.get("version") or selected_version_value)
-                            if (cached.get("version") or selected_version_value)
-                            else None,
+                            version=str(cached.get("version") or selected_version_value) if (cached.get("version") or selected_version_value) else None,
                         )
                         reference = _candidate_reference(
                             candidate,
@@ -6277,12 +6256,7 @@ def _build_langgraph(
                     reference = _candidate_reference(selected, translator=translator)
                     reference_payload = reference.model_dump(mode="json", by_alias=True, exclude_none=True)
                     try:
-                        updated_exchange = (
-                            updated_datasets[process_index]
-                            .get("processDataSet", {})
-                            .get("exchanges", {})
-                            .get("exchange", [])[exchange_index]
-                        )
+                        updated_exchange = updated_datasets[process_index].get("processDataSet", {}).get("exchanges", {}).get("exchange", [])[exchange_index]
                         if isinstance(updated_exchange, dict):
                             updated_exchange["referenceToFlowDataSet"] = reference_payload
                     except Exception as exc:  # pylint: disable=broad-except
@@ -6324,11 +6298,7 @@ def _build_langgraph(
             process_exchanges = state.get("process_exchanges")
         if not isinstance(process_exchanges, list):
             process_exchanges = []
-        process_plans = {
-            str(item.get("process_id") or item.get("processId") or ""): item
-            for item in (state.get("processes") or [])
-            if isinstance(item, dict)
-        }
+        process_plans = {str(item.get("process_id") or item.get("processId") or ""): item for item in (state.get("processes") or []) if isinstance(item, dict)}
         summary = {
             "process_total": 0,
             "process_ok": 0,

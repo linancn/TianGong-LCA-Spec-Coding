@@ -162,7 +162,7 @@
 ### 依赖与配置
 - 入口类：`FlowPublisher` / `ProcessPublisher` / `DatabaseCrudClient`。
 - MCP 服务：`.secrets/secrets.toml` 配置 `tiangong_lca_remote`（`Database_CRUD_Tool`）。
-- LLM 可选：用于 flow 类型与产品分类推断。
+- LLM：用于 flow 类型与产品分类推断，并在新建 flow 时补全/翻译必填中英文字段；无 LLM 或 LLM 失败时回退到现有拼装逻辑并记录日志。
 
 ### Step 0：发布 sources（可选但推荐）
 - `--publish/--publish-only` 会在发布 process 前先发布 sources。
@@ -174,13 +174,18 @@
 - 可补充 `matchingDetail.selectedCandidate`（由 `flow_search` 结果映射）以便分类与流属性选择。
 
 ### Step 2：发布/更新 flows
+- Flow 数据集由 `tidas_sdk.create_flow` 构建与校验（失败则降级为非校验构建并记录日志）。
 - `FlowPublisher.prepare_from_alignment()` 生成 `FlowPublishPlan`：
   - 占位 `referenceToFlowDataSet` → insert。
   - 已匹配但缺少 flow property → update（版本自动 +1）。
   - Elementary flow 不新建；Product/Waste flow 生成 ILCD flow。
+- LLM 辅助字段补全/翻译（新建 flow 必做）：
+  - `baseName`/`treatmentStandardsRoutes`/`mixAndLocationTypes`/`common:synonyms`/`common:generalComment` 需中英文成对输出。
+  - 仅有单语时，LLM 翻译补齐另一语种；两种语言都缺失时，LLM 依据 exchange/FlowSearch hints/候选信息生成简短字段。
+  - LLM 生成/翻译需避免分号（含全角），使用英文短语优先、中文简洁直译；失败则回退到现有拼装逻辑并记录原因。
 - 自动推断逻辑：
   - `FlowTypeClassifier`：LLM 优先，失败回退规则。
-  - `FlowProductCategorySelector`：逐层选择产品分类。
+  - `FlowProductCategorySelector`：逐层选择产品分类，候选来自 `scripts/md/list_product_flow_category_children.py`。
   - `FlowPropertyRegistry`：默认 Mass（可按 exchange 覆盖）。
 - 发布后使用 `FlowPublishPlan.exchange_ref` 替换 process 数据集中的占位引用。
 
