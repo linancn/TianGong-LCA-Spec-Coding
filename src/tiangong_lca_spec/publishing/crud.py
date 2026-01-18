@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
 
+from tidas_sdk import create_flow
+
 from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.constants import build_dataset_format_reference
 from tiangong_lca_spec.core.exceptions import SpecCodingError
@@ -26,6 +28,22 @@ LOGGER = get_logger(__name__)
 DATABASE_TOOL_NAME = "Database_CRUD_Tool"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PRODUCT_CATEGORY_SCRIPT = PROJECT_ROOT / "scripts" / "md" / "list_product_flow_category_children.py"
+FLOW_TEXT_PROMPT = (
+    "You generate bilingual ILCD flow text fields for Tiangong LCA.\n"
+    "Use the provided exchange, flow search hints, and candidate metadata to fill missing values. "
+    "Return strict JSON with keys:\n"
+    "- base_name_en, base_name_zh\n"
+    "- treatment_en, treatment_zh\n"
+    "- mix_en, mix_zh\n"
+    "- synonyms_en (list of short terms), synonyms_zh (list of short terms)\n"
+    "- comment_en, comment_zh\n\n"
+    "Rules:\n"
+    "- base_name: short noun phrase, no units/amounts.\n"
+    "- treatment/mix: use short phrases describing treatment/route and mix/location.\n"
+    "- comment: 1 concise sentence.\n"
+    "- Avoid semicolons; use commas if needed.\n"
+    "- Output must be valid JSON; do not add extra keys."
+)
 
 
 def _utc_timestamp() -> str:
@@ -82,6 +100,55 @@ def _normalize_hint_values(hints: Mapping[str, list[str] | str]) -> dict[str, li
             if entries:
                 normalized[key] = entries
     return normalized
+
+
+def _replace_semicolons(text: str) -> str:
+    """Avoid semicolons in flow text fields by replacing with commas."""
+    return text.replace("；", "，").replace(";", ",")
+
+
+def _normalize_text(value: Any) -> str:
+    text = _coerce_text(value)
+    if not text:
+        return ""
+    return _replace_semicolons(text)
+
+
+def _normalize_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, Mapping):
+        return []
+    if isinstance(value, list):
+        items: list[str] = []
+        for item in value:
+            items.extend(_normalize_text_list(item))
+        return items
+    if isinstance(value, str):
+        raw = value.replace("；", ";")
+        parts: list[str] = []
+        for chunk in raw.split(";"):
+            for piece in chunk.split(","):
+                text = piece.strip()
+                if text:
+                    parts.append(text)
+        return parts
+    text = _coerce_text(value)
+    return [text] if text else []
+
+
+def _extract_hint_value(hints: Mapping[str, list[str] | str], keys: Sequence[str]) -> str:
+    for key in keys:
+        value = hints.get(key)
+        if isinstance(value, list) and value:
+            text = _normalize_text(value[0])
+            if text:
+                return text
+        if isinstance(value, str):
+            text = _normalize_text(value)
+            if text:
+                return text
+    return ""
 
 
 def _collect_classification_entries(exchange: Mapping[str, Any]) -> list[str]:
@@ -830,6 +897,7 @@ class FlowPublisher:
         self._registry = flow_property_registry or get_default_registry()
         self._default_flow_property_uuid = self._resolve_default_property(default_flow_property_uuid)
         self._overrides = dict(flow_property_overrides or {})
+        self._llm = llm
         self._flow_type_classifier = flow_type_classifier or FlowTypeClassifier(llm)
         self._product_category_selector = product_category_selector or FlowProductCategorySelector(llm)
         self._prepared: list[FlowPublishPlan] = []
@@ -1030,11 +1098,27 @@ class FlowPublisher:
             )
             return None
 
+        text_fields = self._resolve_text_fields(
+            exchange=exchange,
+            hints=hints,
+            candidate=candidate,
+            exchange_name=exchange_name,
+            process_name=process_name,
+            flow_type=flow_type,
+        )
         uuid_value = self._resolve_flow_uuid(candidate, existing_ref)
         version = self._resolve_flow_version(candidate, existing_ref, mode)
         en_name, zh_name = self._resolve_language_pairs(candidate, hints, exchange_name)
+        en_name = text_fields.get("base_name_en") or en_name
+        zh_name = text_fields.get("base_name_zh") or zh_name
         classification = self._resolve_classification(flow_type, hints, candidate, exchange)
-        comment_entries = self._resolve_comments(comment, candidate, exchange_name)
+        comment_entries = self._resolve_comments(
+            comment,
+            candidate,
+            exchange_name,
+            comment_en=text_fields.get("comment_en"),
+            comment_zh=text_fields.get("comment_zh"),
+        )
         flow_property_block = self._registry.build_flow_property_block(
             property_uuid,
             mean_value=mean_value or "1.0",
@@ -1058,8 +1142,23 @@ class FlowPublisher:
             "flowInformation": {
                 "dataSetInformation": {
                     "common:UUID": uuid_value,
-                    "name": self._build_name_block(candidate, hints, en_name, zh_name),
-                    "common:synonyms": self._build_synonyms(hints, en_name, zh_name),
+                    "name": self._build_name_block(
+                        candidate,
+                        hints,
+                        en_name,
+                        zh_name,
+                        treatment_en=text_fields.get("treatment_en"),
+                        treatment_zh=text_fields.get("treatment_zh"),
+                        mix_en=text_fields.get("mix_en"),
+                        mix_zh=text_fields.get("mix_zh"),
+                    ),
+                    "common:synonyms": self._build_synonyms(
+                        hints,
+                        en_name,
+                        zh_name,
+                        synonyms_en=text_fields.get("synonyms_en"),
+                        synonyms_zh=text_fields.get("synonyms_zh"),
+                    ),
                     "common:generalComment": comment_entries,
                     "classificationInformation": classification,
                 },
@@ -1071,9 +1170,18 @@ class FlowPublisher:
             "administrativeInformation": self._build_administrative_section(version),
             "flowProperties": flow_property_block,
         }
-        dataset["administrativeInformation"]["publicationAndOwnership"][
-            "common:permanentDataSetURI"
-        ] = build_portal_uri("flow", uuid_value, version)
+        dataset["administrativeInformation"]["publicationAndOwnership"]["common:permanentDataSetURI"] = build_portal_uri("flow", uuid_value, version)
+
+        dataset = self._finalize_flow_dataset(
+            dataset,
+            exchange_name=exchange_name,
+            process_name=process_name,
+        )
+        uuid_value = _coerce_text(_get_nested(dataset, ("flowInformation", "dataSetInformation", "common:UUID"))) or uuid_value
+        version = _coerce_text(_get_nested(dataset, ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"))) or version
+        publication = _get_nested(dataset, ("administrativeInformation", "publicationAndOwnership"))
+        if isinstance(publication, Mapping):
+            publication["common:permanentDataSetURI"] = build_portal_uri("flow", uuid_value, version)
 
         uri = build_portal_uri("flow", uuid_value, version)
         exchange_ref = {
@@ -1084,6 +1192,51 @@ class FlowPublisher:
             "common:shortDescription": _language_entry(exchange_name),
         }
         return dataset, exchange_ref
+
+    def _finalize_flow_dataset(
+        self,
+        dataset: Mapping[str, Any],
+        *,
+        exchange_name: str,
+        process_name: str,
+    ) -> dict[str, Any]:
+        payload = {"flowDataSet": dataset}
+        validated_on_init = False
+        try:
+            entity = create_flow(payload, validate=True)
+            validated_on_init = True
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning(
+                "flow_publish.flow_validation_failed",
+                exchange=exchange_name,
+                process=process_name,
+                error=str(exc),
+            )
+            entity = create_flow(payload, validate=False)
+
+        if validated_on_init:
+            errors = entity.last_validation_error()
+            if errors:
+                LOGGER.warning(
+                    "flow_publish.flow_not_valid",
+                    exchange=exchange_name,
+                    process=process_name,
+                    error=str(errors),
+                )
+        else:
+            valid = entity.validate(mode="pydantic")
+            if not valid:
+                errors = entity.last_validation_error()
+                LOGGER.warning(
+                    "flow_publish.flow_not_valid",
+                    exchange=exchange_name,
+                    process=process_name,
+                    error=str(errors),
+                )
+
+        flow_payload = entity.model.model_dump(mode="json", by_alias=True, exclude_none=True)
+        flow_dataset = _resolve_dataset_root(flow_payload, root_key="flowDataSet", dataset_kind="flow")
+        return dict(flow_dataset)
 
     @staticmethod
     def _resolve_flow_uuid(
@@ -1115,6 +1268,89 @@ class FlowPublisher:
         if mode == "update":
             return _bump_version(base_version)
         return base_version
+
+    def _resolve_text_fields(
+        self,
+        *,
+        exchange: Mapping[str, Any],
+        hints: Mapping[str, list[str] | str],
+        candidate: Mapping[str, Any] | None,
+        exchange_name: str,
+        process_name: str,
+        flow_type: str,
+    ) -> dict[str, Any]:
+        en_name, zh_name = self._resolve_language_pairs(candidate, hints, exchange_name)
+        default_comment = _normalize_text(_extract_general_comment(exchange)) or f"Auto-generated for {exchange_name}"
+        defaults = {
+            "base_name_en": _normalize_text(en_name),
+            "base_name_zh": _normalize_text(zh_name) or _normalize_text(en_name),
+            "treatment_en": _normalize_text(_coerce_text(candidate.get("treatment_standards_routes")) if candidate else "")
+            or _normalize_text(_extract_hint_value(hints, ("treatment", "treatment_standards_routes"))),
+            "treatment_zh": "",
+            "mix_en": _normalize_text(_coerce_text(candidate.get("mix_and_location_types")) if candidate else "")
+            or _normalize_text(_extract_hint_value(hints, ("mix_location", "mix_and_location_types"))),
+            "mix_zh": "",
+            "synonyms_en": _normalize_text_list(hints.get("en_synonyms") or []),
+            "synonyms_zh": _normalize_text_list(hints.get("zh_synonyms") or []),
+            "comment_en": default_comment,
+            "comment_zh": "",
+        }
+        if not self._llm:
+            return defaults
+
+        context = {
+            "exchange": {
+                "name": exchange_name,
+                "direction": _coerce_text(exchange.get("exchangeDirection")),
+                "unit": _coerce_text(exchange.get("unit")),
+                "general_comment": _extract_general_comment(exchange),
+                "flow_type": flow_type,
+                "search_hints": exchange.get("search_hints") if isinstance(exchange.get("search_hints"), list) else [],
+            },
+            "process": {"name": process_name},
+            "flow_search_hints": _normalize_hint_values(hints),
+            "selected_candidate": candidate or {},
+            "defaults": defaults,
+        }
+        try:
+            response = self._llm.invoke(
+                {
+                    "prompt": FLOW_TEXT_PROMPT,
+                    "context": context,
+                    "response_format": {"type": "json_object"},
+                }
+            )
+            payload = _ensure_mapping_response(response)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning(
+                "flow_publish.text_llm_failed",
+                exchange=exchange_name,
+                process=process_name,
+                error=str(exc),
+            )
+            return defaults
+
+        def pick(key: str, fallback: str) -> str:
+            value = _normalize_text(payload.get(key))
+            return value or fallback
+
+        def pick_list(key: str, fallback: list[str]) -> list[str]:
+            values = _normalize_text_list(payload.get(key))
+            return values or fallback
+
+        resolved = {
+            "base_name_en": pick("base_name_en", defaults["base_name_en"]),
+            "base_name_zh": pick("base_name_zh", defaults["base_name_zh"] or defaults["base_name_en"]),
+            "treatment_en": pick("treatment_en", defaults["treatment_en"] or defaults["base_name_en"]),
+            "treatment_zh": pick("treatment_zh", defaults["treatment_zh"] or defaults["base_name_zh"]),
+            "mix_en": pick("mix_en", defaults["mix_en"] or defaults["base_name_en"]),
+            "mix_zh": pick("mix_zh", defaults["mix_zh"] or defaults["base_name_zh"]),
+            "synonyms_en": pick_list("synonyms_en", defaults["synonyms_en"]),
+            "synonyms_zh": pick_list("synonyms_zh", defaults["synonyms_zh"]),
+            "comment_en": pick("comment_en", defaults["comment_en"]),
+            "comment_zh": pick("comment_zh", defaults["comment_zh"] or defaults["comment_en"]),
+        }
+        return resolved
 
     @staticmethod
     def _resolve_language_pairs(
@@ -1167,7 +1403,25 @@ class FlowPublisher:
         return _default_product_classification()
 
     @staticmethod
-    def _resolve_comments(comment: str, candidate: Mapping[str, Any] | None, exchange_name: str) -> list[dict[str, Any]]:
+    def _resolve_comments(
+        comment: str,
+        candidate: Mapping[str, Any] | None,
+        exchange_name: str,
+        *,
+        comment_en: str | None = None,
+        comment_zh: str | None = None,
+    ) -> list[dict[str, Any]]:
+        comment_en = _normalize_text(comment_en)
+        comment_zh = _normalize_text(comment_zh)
+        if comment_en or comment_zh:
+            if not comment_en:
+                comment_en = comment_zh
+            if not comment_zh:
+                comment_zh = comment_en
+            return [
+                _language_entry(comment_en or "", "en"),
+                _language_entry(comment_zh or "", "zh"),
+            ]
         candidate_comment = _coerce_text(candidate.get("general_comment")) if candidate else ""
         if candidate_comment:
             return [_language_entry(candidate_comment)]
@@ -1181,38 +1435,67 @@ class FlowPublisher:
         hints: Mapping[str, list[str] | str],
         en_name: str,
         zh_name: str,
+        *,
+        treatment_en: str | None = None,
+        treatment_zh: str | None = None,
+        mix_en: str | None = None,
+        mix_zh: str | None = None,
     ) -> dict[str, Any]:
         treatment = _coerce_text(candidate.get("treatment_standards_routes")) if candidate else ""
         treatment_values = hints.get("treatmentStandardsRoutes") if isinstance(hints.get("treatmentStandardsRoutes"), list) else []
         mix = _coerce_text(candidate.get("mix_and_location_types")) if candidate else ""
         mix_values = hints.get("mixAndLocationTypes") if isinstance(hints.get("mixAndLocationTypes"), list) else []
-        return {
+        fallback_treatment = _extract_hint_value(hints, ("treatment", "treatment_standards_routes"))
+        fallback_mix = _extract_hint_value(hints, ("mix_location", "mix_and_location_types"))
+        treatment_en = _normalize_text(treatment_en) or _normalize_text(treatment or (treatment_values[0] if treatment_values else fallback_treatment)) or _normalize_text(en_name)
+        treatment_zh = _normalize_text(treatment_zh)
+        mix_en = _normalize_text(mix_en) or _normalize_text(mix or (mix_values[0] if mix_values else fallback_mix)) or _normalize_text(en_name)
+        mix_zh = _normalize_text(mix_zh)
+        name_block = {
             "baseName": [
-                _language_entry(en_name, "en"),
-                _language_entry(zh_name, "zh"),
+                _language_entry(_normalize_text(en_name), "en"),
+                _language_entry(_normalize_text(zh_name), "zh"),
             ],
             "treatmentStandardsRoutes": [
-                _language_entry(treatment or treatment_values[0] if treatment_values else en_name, "en"),
+                _language_entry(treatment_en, "en"),
             ],
             "mixAndLocationTypes": [
-                _language_entry(mix or mix_values[0] if mix_values else en_name, "en"),
+                _language_entry(mix_en, "en"),
             ],
         }
+        if treatment_zh:
+            name_block["treatmentStandardsRoutes"].append(_language_entry(treatment_zh, "zh"))
+        if mix_zh:
+            name_block["mixAndLocationTypes"].append(_language_entry(mix_zh, "zh"))
+        return name_block
 
     @staticmethod
     def _build_synonyms(
         hints: Mapping[str, list[str] | str],
         en_name: str,
         zh_name: str,
+        *,
+        synonyms_en: Sequence[str] | str | None = None,
+        synonyms_zh: Sequence[str] | str | None = None,
     ) -> list[dict[str, Any]]:
-        en_values = hints.get("en_synonyms") or []
-        zh_values = hints.get("zh_synonyms") or []
+        if synonyms_en is None:
+            en_values = hints.get("en_synonyms") or []
+        else:
+            en_values = _normalize_text_list(synonyms_en)
+        if synonyms_zh is None:
+            zh_values = hints.get("zh_synonyms") or []
+        else:
+            zh_values = _normalize_text_list(synonyms_zh)
         if isinstance(en_values, str):
             en_values = [en_values]
         if isinstance(zh_values, str):
             zh_values = [zh_values]
-        en_synonyms = "; ".join(en_values or [en_name])
-        zh_synonyms = "; ".join(zh_values or [zh_name])
+        en_synonyms = "; ".join([_normalize_text(value) for value in (en_values or [en_name]) if _normalize_text(value)])
+        zh_synonyms = "; ".join([_normalize_text(value) for value in (zh_values or [zh_name]) if _normalize_text(value)])
+        if not en_synonyms:
+            en_synonyms = _normalize_text(en_name)
+        if not zh_synonyms:
+            zh_synonyms = _normalize_text(zh_name)
         return [
             _language_entry(en_synonyms, "en"),
             _language_entry(zh_synonyms, "zh"),

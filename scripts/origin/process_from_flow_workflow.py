@@ -51,6 +51,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--secrets", type=Path, default=Path(".secrets/secrets.toml"), help="Secrets file for LLM/SI tools.")
     parser.add_argument("--no-llm", action="store_true", help="Run without LLM (deterministic fallback).")
     parser.add_argument("--no-translate-zh", action="store_true", help="Skip adding Chinese translations.")
+    parser.add_argument(
+        "--allow-density-conversion",
+        action="store_true",
+        help="Allow LLM-based density conversion for mass/volume mismatches.",
+    )
     parser.add_argument("--min-si-hint", default="possible", help="Min si_hint to download (none|possible|likely).")
     parser.add_argument("--si-max-links", type=int, help="Max SI links per DOI.")
     parser.add_argument("--si-timeout", type=float, help="HTTP timeout for SI download.")
@@ -88,6 +93,8 @@ def _run_reference_stage(args: argparse.Namespace, run_id: str) -> None:
         cmd.append("--no-llm")
     if args.no_translate_zh:
         cmd.append("--no-translate-zh")
+    if args.allow_density_conversion:
+        cmd.append("--allow-density-conversion")
     _run_python(script, cmd)
 
 
@@ -182,6 +189,8 @@ def _run_main_pipeline(args: argparse.Namespace, run_id: str) -> None:
         cmd.append("--no-llm")
     if args.no_translate_zh:
         cmd.append("--no-translate-zh")
+    if args.allow_density_conversion:
+        cmd.append("--allow-density-conversion")
     if args.stop_after:
         cmd.extend(["--stop-after", args.stop_after])
     if args.publish:
