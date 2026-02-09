@@ -15,6 +15,7 @@ from tiangong_lca_spec.core.config import Settings, get_settings
 from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.core.logging import get_logger
+from tiangong_lca_spec.core.mcp_snapshot import append_mcp_snapshot
 
 LOGGER = get_logger(__name__)
 
@@ -72,6 +73,13 @@ class MCPToolClient:
         connection = self._ensure_connection(server_name)
         try:
             payload, attachments = self._call_tool(connection, server_name, tool_name, arguments)
+            append_mcp_snapshot(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                status="ok",
+                payload=payload,
+            )
         except ClosedResourceError as exc:
             LOGGER.warning(
                 "mcp_tool_client.connection_reset",
@@ -80,7 +88,33 @@ class MCPToolClient:
             )
             self._reset_connection(server_name)
             connection = self._ensure_connection(server_name)
-            payload, attachments = self._call_tool(connection, server_name, tool_name, arguments)
+            try:
+                payload, attachments = self._call_tool(connection, server_name, tool_name, arguments)
+            except Exception as retry_exc:
+                append_mcp_snapshot(
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    status="error",
+                    error=str(retry_exc),
+                )
+                raise
+            append_mcp_snapshot(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                status="ok",
+                payload=payload,
+            )
+        except Exception as exc:
+            append_mcp_snapshot(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                status="error",
+                error=str(exc),
+            )
+            raise
         return payload, attachments
 
     def invoke_json_tool(

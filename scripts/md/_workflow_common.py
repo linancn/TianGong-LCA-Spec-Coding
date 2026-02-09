@@ -23,7 +23,7 @@ class OpenAIResponsesLLM:
         self,
         api_key: str,
         model: str,
-        timeout: int = 2400,
+        timeout: int = 600,
         cache_dir: Path | None = Path("artifacts/cache/openai"),
         use_cache: bool = True,
         base_url: str | None = None,

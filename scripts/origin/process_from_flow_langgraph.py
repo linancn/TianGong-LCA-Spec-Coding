@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
@@ -592,6 +593,110 @@ def _write_process_exports(datasets: list[dict[str, Any]], exports_dir: Path) ->
     return written
 
 
+def _collect_referenced_flow_refs(process_datasets: list[dict[str, Any]]) -> list[tuple[str, str | None]]:
+    refs: dict[tuple[str, str | None], None] = {}
+    for payload in process_datasets:
+        process_payload = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), Mapping) else payload
+        if not isinstance(process_payload, Mapping):
+            continue
+        exchanges_block = process_payload.get("exchanges")
+        if not isinstance(exchanges_block, Mapping):
+            continue
+        exchanges = exchanges_block.get("exchange", [])
+        if isinstance(exchanges, Mapping):
+            exchanges = [exchanges]
+        if not isinstance(exchanges, list):
+            continue
+        for exchange in exchanges:
+            if not isinstance(exchange, Mapping):
+                continue
+            ref = exchange.get("referenceToFlowDataSet")
+            if not isinstance(ref, Mapping):
+                continue
+            if ref.get("unmatched:placeholder"):
+                continue
+            flow_uuid = str(ref.get("@refObjectId") or "").strip()
+            if not flow_uuid:
+                continue
+            version_text = str(ref.get("@version") or "").strip() or None
+            refs[(flow_uuid, version_text)] = None
+    return sorted(refs.keys())
+
+
+def _export_referenced_flows_from_processes(
+    process_datasets: list[dict[str, Any]],
+    exports_dir: Path,
+) -> list[Path]:
+    refs = _collect_referenced_flow_refs(process_datasets)
+    if not refs:
+        return []
+
+    from tiangong_lca_spec.core.config import get_settings
+    from tiangong_lca_spec.core.mcp_client import MCPToolClient
+
+    flows_dir = exports_dir / "flows"
+    flows_dir.mkdir(parents=True, exist_ok=True)
+    settings = get_settings()
+    server_name = settings.flow_search_service_name
+    written: list[Path] = []
+    failed: list[tuple[str, str | None, str]] = []
+
+    def _extract_flow_dataset(raw: Any) -> Mapping[str, Any] | None:
+        if not isinstance(raw, Mapping):
+            return None
+        if isinstance(raw.get("flowDataSet"), Mapping):
+            return raw.get("flowDataSet")
+        data = raw.get("data")
+        if isinstance(data, list) and data:
+            first = data[0] if isinstance(data[0], Mapping) else None
+            if isinstance(first, Mapping):
+                for key in ("json_ordered", "json"):
+                    payload = first.get(key)
+                    if isinstance(payload, Mapping) and isinstance(payload.get("flowDataSet"), Mapping):
+                        return payload.get("flowDataSet")
+        return None
+
+    with MCPToolClient(settings) as client:
+        for flow_uuid, version in refs:
+            payload: dict[str, Any] = {"operation": "select", "table": "flows", "id": flow_uuid}
+            if version:
+                payload["version"] = version
+            try:
+                raw = client.invoke_json_tool(server_name, DATABASE_TOOL_NAME, payload)
+                dataset = _extract_flow_dataset(raw)
+                if dataset is None and version:
+                    raw = client.invoke_json_tool(
+                        server_name,
+                        DATABASE_TOOL_NAME,
+                        {"operation": "select", "table": "flows", "id": flow_uuid},
+                    )
+                    dataset = _extract_flow_dataset(raw)
+            except Exception as exc:  # noqa: BLE001
+                failed.append((flow_uuid, version, str(exc)))
+                continue
+            if not isinstance(dataset, Mapping):
+                failed.append((flow_uuid, version, "Flow payload not found"))
+                continue
+
+            dataset_version = _resolve_flow_dataset_version(dataset)
+            if not dataset_version and version:
+                dataset_version = version
+            filename = _build_export_filename(flow_uuid, dataset_version)
+            target = flows_dir / filename
+            dump_json({"flowDataSet": dict(dataset)}, target)
+            written.append(target)
+
+    if written:
+        print(f"Fetched {len(written)} referenced flow dataset(s) via CRUD into {flows_dir}", file=sys.stderr)
+    if failed:
+        preview = "; ".join(f"{uuid}@{ver or '*'}: {error}" for uuid, ver, error in failed[:5])
+        print(
+            f"[warn] Failed to fetch {len(failed)} referenced flow dataset(s) via CRUD. {preview}",
+            file=sys.stderr,
+        )
+    return written
+
+
 def _publish_sources(
     datasets: list[dict[str, Any]],
     *,
@@ -686,12 +791,14 @@ def main() -> None:
             llm = OpenAIResponsesLLM(api_key=api_key, model=model, base_url=base_url)
         source_datasets = _load_source_datasets(run_id)
         datasets = _load_process_datasets(run_id)
+        _export_referenced_flows_from_processes(datasets, exports_dir)
         if args.publish_flows:
             flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm, exports_dir=exports_dir)
             if args.commit and flow_plans:
                 updated = _apply_flow_refs_to_processes(datasets, flow_plans)
                 if updated:
                     _write_process_exports(datasets, exports_dir)
+                    _export_referenced_flows_from_processes(datasets, exports_dir)
         if source_datasets:
             _publish_sources(source_datasets, commit=args.commit, process_datasets=datasets)
         _publish_processes(datasets, commit=args.commit)
@@ -710,6 +817,10 @@ def main() -> None:
     cache_dir = ensure_run_cache_dir(run_id)
     exports_dir = ensure_run_exports_dir(run_id)
     state_path = cache_dir / "process_from_flow_state.json"
+    snapshot_dir = cache_dir / "mcp_snapshots"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["TIANGONG_PFF_MCP_SNAPSHOT_DIR"] = str(snapshot_dir)
+    os.environ["TIANGONG_PFF_RUN_ID"] = run_id
     input_dir = _ensure_run_input_dir(run_id)
     try:
         shutil.copy2(args.flow, input_dir / args.flow.name)
@@ -769,6 +880,7 @@ def main() -> None:
         return
 
     written = _write_process_exports(datasets, exports_dir)
+    _export_referenced_flows_from_processes(datasets, exports_dir)
 
     LATEST_RUN_ID_PATH.write_text(run_id, encoding="utf-8")
     print(f"Wrote {len(written)} process dataset(s) to {exports_dir / 'processes'}", file=sys.stderr)
@@ -793,6 +905,7 @@ def main() -> None:
                 updated = _apply_flow_refs_to_processes(datasets, flow_plans)
                 if updated:
                     _write_process_exports(datasets, exports_dir)
+                    _export_referenced_flows_from_processes(datasets, exports_dir)
         if isinstance(source_payloads, list) and source_payloads:
             _publish_sources(source_payloads, commit=args.commit, process_datasets=datasets)
         _publish_processes(datasets, commit=args.commit)

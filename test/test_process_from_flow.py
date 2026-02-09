@@ -98,6 +98,20 @@ class FakeLLM:
                     }
                 ]
             }
+        if prompt.startswith("You are writing the intended applications field for an ILCD process dataset."):
+            return {
+                "intended_applications": {
+                    "en": "Intended for unit-process LCA modelling of the test flow based on provided scope and assumptions.",
+                    "zh": "用于基于给定范围与假设的测试流单元过程生命周期清单建模。",
+                }
+            }
+        if prompt.startswith("You are writing dataCutOffAndCompletenessPrinciples for an ILCD process dataset."):
+            return {
+                "data_cut_off_and_completeness_principles": {
+                    "en": "Exchange completeness reflects available evidence; unresolved placeholders indicate potential gaps.",
+                    "zh": "交换清单完整性基于现有证据，未解析占位符表示可能存在缺口。",
+                }
+            }
         if prompt.startswith("You are extracting quantitative exchange values from evidence."):
             return {"processes": []}
         if prompt.startswith("You are selecting level"):
@@ -314,3 +328,60 @@ def test_process_from_flow_filters_unplanned_outputs(tmp_path: Path) -> None:
     names = [str(item.get("exchangeName") or "").lower() for item in exchanges]
     assert sum("test flow" in name for name in names) == 1
     assert not any(name == "ham" for name in names)
+
+
+def test_process_from_flow_exchange_comments_include_io_tags(tmp_path: Path) -> None:
+    flow_uuid = str(uuid4())
+    flow_path = tmp_path / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "flowDataSet": {
+                    "flowInformation": {
+                        "dataSetInformation": {
+                            "common:UUID": flow_uuid,
+                            "name": {
+                                "baseName": [{"@xml:lang": "en", "#text": "Test flow"}],
+                                "treatmentStandardsRoutes": [{"@xml:lang": "en", "#text": "Finished product, manufactured"}],
+                                "mixAndLocationTypes": [{"@xml:lang": "en", "#text": "Production mix, at plant"}],
+                                "flowProperties": [],
+                            },
+                            "classificationInformation": {"common:classification": {"common:class": [{"@level": "0", "@classId": "0", "#text": "Test"}]}},
+                            "common:generalComment": [{"@xml:lang": "en", "#text": "Test flow general comment."}],
+                        }
+                    },
+                    "administrativeInformation": {"publicationAndOwnership": {"common:dataSetVersion": "01.01.000"}},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    llm = FakeLLM()
+    service = ProcessFromFlowService(llm=llm, flow_search_fn=fake_flow_search)
+    state = service.run(flow_path=flow_path, operation="produce")
+
+    datasets = state.get("process_datasets") or []
+    assert len(datasets) == 1
+    process_data_set = datasets[0]["processDataSet"]
+    exchanges = process_data_set["exchanges"]["exchange"]
+    assert isinstance(exchanges, list) and exchanges
+
+    for item in exchanges:
+        comment_block = item.get("generalComment")
+        texts: list[str] = []
+        if isinstance(comment_block, list):
+            for entry in comment_block:
+                if isinstance(entry, dict):
+                    text = str(entry.get("#text") or "").strip()
+                    if text:
+                        texts.append(text)
+        elif isinstance(comment_block, dict):
+            text = str(comment_block.get("#text") or "").strip()
+            if text:
+                texts.append(text)
+        elif isinstance(comment_block, str) and comment_block.strip():
+            texts.append(comment_block.strip())
+        assert any("[tg_io_kind_tag=" in text for text in texts)
+        assert any("[tg_io_uom_tag=" in text for text in texts)

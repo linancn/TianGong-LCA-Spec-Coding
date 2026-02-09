@@ -24,9 +24,11 @@
 - Step 4b align exchange units：校验 flow unit group 兼容性；同量纲自动换算到 flow 参考单位并回写 amount/unit，跨量纲标记为待复核。
 - Step 4c density conversion（可选）：仅对 product/waste flow 且 mass↔volume 不匹配时，使用 LLM 依据技术描述/过程上下文进行密度估计并换算，保留原始值与假设，写入 dataTreatmentAndExtrapolationsPrinciples。
 - Step 1f build sources：生成 source 数据集与引用。
+- Step 5a intended applications：基于 technical_description/scope/assumptions 由 LLM 生成 intendedApplications，写入 administrativeInformation.common:commissionerAndGoal.common:intendedApplications。
 - Step 5 build process datasets：输出最终 ILCD process 数据集。
 - Step 6 resolve placeholders：对占位符 exchange 进行二次检索与筛选，回填匹配结果并输出占位符报告。
 - Step 7 balance review：对每个 process 的 mass/energy 进行平衡校验，生成 review 报告（不拦截流程）。
+- Step 8 data cut-off & completeness：在占位符补全与平衡校验后汇总缺失/占位符/换算信息，由 LLM 生成 dataCutOffAndCompletenessPrinciples 并写回 process。
 
 ## LangGraph 核心工作流（ProcessFromFlowService）
 ### 入口与依赖
@@ -57,6 +59,8 @@
 - `EXCHANGES_PROMPT` 生成交换清单，`is_reference_flow` 与 `reference_flow_name` 对齐；生产用 Output，处置/处理用 Input。
 - Exchange 名称必须可搜索且不复合；补全 unit/amount（缺失用占位符）。
 - 对排放类自动补充介质标签（`to air`/`to water`/`to soil`），并标注 `flow_type` 与 `search_hints`。
+- 每条 exchange 的 `generalComment` 需追加机器可读标签：`[tg_io_kind_tag=<flow_type>] [tg_io_uom_tag=<unit>]`。
+- 标签键名禁止使用 `classification`/`category`/`typeOfDataSet` 等易歧义命名。
 - 为每条 exchange 标注 `material_role`（`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`），对不进入产品的辅料/催化剂输入设置 `balance_exclude=true`。
 - 每条 exchange 写入 `data_source`/`evidence`，推断项标记 `source_type=expert_judgement`。
 - 可用文献时会额外检索交换证据，写入 `scientific_references.step3`。
@@ -67,7 +71,7 @@
 - 可缩放 exchange 依据 `basis_*` 进行换算并追加说明。
 
 4) match_flows
-- 对每个 exchange 执行 flow 搜索（候选最多 10 条），LLM 选择器挑选，禁止相似度兜底。
+- 对每个 exchange 执行 flow 搜索（候选最多 10 条）；默认使用 LLM 选择器并禁相似度兜底，无 LLM 时回退 SimilarityCandidateSelector。
 - 写入 `flow_search.query/candidates/selected_uuid/selected_reason/selector/unmatched`，并回填 uuid/shortDescription。
 - 仅补充匹配信息，不覆盖 `data_source`/`evidence`。
 
@@ -85,12 +89,17 @@
 - 基于检索结果生成 ILCD source 数据集（`tidas_sdk.create_source`），写入 `source_datasets` 与 `source_references`。
 - 按 `usage_tagging`/Step 1c summaries/Step 1b usability/industry_average 推断用途，过滤保留被使用文献（非 `background_only`）。
 
+5a) intended_applications
+- 在 `build_process_datasets` 前为每个 process 单独调用 LLM，输入该 process 的 `description`/`boundary`/`assumptions`（若缺失则回退到全局 `technical_description`/`scope`/`assumptions`）生成 intended applications（中英文各一条）。
+- 写入 `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`。
+
 5) build_process_datasets
 - 生成 ILCD process 数据集（`operation` 决定参考流方向；可选 Translator 补充中文多语字段）。
 - `ProcessClassifier` 分类失败回 Manufacturing；缺失 flow 用占位符，禁止凭空生成 uuid/shortDescription。
 - 尝试 `DatabaseCrudClient.select_flow` 补齐 flow 版本/shortDescription 与 flowProperty/unit group。
 - 强制参考流交换；空量值回退 `"1.0"`；`tidas_sdk.create_process` 做校验（失败仅记录警告）。
 - exchange 的 `referencesToDataSource` 优先使用 `value_citations`/`value_evidence` 匹配，其余 evidence 聚合到 process 层。
+- 同时基于当前 exchanges 做快速质量/能量汇总生成 balance note，连同 density conversion notes 写入 `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataTreatmentAndExtrapolationsPrinciples`（独立于 Step 7 报告）。
 
 6) resolve_placeholders（占位符补全，后处理）
 - 仅在 `build_process_datasets` 之后运行：扫描 `referenceToFlowDataSet.unmatched:placeholder=true` 的 exchange。
@@ -105,19 +114,23 @@
 - 输出 `balance_review`/`balance_review_summary`，标记 `ok|check|insufficient` 并记录 warning；不改写 exchange 数值。
 - 同时记录 `unit_mismatches` 与 `density_estimates` 以便人工复核。
 
+8) dataCutOffAndCompletenessPrinciples
+- 在 `resolve_placeholders`/`balance_review` 之后为每个 process 汇总缺失量值、占位符、单位换算/密度换算等信息。
+- 由 LLM 按 process 生成 `dataCutOffAndCompletenessPrinciples`（中英文各一条），写入 `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`。
+
 ## Origin 编排工作流（scripts/origin）
 ### 目标与顺序
 - 目标：在 Step 1-3 前写回 SI/用途标注，保证提示词能读取 SI 证据。
 - 编排顺序：
-  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 4b → Step 4c → Step 1f → Step 5 → Step 6
+  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 4b → Step 4c → Step 1f → Step 5a → Step 5 → Step 6 → Step 7 → Step 8
 
 ### 核心脚本与工具
 - `process_from_flow_workflow.py`：主编排脚本，负责前置 1b-usability/1d/1e 并 resume 主流程。
 - `process_from_flow_langgraph.py`：LangGraph CLI（run/resume/cleanup/publish），支持 `--stop-after` 与 `--publish/--commit`。
 - `process_from_flow_reference_usability.py`：Step 1b 可用性筛选（LCIA vs LCI）。
-- `process_from_flow_download_si.py`：下载 SI 原件并写回元数据。
+- `process_from_flow_download_si.py`：下载 SI 原件并写回元数据（支持 `--doi/--cluster/--recommendation` 过滤，`--dry-run` 仅列链接，`--no-update-state` 不写回 state）。
 - `mineru_for_process_si.py`：解析 PDF/图像 SI 为 JSON 结构。
-- `process_from_flow_reference_usage_tagging.py`：标注文献用途 `usage_tagging`。
+- `process_from_flow_reference_usage_tagging.py`：标注文献用途 `usage_tagging`（会回写到 `step_1c_reference_clusters.reference_summaries`）。
 - `process_from_flow_build_sources.py`：从缓存 state 补写 source 数据集。
 - `process_from_flow_placeholder_report.py`：生成占位符补全报告（默认写入 `cache/placeholder_report.json` 并更新 state）。
 
@@ -127,10 +140,12 @@
 - `process_from_flow_langgraph.py` 的 `--stop-after datasets` 等价完整跑完（含占位符补全）后写出 datasets；其他值会提前停并保存 state。
 - `--allow-density-conversion` 允许 LLM 基于技术描述估计密度并进行 mass↔volume 换算（仅 product/waste flow）。
 - 占位符补全默认仅执行一次；需重跑时手动清空 `placeholder_resolution_applied`/`placeholder_resolutions` 后再 `--resume`。
+- `process_from_flow_workflow.py` 在 resume 前会清理 state 中的 `stop_after`，避免主流程被提前截断。
 
 ## 状态字段（state）
 - 输入与上下文：`flow_path`、`flow_dataset`、`flow_summary`、`operation`、`scientific_references`。
 - 路线与过程：`technology_routes`、`process_routes`、`selected_route_id`、`technical_description`、`assumptions`、`scope`、`processes`。
+- 目标用途与完整性：`intended_applications`、`data_cut_off_and_completeness_principles`、`data_cutoff_principles_applied`、`data_cutoff_summary`。
 - 交换与匹配：`process_exchanges`、`exchange_value_candidates`、`exchange_values_applied`、`matched_process_exchanges`。
 - 产出：`process_datasets`、`source_datasets`、`source_references`。
 - 评估与标记：`coverage_metrics`、`coverage_history`、`stop_rule_decision`、`step_markers`、`stop_after`。
@@ -145,6 +160,14 @@
 - Step 3b：`EXCHANGE_VALUE_PROMPT` 读取 `fulltext_references` + `si_snippets`。
 - Step 4/Step 5 不直接读取 SI。
 - SI 必须在 Step 1 前写回 `process_from_flow_state.json`，否则需回跑 Step 1-3。
+- `si_snippets` 来源于 MinerU 解析输出 + 直接解析的文本型 SI（`docx/xlsx/csv/tsv/txt/md`），优先 primary cluster DOI；按来源优先级 `docx > tabular(xlsx/csv/tsv) > text > mineru` 排序，最多 3 个 DOI、每个 DOI 取 1 段，单段截断到 2000 字符。
+
+## 文案字段来源（实现细节）
+- `processInformation.dataSetInformation.common:generalComment`：来自 Step 2 `process.description`，缺失时回退 `technical_description`。
+- `exchanges.exchange.generalComment`：来自 Step 3 `exchange.generalComment` + evidence 汇总，并强制追加 `tg_io_kind_tag` 与 `tg_io_uom_tag`。
+- `processInformation.technology.technologyDescriptionAndIncludedProcesses`：拼接 `technical_description` + `process.description` + **全局** `assumptions`（不是单个 process 的 `structure.assumptions`）。
+- `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`：Step 5a 基于每个 process 的 `description`/`boundary`/`assumptions` 生成；缺失时回退全局。
+- `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`：Step 8 按 process 汇总占位符/缺失量值/换算信息后生成。
 
 ## 产出与调试
 - 运行输出目录：`artifacts/process_from_flow/<run_id>/`（`input/`、`cache/`、`exports/`）。
@@ -234,6 +257,7 @@ uv run python test/test_scientific_references.py
 - 可选步骤：判断 Step 1b 全文是否足以支撑路径拆分/交换生成。
 - 若全文仅包含 LCIA 影响指标（如 ADP/AP/GWP/EP/PED/RI）或单位为 `kg CO2 eq`/`kg SO2 eq`/`kg Sb eq`/`kg PO4 eq` 等，而没有任何 LCI 物理清单行（kg、g、t、m2、m3、pcs、kWh、MJ），一律标记为 `unusable`。
 - 当正文提示 Supporting Information/Appendix 可能包含清单表时，记录 `si_hint`（`likely|possible|none`）与 `si_reason`；若正文本身无 LCI 表，仍保持 `decision=unusable`。
+- 若 LLM 返回 `si_hint=none` 且无 `si_reason`，脚本会自动扫描正文关键词补充 `likely/possible` 并写回。
 - Prompt 模板：`src/tiangong_lca_spec/process_from_flow/prompts.py` 中的 `REFERENCE_USABILITY_PROMPT`。
 - 脚本：`uv run python scripts/origin/process_from_flow_reference_usability.py --run-id <run_id>`。
 - 输出：`process_from_flow_state.json` 的 `scientific_references.usability`。

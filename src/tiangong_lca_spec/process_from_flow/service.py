@@ -98,10 +98,12 @@ from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 from tiangong_lca_spec.utils.translate import Translator
 
 from .prompts import (
+    DATA_CUTOFF_COMPLETENESS_PROMPT,
     DENSITY_ESTIMATE_PROMPT,
     EXCHANGE_VALUE_PROMPT,
     EXCHANGES_PROMPT,
     INDUSTRY_AVERAGE_PROMPT,
+    INTENDED_APPLICATIONS_PROMPT,
     PROCESS_SPLIT_PROMPT,
     REFERENCE_CLUSTER_PROMPT,
     TECH_DESCRIPTION_PROMPT,
@@ -1995,8 +1997,10 @@ def _get_unit_group_info(unit_group_id: str | None) -> UnitGroupInfo | None:
 def _flow_reference_info_from_dataset(flow_dataset: dict[str, Any] | None) -> FlowReferenceInfo | None:
     if not isinstance(flow_dataset, dict):
         return None
-    flow_data = flow_dataset.get("flowDataSet") if isinstance(flow_dataset.get("flowDataSet"), dict) else None
-    if not flow_data:
+    # DatabaseCrudClient.select_flow() may return either {"flowDataSet": {...}}
+    # or the bare flowDataSet payload. Accept both.
+    flow_data = flow_dataset.get("flowDataSet") if isinstance(flow_dataset.get("flowDataSet"), dict) else flow_dataset
+    if not isinstance(flow_data, dict):
         return None
     flow_info = flow_data.get("flowInformation") if isinstance(flow_data.get("flowInformation"), dict) else None
     quant_ref = flow_info.get("quantitativeReference") if isinstance(flow_info, dict) else None
@@ -2416,6 +2420,7 @@ def _apply_exchange_value_candidates(
                 exchange["data_source"] = data_source
                 exchange["evidence"] = evidence
                 _merge_value_evidence(exchange, value_citations, value_evidence)
+            _ensure_exchange_comment_tags(exchange)
             cleaned.append(exchange)
         updated.append({"process_id": process_id, "exchanges": cleaned})
     return updated
@@ -2726,6 +2731,58 @@ def _format_evidence_for_comment(evidence: list[str]) -> str:
     if not compacted:
         return ""
     return f"Evidence: {' | '.join(compacted)}"
+
+
+def _sanitize_exchange_comment_tag_value(value: Any, *, fallback: str) -> str:
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        text = fallback
+    text = re.sub(r"\s+", "_", text)
+    text = text.replace("[", "").replace("]", "")
+    return text or fallback
+
+
+def _exchange_comment_tag_block(*, flow_kind: Any, unit: Any) -> str:
+    normalized_kind = _normalize_flow_type(flow_kind) or str(flow_kind or "").strip().lower() or "unknown"
+    kind_tag = _sanitize_exchange_comment_tag_value(normalized_kind, fallback="unknown")
+    unit_tag = _sanitize_exchange_comment_tag_value(unit, fallback="unit")
+    return f"[{_EXCHANGE_KIND_TAG_NAME}={kind_tag}] [{_EXCHANGE_UNIT_TAG_NAME}={unit_tag}]"
+
+
+def _strip_exchange_comment_tags(comment: Any) -> str:
+    text = str(comment).strip() if comment is not None else ""
+    if not text:
+        return ""
+    stripped = _EXCHANGE_COMMENT_TAG_PATTERN.sub("", text)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    stripped = stripped.strip("|;").strip()
+    return stripped
+
+
+def _apply_exchange_comment_tags(comment: Any, *, flow_kind: Any, unit: Any) -> str:
+    base = _strip_exchange_comment_tags(comment)
+    tags = _exchange_comment_tag_block(flow_kind=flow_kind, unit=unit)
+    if base:
+        return f"{base} {tags}".strip()
+    return tags
+
+
+def _ensure_exchange_comment_tags(exchange: dict[str, Any]) -> None:
+    direction = str(exchange.get("exchangeDirection") or "").strip()
+    is_reference = bool(exchange.get("is_reference_flow"))
+    flow_kind = _normalize_flow_type(exchange.get("flow_type") or exchange.get("flowType"))
+    if not flow_kind:
+        flow_kind = _infer_flow_type(
+            str(exchange.get("exchangeName") or ""),
+            direction=direction,
+            is_reference_flow=is_reference,
+        )
+    unit = str(exchange.get("unit") or "").strip() or "unit"
+    exchange["generalComment"] = _apply_exchange_comment_tags(
+        exchange.get("generalComment"),
+        flow_kind=flow_kind,
+        unit=unit,
+    )
 
 
 def _parse_industry_average_response(data: dict[str, Any]) -> tuple[str | None, str | None, list[str], str | None]:
@@ -3322,9 +3379,16 @@ FlowSearchFn = Callable[[FlowQuery], tuple[list[FlowCandidate], list[object]]]
 _DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\])>,;\"']+", re.IGNORECASE)
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _URL_PATTERN = re.compile(r"https?://[^\s\])>]+", re.IGNORECASE)
+_CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 _FLOW_LABEL_PATTERN = re.compile(r"^f\\d+\\s*[:\\-]\\s*", re.IGNORECASE)
 _QUANT_REF_PATTERN = re.compile(
     r"^(?P<amount>\\d+(?:\\.\\d+)?)\\s*(?P<unit>[^\\s]+)\\s+of\\s+(?P<flow>.+)$",
+    re.IGNORECASE,
+)
+_EXCHANGE_KIND_TAG_NAME = "tg_io_kind_tag"
+_EXCHANGE_UNIT_TAG_NAME = "tg_io_uom_tag"
+_EXCHANGE_COMMENT_TAG_PATTERN = re.compile(
+    rf"\[(?:{_EXCHANGE_KIND_TAG_NAME}|{_EXCHANGE_UNIT_TAG_NAME})=[^\]]*\]",
     re.IGNORECASE,
 )
 _FLOW_NAME_FIELDS = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
@@ -3390,6 +3454,7 @@ class ProcessFromFlowState(TypedDict, total=False):
     technology_routes: list[dict[str, Any]]
     process_routes: list[dict[str, Any]]
     selected_route_id: str
+    intended_applications: dict[str, dict[str, str]] | dict[str, str] | list[str]
     processes: list[dict[str, Any]]
     process_exchanges: list[dict[str, Any]]
     exchange_value_candidates: list[dict[str, Any]]
@@ -3407,6 +3472,9 @@ class ProcessFromFlowState(TypedDict, total=False):
     density_conversion_summary: dict[str, Any]
     balance_review: list[dict[str, Any]]
     balance_review_summary: dict[str, Any]
+    data_cut_off_and_completeness_principles: dict[str, dict[str, str]] | dict[str, str] | list[str]
+    data_cutoff_principles_applied: bool
+    data_cutoff_summary: dict[str, Any]
     step_markers: dict[str, bool]
     scientific_references: dict[str, Any]
     coverage_metrics: dict[str, Any]
@@ -3535,6 +3603,133 @@ def _as_multilang_list(value: Any, *, default_lang: str = "en") -> MultiLangList
         return MultiLangList([_language_entry(text, lang)])
     text = str(value).strip()
     return MultiLangList([_language_entry(text, default_lang)]) if text else MultiLangList()
+
+
+def _contains_chinese(text: str) -> bool:
+    return bool(_CJK_PATTERN.search(text or ""))
+
+
+def _coerce_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict) and "#text" in value:
+        text = str(value.get("#text") or "").strip()
+        return [text] if text else []
+    return _clean_string_list(value)
+
+
+def _join_texts(values: Any) -> str | None:
+    parts = _coerce_text_list(values)
+    if not parts:
+        return None
+    parts = _dedupe_flows([text for text in parts if text])
+    return "; ".join(parts) if parts else None
+
+
+def _split_bilingual_values(values: list[str]) -> dict[str, str]:
+    en_parts: list[str] = []
+    zh_parts: list[str] = []
+    for item in values:
+        if _contains_chinese(item):
+            zh_parts.append(item)
+        else:
+            en_parts.append(item)
+    result: dict[str, str] = {}
+    en_text = _join_texts(en_parts)
+    zh_text = _join_texts(zh_parts)
+    if en_text:
+        result["en"] = en_text
+    if zh_text:
+        result["zh"] = zh_text
+    return result
+
+
+def _normalize_bilingual_text(value: Any) -> dict[str, str]:
+    texts: dict[str, str] = {}
+    if isinstance(value, dict):
+        for key in ("en", "zh", "zh-cn", "zh-hans", "zh_cn", "zh-hant"):
+            if key in value:
+                text = _join_texts(value.get(key))
+                if text:
+                    lang = "zh" if key.startswith("zh") else "en"
+                    texts[lang] = text
+        if texts:
+            return texts
+        if "@xml:lang" in value and "#text" in value:
+            lang_raw = str(value.get("@xml:lang") or "").strip().lower()
+            lang = "zh" if lang_raw.startswith("zh") else (lang_raw or "en")
+            text = _join_texts(value)
+            if text:
+                texts[lang] = text
+            return texts
+        for key in (
+            "intended_applications",
+            "intendedApplications",
+            "data_cut_off_and_completeness_principles",
+            "dataCutOffAndCompletenessPrinciples",
+        ):
+            if key in value:
+                nested = _normalize_bilingual_text(value.get(key))
+                if nested:
+                    return nested
+    if isinstance(value, list):
+        if all(isinstance(item, dict) and "@xml:lang" in item and "#text" in item for item in value):
+            for item in value:
+                lang_raw = str(item.get("@xml:lang") or "").strip().lower()
+                lang = "zh" if lang_raw.startswith("zh") else (lang_raw or "en")
+                text = _join_texts(item.get("#text"))
+                if not text:
+                    continue
+                if lang in texts:
+                    texts[lang] = f"{texts[lang]}; {text}"
+                else:
+                    texts[lang] = text
+            return texts
+        return _split_bilingual_values(_clean_string_list(value))
+    if isinstance(value, (str, int, float)):
+        text = str(value).strip()
+        if text:
+            if _contains_chinese(text):
+                texts["zh"] = text
+            else:
+                texts["en"] = text
+    return texts
+
+
+def _coerce_bilingual_multilang(
+    value: Any,
+    *,
+    translator: Translator | None = None,
+    fallback_en: str | None = None,
+) -> MultiLangList:
+    texts = _normalize_bilingual_text(value)
+    if fallback_en and not texts.get("en"):
+        texts["en"] = fallback_en
+    en_text = texts.get("en") or ""
+    zh_text = texts.get("zh") or ""
+    if not zh_text and translator and en_text:
+        translated = translator.translate(en_text, "zh")
+        if translated:
+            zh_text = translated.strip()
+    entries: list[dict[str, str]] = []
+    if en_text:
+        entries.append(_language_entry(en_text, "en"))
+    if zh_text:
+        entries.append(_language_entry(zh_text, "zh"))
+    return MultiLangList(entries)
+
+
+def _coerce_bilingual_payload(
+    value: Any,
+    *,
+    translator: Translator | None = None,
+    fallback_en: str | None = None,
+) -> list[dict[str, str]]:
+    return _coerce_bilingual_multilang(value, translator=translator, fallback_en=fallback_en).to_plain_list()
+
+
+def _as_multilang_payload(value: Any, *, default_lang: str = "en") -> list[dict[str, str]]:
+    return _as_multilang_list(value, default_lang=default_lang).to_plain_list()
 
 
 def _global_reference(
@@ -3822,6 +4017,196 @@ def _dedupe_flows(values: list[str]) -> list[str]:
         seen.add(value)
         deduped.append(value)
     return deduped
+
+
+def _fallback_intended_applications(
+    *,
+    flow_summary: dict[str, Any],
+    technical_description: str,
+    scope: str,
+    assumptions: list[str],
+    operation: str | None,
+    process_name: str | None = None,
+) -> str:
+    flow_name = flow_summary.get("base_name_en") or flow_summary.get("base_name_zh") or "reference flow"
+    op = str(operation or "produce").strip().lower()
+    activity = "treatment/disposal" if op in {"treat", "dispose", "disposal", "treatment"} else "production"
+    process_label = str(process_name or "").strip()
+    basis = _compact_text(technical_description or scope, limit=180)
+    if basis:
+        if process_label:
+            return f"Intended for unit-process LCA modelling of {process_label} ({activity} of {flow_name}), based on {basis}."
+        return f"Intended for unit-process LCA modelling of {activity} of {flow_name}, based on {basis}."
+    assumption_text = _compact_text("; ".join([text for text in assumptions if text]), limit=140)
+    if assumption_text:
+        if process_label:
+            return f"Intended for unit-process LCA modelling of {process_label} ({activity} of {flow_name}), " f"based on stated assumptions ({assumption_text})."
+        return f"Intended for unit-process LCA modelling of {activity} of {flow_name}, based on stated assumptions ({assumption_text})."
+    if process_label:
+        return f"Intended for unit-process LCA modelling of {process_label} ({activity} of {flow_name})."
+    return f"Intended for unit-process LCA modelling of {activity} of {flow_name}."
+
+
+def _summarize_cutoff_inputs(state: ProcessFromFlowState, *, process_id: str | None = None) -> dict[str, Any]:
+    matched = state.get("matched_process_exchanges")
+    process_count = 0
+    exchange_total = 0
+    missing_amount = 0
+    missing_unit = 0
+    unit_converted = 0
+    unit_mismatch = 0
+    unit_review = 0
+    unit_missing = 0
+    density_converted = 0
+    source_type_counts = {"literature": 0, "si": 0, "expert_judgement": 0, "unknown": 0}
+    if isinstance(matched, list):
+        for proc in matched:
+            if not isinstance(proc, dict):
+                continue
+            proc_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+            if process_id and proc_id != process_id:
+                continue
+            process_count += 1
+            exchanges = proc.get("exchanges")
+            if not isinstance(exchanges, list):
+                continue
+            for exchange in exchanges:
+                if not isinstance(exchange, dict):
+                    continue
+                exchange_total += 1
+                amount = exchange.get("amount")
+                if amount in (None, ""):
+                    missing_amount += 1
+                unit = str(exchange.get("unit") or "").strip()
+                if not unit:
+                    missing_unit += 1
+                flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                unit_check = flow_search.get("unit_check") if isinstance(flow_search.get("unit_check"), dict) else None
+                density_marked = False
+                if unit_check:
+                    status = str(unit_check.get("status") or "").strip().lower()
+                    if status in {"converted", "converted_by_dimension"}:
+                        unit_converted += 1
+                    elif status == "mismatch":
+                        unit_mismatch += 1
+                    elif status == "review":
+                        unit_review += 1
+                    elif status == "missing_unit":
+                        unit_missing += 1
+                    elif status == "converted_by_density":
+                        density_converted += 1
+                        density_marked = True
+                if isinstance(exchange.get("density_used"), dict) and not density_marked:
+                    density_converted += 1
+                data_source = exchange.get("data_source") if isinstance(exchange.get("data_source"), dict) else {}
+                source_type = _normalize_source_type(data_source.get("source_type"))
+                if source_type in source_type_counts:
+                    source_type_counts[source_type] += 1
+                else:
+                    source_type_counts["unknown"] += 1
+
+    placeholder_report = state.get("placeholder_report")
+    placeholder_total = 0
+    placeholder_resolved = 0
+    placeholder_unresolved = 0
+    if isinstance(placeholder_report, list):
+        placeholder_total = len(placeholder_report)
+        for entry in placeholder_report:
+            if not isinstance(entry, dict):
+                continue
+            entry_process_id = str(entry.get("process_id") or "").strip()
+            if process_id and entry_process_id != process_id:
+                continue
+            status = str(entry.get("resolution_status") or "").strip().lower()
+            if status == "resolved":
+                placeholder_resolved += 1
+            elif status:
+                placeholder_unresolved += 1
+
+    unresolved_entries = _collect_placeholder_entries(state)
+    if process_id:
+        unresolved_entries = [entry for entry in unresolved_entries if str(entry.get("process_id") or "").strip() == process_id]
+    unresolved_current = len(unresolved_entries)
+    balance_review = state.get("balance_review") if isinstance(state.get("balance_review"), list) else []
+    balance_entry = None
+    if process_id:
+        for entry in balance_review:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("process_id") or "").strip() == process_id:
+                balance_entry = entry
+                break
+
+    return {
+        "process_count": process_count,
+        "exchange_total": exchange_total,
+        "exchange_missing_amount": missing_amount,
+        "exchange_missing_unit": missing_unit,
+        "placeholder_total": placeholder_total,
+        "placeholder_resolved": placeholder_resolved,
+        "placeholder_unresolved": placeholder_unresolved,
+        "placeholder_unresolved_current": unresolved_current,
+        "unit_converted": unit_converted,
+        "unit_mismatch": unit_mismatch,
+        "unit_review": unit_review,
+        "unit_missing": unit_missing,
+        "density_converted": density_converted,
+        "balance_review_entry": balance_entry,
+        "source_type_counts": source_type_counts,
+    }
+
+
+def _fallback_cutoff_principles(summary: dict[str, Any]) -> list[str]:
+    notes: list[str] = []
+    missing_amount = int(summary.get("exchange_missing_amount") or 0)
+    unresolved = int(summary.get("placeholder_unresolved_current") or 0)
+    unit_mismatch = int(summary.get("unit_mismatch") or 0)
+    density_converted = int(summary.get("density_converted") or 0)
+    if missing_amount:
+        notes.append(f"{missing_amount} exchange amounts were unavailable and kept as placeholders or expert judgement estimates.")
+    if unresolved:
+        notes.append(f"{unresolved} exchanges still reference placeholder flows after secondary matching.")
+    if unit_mismatch or density_converted:
+        detail = "Unit compatibility checks were applied"
+        if density_converted:
+            detail += f", including {density_converted} density-based conversions"
+        if unit_mismatch:
+            detail += f"; {unit_mismatch} exchanges remain flagged for unit mismatch review."
+        else:
+            detail += "."
+        notes.append(detail if detail.endswith(".") else f"{detail}.")
+    if not notes:
+        notes.append("Data completeness reflects the listed exchanges; no additional cut-off rules are recorded beyond the documented inventory.")
+    return notes[:3]
+
+
+def _apply_data_cutoff_principles(
+    process_datasets: list[dict[str, Any]],
+    principles: Any,
+    *,
+    translator: Translator | None = None,
+    fallback_en: str | None = None,
+) -> list[dict[str, Any]]:
+    if not process_datasets:
+        return process_datasets
+    entries = _coerce_bilingual_payload(principles, translator=translator, fallback_en=fallback_en)
+    updated = copy.deepcopy(process_datasets)
+    for dataset in updated:
+        if not isinstance(dataset, dict):
+            continue
+        process_block = dataset.get("processDataSet")
+        if not isinstance(process_block, dict):
+            continue
+        modelling = process_block.get("modellingAndValidation")
+        if not isinstance(modelling, dict):
+            modelling = {}
+            process_block["modellingAndValidation"] = modelling
+        dsr = modelling.get("dataSourcesTreatmentAndRepresentativeness")
+        if not isinstance(dsr, dict):
+            dsr = {}
+            modelling["dataSourcesTreatmentAndRepresentativeness"] = dsr
+        dsr["dataCutOffAndCompletenessPrinciples"] = list(entries)
+    return updated
 
 
 def _normalize_quantitative_reference(value: Any, fallback_flow_name: str | None) -> str:
@@ -4865,6 +5250,7 @@ def _build_langgraph(
             citations = _clean_evidence_list(data_source.get("citations")) if isinstance(data_source, dict) else []
             evidence = _clean_evidence_list(exchange.get("evidence"))
             _merge_value_evidence(exchange, citations, evidence)
+            _ensure_exchange_comment_tags(exchange)
             process_exchanges = [{"process_id": "P1", "exchanges": [exchange]}]
             coverage_metrics = _compute_coverage_metrics(process_exchanges)
             stop_rule_decision = _evaluate_stop_rules(state, coverage_metrics)
@@ -5040,6 +5426,7 @@ def _build_langgraph(
                 citations = _clean_evidence_list(data_source.get("citations")) if isinstance(data_source, dict) else []
                 evidence = _clean_evidence_list(cleaned_exchange.get("evidence"))
                 _merge_value_evidence(cleaned_exchange, citations, evidence)
+                _ensure_exchange_comment_tags(cleaned_exchange)
                 cleaned_exchanges.append(cleaned_exchange)
             if plan_reference_flow and not matched_reference:
                 reference_exchange = {
@@ -5060,6 +5447,7 @@ def _build_langgraph(
                 citations = _clean_evidence_list(data_source.get("citations")) if isinstance(data_source, dict) else []
                 evidence = _clean_evidence_list(reference_exchange.get("evidence"))
                 _merge_value_evidence(reference_exchange, citations, evidence)
+                _ensure_exchange_comment_tags(reference_exchange)
                 cleaned_exchanges.append(reference_exchange)
             cleaned_exchanges = _dedupe_reference_exchanges(
                 cleaned_exchanges,
@@ -5277,7 +5665,7 @@ def _build_langgraph(
                 if not isinstance(exchange, dict):
                     continue
                 name = str(exchange.get("exchangeName") or "").strip()
-                comment = str(exchange.get("generalComment") or "").strip() or None
+                comment = _strip_exchange_comment_tags(exchange.get("generalComment")) or None
                 search_hints = exchange.get("search_hints") or []
                 if isinstance(search_hints, list) and search_hints:
                     hint_text = ", ".join([str(item) for item in search_hints if str(item).strip()])
@@ -5445,6 +5833,7 @@ def _build_langgraph(
 
                     flow_search["unit_check"] = unit_check
                     exchange["flow_search"] = flow_search
+                    _ensure_exchange_comment_tags(exchange)
         finally:
             if should_close_crud and crud_client:
                 crud_client.close()
@@ -5703,6 +6092,7 @@ def _build_langgraph(
                     unit_check["review_required"] = True
                     flow_search["unit_check"] = unit_check
                     exchange["flow_search"] = flow_search
+                    _ensure_exchange_comment_tags(exchange)
                     summary["exchange_converted"] += 1
         finally:
             if should_close_crud and crud_client:
@@ -5736,6 +6126,89 @@ def _build_langgraph(
         LOGGER.info("process_from_flow.build_sources", count=len(source_datasets))
         return {"source_datasets": source_datasets, "source_references": source_references}
 
+    def generate_intended_applications(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if state.get("intended_applications"):
+            return {}
+        flow_summary = state.get("flow_summary") or {}
+        technical_description = str(state.get("technical_description") or "").strip()
+        scope = str(state.get("scope") or "").strip()
+        assumptions = [str(item).strip() for item in (state.get("assumptions") or []) if str(item).strip()]
+        processes = [item for item in (state.get("processes") or []) if isinstance(item, dict)]
+        intended_map: dict[str, dict[str, str]] = {}
+        for idx, proc in enumerate(processes):
+            process_id = str(proc.get("process_id") or proc.get("processId") or "").strip() or f"process_{idx + 1}"
+            process_name = str(proc.get("name") or "").strip()
+            process_desc = str(proc.get("description") or "").strip() or technical_description
+            structure = proc.get("structure") if isinstance(proc.get("structure"), dict) else {}
+            process_scope = str(structure.get("boundary") or "").strip() or scope
+            process_assumptions = _clean_string_list(structure.get("assumptions") or assumptions)
+            fallback_en = _fallback_intended_applications(
+                flow_summary=flow_summary,
+                technical_description=process_desc,
+                scope=process_scope,
+                assumptions=process_assumptions,
+                operation=state.get("operation"),
+                process_name=process_name or None,
+            )
+            if llm is None:
+                intended_map[process_id] = {"en": fallback_en}
+                continue
+            payload = {
+                "prompt": INTENDED_APPLICATIONS_PROMPT,
+                "context": {
+                    "technical_description": process_desc,
+                    "scope": process_scope,
+                    "assumptions": process_assumptions,
+                    "process": {
+                        "process_id": process_id,
+                        "process_name": process_name,
+                    },
+                },
+                "response_format": {"type": "json_object"},
+            }
+            try:
+                raw = llm.invoke(payload)
+                data = _ensure_dict(raw)
+            except Exception as exc:  # pylint: disable=broad-except
+                LOGGER.warning(
+                    "process_from_flow.intended_applications_failed",
+                    process_id=process_id,
+                    error=str(exc),
+                )
+                data = {}
+            applications = _normalize_bilingual_text(data.get("intended_applications") or data.get("intendedApplications") or data)
+            if not applications:
+                en_text = _join_texts(data.get("intended_applications_en") or data.get("intendedApplicationsEn"))
+                zh_text = _join_texts(data.get("intended_applications_zh") or data.get("intendedApplicationsZh"))
+                if en_text:
+                    applications["en"] = en_text
+                if zh_text:
+                    applications["zh"] = zh_text
+            if not applications:
+                fallback_list = _clean_string_list(data.get("intended_applications") or data.get("intendedApplications"))
+                if fallback_list:
+                    applications = _split_bilingual_values(_dedupe_flows(fallback_list))
+            if not applications.get("en"):
+                applications["en"] = fallback_en
+            if not applications.get("zh") and translator and applications.get("en"):
+                translated = translator.translate(applications["en"], "zh")
+                if translated:
+                    applications["zh"] = translated.strip()
+            intended_map[process_id] = applications
+        if not intended_map:
+            fallback_en = _fallback_intended_applications(
+                flow_summary=flow_summary,
+                technical_description=technical_description,
+                scope=scope,
+                assumptions=assumptions,
+                operation=state.get("operation"),
+            )
+            intended_map["global"] = {"en": fallback_en}
+        return {
+            "intended_applications": intended_map,
+            "step_markers": _update_step_markers(state, "intended_applications"),
+        }
+
     def build_process_datasets(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if state.get("process_datasets"):
             return {}
@@ -5745,6 +6218,7 @@ def _build_langgraph(
         tech_description = state.get("technical_description") or ""
         scope = state.get("scope") or ""
         assumptions = state.get("assumptions") or []
+        intended_source = state.get("intended_applications")
         reference_direction = _reference_direction(state.get("operation"))
         source_datasets = [item for item in (state.get("source_datasets") or []) if isinstance(item, dict)]
         source_references = [item for item in (state.get("source_references") or []) if isinstance(item, dict)]
@@ -5781,6 +6255,31 @@ def _build_langgraph(
                 process_reference_flow = str(plan.get("reference_flow_name") or "").strip()
                 if is_reference_flow_process or not process_reference_flow:
                     process_reference_flow = target_flow_name
+
+                intended_value: Any = None
+                if isinstance(intended_source, dict):
+                    if process_id in intended_source:
+                        intended_value = intended_source.get(process_id)
+                    elif "en" in intended_source or "zh" in intended_source:
+                        intended_value = intended_source
+                elif intended_source is not None:
+                    intended_value = intended_source
+                structure = plan.get("structure") if isinstance(plan.get("structure"), dict) else {}
+                process_scope = str(structure.get("boundary") or "").strip() or scope
+                process_assumptions = _clean_string_list(structure.get("assumptions") or assumptions)
+                fallback_intended = _fallback_intended_applications(
+                    flow_summary=flow_summary,
+                    technical_description=str(process_desc or ""),
+                    scope=str(process_scope or ""),
+                    assumptions=[str(item).strip() for item in process_assumptions if str(item).strip()],
+                    operation=state.get("operation"),
+                    process_name=process_name or None,
+                )
+                intended_applications_ml = _coerce_bilingual_multilang(
+                    intended_value,
+                    translator=translator,
+                    fallback_en=fallback_intended,
+                )
 
                 process_info_for_classifier = {
                     "dataSetInformation": {
@@ -5946,7 +6445,7 @@ def _build_langgraph(
                     amount = exchange.get("amount")
                     amount_text = _default_exchange_amount() if amount in (None, "", 0) else str(amount)
 
-                    comment_text = str(exchange.get("generalComment") or "").strip()
+                    comment_text = _strip_exchange_comment_tags(exchange.get("generalComment"))
                     evidence_text = _format_evidence_for_comment(_clean_evidence_list(exchange.get("evidence")))
                     if evidence_text:
                         if comment_text:
@@ -5954,6 +6453,13 @@ def _build_langgraph(
                                 comment_text = f"{comment_text} {evidence_text}"
                         else:
                             comment_text = evidence_text
+                    comment_flow_kind = _exchange_flow_type_for_dedupe(exchange, direction=direction)
+                    comment_unit = str(exchange.get("unit") or "").strip() or exchange_unit or "unit"
+                    comment_text = _apply_exchange_comment_tags(
+                        comment_text,
+                        flow_kind=comment_flow_kind,
+                        unit=comment_unit,
+                    )
                     exchange_item = ExchangesExchangeItem(
                         data_set_internal_id=internal_id,
                         reference_to_flow_data_set=reference,
@@ -6001,9 +6507,17 @@ def _build_langgraph(
                             data_derivation_type_status="Estimated",
                             general_comment=_as_multilang_list(
                                 _build_multilang_entries(
-                                    flow_summary.get("general_comment_en") or "",
+                                    _apply_exchange_comment_tags(
+                                        flow_summary.get("general_comment_en") or "",
+                                        flow_kind="product",
+                                        unit="unit",
+                                    ),
                                     translator=translator,
-                                    zh_text=flow_summary.get("general_comment_zh"),
+                                    zh_text=_apply_exchange_comment_tags(
+                                        flow_summary.get("general_comment_zh") or "",
+                                        flow_kind="product",
+                                        unit="unit",
+                                    ),
                                 )
                             ),
                         )
@@ -6092,8 +6606,12 @@ def _build_langgraph(
                     validation=ProcessDataSetModellingAndValidationValidation(review=ModellingAndValidationValidationReview(type="Not reviewed")),
                     compliance_declarations=_compliance_declarations(),
                 )
+                commissioner_and_goal = ProcessDataSetAdministrativeInformationCommonCommissionerAndGoal(
+                    common_reference_to_commissioner=_contact_reference(),
+                    common_intended_applications=intended_applications_ml,
+                )
                 administrative_information = ProcessesProcessDataSetAdministrativeInformation(
-                    common_commissioner_and_goal=ProcessDataSetAdministrativeInformationCommonCommissionerAndGoal(common_reference_to_commissioner=_contact_reference()),
+                    common_commissioner_and_goal=commissioner_and_goal,
                     data_entry_by=ProcessDataSetAdministrativeInformationDataEntryBy(
                         common_time_stamp=default_timestamp(),
                         common_reference_to_data_set_format=_dataset_format_reference(),
@@ -6177,7 +6695,7 @@ def _build_langgraph(
                 )
                 continue
             exchange_name = str(matched_exchange.get("exchangeName") or entry.get("exchange_name") or "").strip()
-            comment = str(matched_exchange.get("generalComment") or "").strip()
+            comment = _strip_exchange_comment_tags(matched_exchange.get("generalComment"))
             flow_type = _normalize_flow_type(matched_exchange.get("flow_type")) or matched_exchange.get("flow_type")
             direction = str(matched_exchange.get("exchangeDirection") or "").strip()
             unit = str(matched_exchange.get("unit") or "").strip()
@@ -6513,6 +7031,104 @@ def _build_langgraph(
             "step_markers": _update_step_markers(state, "balance_review"),
         }
 
+    def generate_data_cutoff_principles(state: ProcessFromFlowState) -> ProcessFromFlowState:
+        if state.get("data_cutoff_principles_applied"):
+            return {}
+        process_datasets = state.get("process_datasets")
+        if not isinstance(process_datasets, list) or not process_datasets:
+            return {"data_cutoff_principles_applied": True}
+        process_list = [item for item in (state.get("processes") or []) if isinstance(item, dict)]
+        process_ids = [str(item.get("process_id") or "").strip() for item in process_list]
+        plan_index = {str(item.get("process_id") or "").strip(): item for item in process_list if isinstance(item, dict)}
+        existing_source = state.get("data_cut_off_and_completeness_principles")
+        updated_datasets = copy.deepcopy(process_datasets)
+        principles_map: dict[str, dict[str, str]] = {}
+        summary_map: dict[str, dict[str, Any]] = {}
+
+        for idx, dataset in enumerate(updated_datasets):
+            if not isinstance(dataset, dict):
+                continue
+            process_id = process_ids[idx] if idx < len(process_ids) else f"process_{idx + 1}"
+            plan = plan_index.get(process_id) or {}
+            process_name = str(plan.get("name") or "").strip()
+            summary = _summarize_cutoff_inputs(state, process_id=process_id if process_id else None)
+            summary_map[process_id] = summary
+
+            value_source: Any = None
+            if isinstance(existing_source, dict):
+                if process_id in existing_source:
+                    value_source = existing_source.get(process_id)
+                elif "en" in existing_source or "zh" in existing_source:
+                    value_source = existing_source
+            elif existing_source is not None:
+                value_source = existing_source
+
+            principles = _normalize_bilingual_text(value_source)
+            if not principles and llm is not None:
+                payload = {
+                    "prompt": DATA_CUTOFF_COMPLETENESS_PROMPT,
+                    "context": {
+                        "summary": summary,
+                        "flow": state.get("flow_summary") or {},
+                        "operation": state.get("operation") or "produce",
+                        "process": {"process_id": process_id, "process_name": process_name},
+                    },
+                    "response_format": {"type": "json_object"},
+                }
+                try:
+                    raw = llm.invoke(payload)
+                    data = _ensure_dict(raw)
+                except Exception as exc:  # pylint: disable=broad-except
+                    LOGGER.warning(
+                        "process_from_flow.data_cutoff_generation_failed",
+                        process_id=process_id,
+                        error=str(exc),
+                    )
+                    data = {}
+                principles = _normalize_bilingual_text(data.get("data_cut_off_and_completeness_principles") or data.get("dataCutOffAndCompletenessPrinciples") or data)
+                if not principles:
+                    en_text = _join_texts(data.get("data_cut_off_and_completeness_principles_en") or data.get("dataCutOffAndCompletenessPrinciplesEn"))
+                    zh_text = _join_texts(data.get("data_cut_off_and_completeness_principles_zh") or data.get("dataCutOffAndCompletenessPrinciplesZh"))
+                    if en_text:
+                        principles["en"] = en_text
+                    if zh_text:
+                        principles["zh"] = zh_text
+                if not principles:
+                    fallback_list = _clean_string_list(data.get("data_cut_off_and_completeness_principles") or data.get("dataCutOffAndCompletenessPrinciples"))
+                    if fallback_list:
+                        principles = _split_bilingual_values(_dedupe_flows(fallback_list))
+
+            fallback_en_list = _fallback_cutoff_principles(summary)
+            fallback_en = _join_texts(fallback_en_list)
+            if fallback_en and not principles.get("en"):
+                principles["en"] = fallback_en
+            if principles.get("en") and not principles.get("zh") and translator:
+                translated = translator.translate(principles["en"], "zh")
+                if translated:
+                    principles["zh"] = translated.strip()
+            principles_map[process_id] = principles
+
+            entries = _coerce_bilingual_payload(principles, translator=translator, fallback_en=fallback_en)
+            process_block = dataset.get("processDataSet")
+            if not isinstance(process_block, dict):
+                continue
+            modelling = process_block.get("modellingAndValidation")
+            if not isinstance(modelling, dict):
+                modelling = {}
+                process_block["modellingAndValidation"] = modelling
+            dsr = modelling.get("dataSourcesTreatmentAndRepresentativeness")
+            if not isinstance(dsr, dict):
+                dsr = {}
+                modelling["dataSourcesTreatmentAndRepresentativeness"] = dsr
+            dsr["dataCutOffAndCompletenessPrinciples"] = list(entries)
+        return {
+            "process_datasets": updated_datasets,
+            "data_cut_off_and_completeness_principles": principles_map,
+            "data_cutoff_principles_applied": True,
+            "data_cutoff_summary": summary_map,
+            "step_markers": _update_step_markers(state, "data_cutoff"),
+        }
+
     graph.add_node("load_flow", load_flow)
     graph.add_node("describe_technology", describe_technology)
     graph.add_node("split_processes", split_processes)
@@ -6522,9 +7138,11 @@ def _build_langgraph(
     graph.add_node("align_exchange_units", align_exchange_units)
     graph.add_node("density_conversion", density_conversion)
     graph.add_node("build_sources", build_sources)
+    graph.add_node("generate_intended_applications", generate_intended_applications)
     graph.add_node("build_process_datasets", build_process_datasets)
     graph.add_node("resolve_placeholders", resolve_placeholders)
     graph.add_node("balance_review", balance_review)
+    graph.add_node("generate_data_cutoff_principles", generate_data_cutoff_principles)
 
     graph.set_entry_point("load_flow")
     graph.add_edge("load_flow", "describe_technology")
@@ -6552,11 +7170,13 @@ def _build_langgraph(
     graph.add_edge("density_conversion", "build_sources")
     graph.add_conditional_edges(
         "build_sources",
-        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "sources") else "build_process_datasets",
+        lambda state: END if (str(state.get("stop_after") or "").strip().lower() == "sources") else "generate_intended_applications",
     )
+    graph.add_edge("generate_intended_applications", "build_process_datasets")
     graph.add_edge("build_process_datasets", "resolve_placeholders")
     graph.add_edge("resolve_placeholders", "balance_review")
-    graph.add_edge("balance_review", END)
+    graph.add_edge("balance_review", "generate_data_cutoff_principles")
+    graph.add_edge("generate_data_cutoff_principles", END)
 
     return graph.compile()
 

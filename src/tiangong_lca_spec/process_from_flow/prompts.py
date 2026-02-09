@@ -38,6 +38,47 @@ TECH_DESCRIPTION_PROMPT = (
     "}\n"
 )
 
+INTENDED_APPLICATIONS_PROMPT = (
+    "You are writing the intended applications field for an ILCD process dataset.\n"
+    "Use the provided technical description, scope, and assumptions to summarize the intended application(s) "
+    "of the data collection and modelling.\n"
+    "\n"
+    "Rules:\n"
+    "- Base your answer strictly on the provided inputs; do NOT invent claims.\n"
+    "- Provide both English and Chinese versions.\n"
+    "- Keep 1..3 concise sentences per language.\n"
+    "- Avoid marketing language and avoid repeating the input verbatim.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "intended_applications": {\n'
+    '    "en": "...",\n'
+    '    "zh": "..."\n'
+    "  }\n"
+    "}\n"
+)
+
+DATA_CUTOFF_COMPLETENESS_PROMPT = (
+    "You are writing dataCutOffAndCompletenessPrinciples for an ILCD process dataset.\n"
+    "Use the provided summary of exchange completeness, placeholders, unit conversions, density conversions, "
+    "and balance review checks.\n"
+    "\n"
+    "Rules:\n"
+    "- Describe cut-off/completeness based only on the provided summary.\n"
+    "- Provide both English and Chinese versions.\n"
+    "- Mention missing amounts or unresolved placeholders when present.\n"
+    "- Mention unit/density conversions and remaining unit mismatches when present.\n"
+    "- Keep 1..3 concise sentences per language.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "data_cut_off_and_completeness_principles": {\n'
+    '    "en": "...",\n'
+    '    "zh": "..."\n'
+    "  }\n"
+    "}\n"
+)
+
 PROCESS_SPLIT_PROMPT = (
     "You are selecting/using the route options and decomposing each route into unit processes (single operations).\n"
     "Input context includes the reference flow summary, the route options from Step 1, and any technical description.\n"
@@ -126,6 +167,8 @@ EXCHANGES_PROMPT = (
     "or waterborne pollutants (e.g., nitrate, phosphate, pesticides) when relevant.\n"
     "- For labor, split by activity if multiple (e.g., 'Labor, harvesting' and 'Labor, post-harvest handling').\n"
     "- Add flow_type for each exchange: product | elementary | waste | service.\n"
+    "- In generalComment, append machine-readable tags using EXACT keys: [tg_io_kind_tag=<flow_type>] [tg_io_uom_tag=<unit>].\n"
+    "- Do NOT use ambiguous tag keys such as classification/category/typeOfDataSet.\n"
     "- Add material_role for each exchange: raw_material | auxiliary | catalyst | energy | emission | product | waste | service | unknown.\n"
     "- Use auxiliary/catalyst for inputs that are not embodied in the main product; set balance_exclude=true for those.\n"
     "- Provide role_reason to justify the material_role choice when it is not obvious.\n"

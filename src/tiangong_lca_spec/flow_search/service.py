@@ -84,8 +84,11 @@ class FlowSearchService:
                 uuid=flow_uuid,
                 error=str(exc),
             )
-            self._state_code_cache[flow_uuid] = False
-            return False
+            # Fail-open: keep the searched candidate when state-code lookup fails.
+            # This avoids converting potentially valid matched flows into placeholders
+            # just because the CRUD sidecar call is temporarily unavailable.
+            self._state_code_cache[flow_uuid] = True
+            return True
         state_code = record.get("state_code") if isinstance(record, dict) else None
         matches = state_code == self._state_code_filter
         self._state_code_cache[flow_uuid] = matches

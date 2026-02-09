@@ -945,7 +945,9 @@ class FlowPublisher:
                             mean_value,
                             candidate=None,
                             mode="insert",
-                            existing_ref=None,
+                            # Keep placeholder UUID stable across retries so we do not
+                            # mint a fresh flow UUID for the same unresolved exchange.
+                            existing_ref=ref,
                         )
                     else:
                         if candidate is None:

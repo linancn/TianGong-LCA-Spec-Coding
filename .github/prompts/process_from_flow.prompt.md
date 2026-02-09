@@ -21,8 +21,14 @@
 - Step 3 generate exchanges: Create per-process input/output exchanges.
 - Step 3b enrich exchange amounts: Extract or estimate amounts/units from text and SI.
 - Step 4 match flows: Search flows and select candidates to fill uuid/shortDescription.
+- Step 4b align exchange units: Validate unit group compatibility and convert to reference units.
+- Step 4c density conversion (optional): Estimate density for mass<->volume mismatches on product/waste flows.
 - Step 1f build sources: Generate ILCD source datasets and references.
+- Step 5a intended applications: Write intended applications per process before dataset build.
 - Step 5 build process datasets: Emit final ILCD process datasets.
+- Step 6 resolve placeholders: Post-process unmatched exchanges with a second search pass.
+- Step 7 balance review: Mass/energy balance check (reports only).
+- Step 8 data cut-off & completeness: Summarize missing values and conversions.
 
 ## LangGraph Core Workflow (ProcessFromFlowService)
 ### Entry and Dependencies
@@ -53,6 +59,8 @@
 - Use `EXCHANGES_PROMPT` to generate exchanges; `is_reference_flow` aligns with `reference_flow_name` (Output for production, Input for treatment).
 - Exchange names must be searchable and not composite; fill unit/amount (placeholders if unknown).
 - Emissions add media suffix (`to air`/`to water`/`to soil`), plus `flow_type` and `search_hints`.
+- Append machine-readable tags to each exchange `generalComment`: `[tg_io_kind_tag=<flow_type>] [tg_io_uom_tag=<unit>]`.
+- Do not use ambiguous tag keys such as `classification`, `category`, or `typeOfDataSet`.
 - Assign `material_role` for each exchange (`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`); set `balance_exclude=true` for auxiliary/catalyst inputs not embodied in the product.
 - Every exchange records `data_source`/`evidence`; inferred items must mark `source_type=expert_judgement`.
 - If references are usable, extra exchange evidence can be retrieved and stored in `scientific_references.step3`.
@@ -63,13 +71,27 @@
 - Scalable exchanges use `basis_*` for conversion and add scaling notes.
 
 4) match_flows
-- Search flows for each exchange (top 10 candidates), then select with LLM selector (no similarity fallback when LLM is enabled).
+- Search flows for each exchange (top 10 candidates); use LLM selector when available, fall back to SimilarityCandidateSelector when no LLM.
 - Record `flow_search.query/candidates/selected_uuid/selected_reason/selector/unmatched` and fill uuid/shortDescription.
 - Only add matching info; do not overwrite `data_source`/`evidence`.
+
+4b) align_exchange_units
+- Validate unit group compatibility using flow unit groups; convert same-dimension units to flow reference unit and write back amount/unit.
+- Cross-dimension mismatches (e.g., kg vs m3) mark `flow_search.unit_check.status=mismatch`; unknown units mark `review`.
+
+4c) density_conversion (optional)
+- Enabled only when `allow_density_conversion=true` or CLI passes `--allow-density-conversion`.
+- Triggered only when unit_check is mass<->volume mismatch and flow_type is product/waste.
+- LLM returns `density_value`/`density_unit`/`assumptions` (`source_type=expert_judgement`); conversion sets `unit_check.status=converted_by_density` and records `density_used`, preserving originals.
+- Density assumptions and conversion notes are written to process `dataTreatmentAndExtrapolationsPrinciples`.
 
 1f) build_sources
 - Generate ILCD source datasets from references (`tidas_sdk.create_source`), writing `source_datasets` and `source_references`.
 - Infer usage from `usage_tagging`/Step 1c summaries/Step 1b usability/industry_average and filter out `background_only`.
+
+5a) intended_applications
+- Before `build_process_datasets`, call LLM per process using `description`/`boundary`/`assumptions` (fallback to global `technical_description`/`scope`/`assumptions`) and write intended applications (EN+ZH).
+- Written to `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`.
 
 5) build_process_datasets
 - Build ILCD process datasets (reference direction follows `operation`; optional Translator adds Chinese fields).
@@ -77,33 +99,59 @@
 - Try `DatabaseCrudClient.select_flow` to fill flow version/shortDescription and flowProperty/unit group.
 - Ensure reference flow exchange; empty amounts fall back to `"1.0"`; validate via `tidas_sdk.create_process` (warnings only).
 - Exchange `referencesToDataSource` prefer `value_citations`/`value_evidence`; remaining evidence is rolled up to process level.
+- Also writes a quick balance note plus density conversion notes to `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataTreatmentAndExtrapolationsPrinciples`.
+
+6) resolve_placeholders (post-processing)
+- After `build_process_datasets`, scan exchanges with `referenceToFlowDataSet.unmatched:placeholder=true`.
+- Rebuild a secondary `flow_search` query from exchangeName/Direction/unit/flow_type/search_hints/generalComment.
+- Filter candidates by flow_type; for elementary flows also filter by medium (air/water/soil).
+- Use selector (LLM/Rule) to choose; write `flow_search.secondary_query/resolution_*` and update process datasets.
+- If still unmatched, keep placeholder and record `resolution_status/reason` for review.
+
+7) balance_review (post-processing)
+- Compute mass/energy balance from `matched_process_exchanges` (fallback `process_exchanges`), prefer flow unit groups, fall back to built-in unit mapping.
+- Exclude `material_role=auxiliary|catalyst` or `balance_exclude=true` from balance stats.
+- Output `balance_review`/`balance_review_summary`, mark `ok|check|insufficient` and log warnings; no exchange values are rewritten.
+- Also record `unit_mismatches` and `density_estimates` for review.
+
+8) dataCutOffAndCompletenessPrinciples
+- After placeholder resolution/balance review, summarize missing amounts, placeholders, and unit/density conversions per process.
+- LLM writes `dataCutOffAndCompletenessPrinciples` (EN+ZH) to `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`.
 
 ## Origin Orchestration Workflow (scripts/origin)
 ### Goal and Order
 - Goal: Write SI and usage tagging back before Steps 1-3 so prompts can read SI evidence.
 - Orchestration order:
-  Step 0 -> Step 1a -> Step 1b -> 1b-usability -> Step 1c -> Step 1d -> Step 1e -> Step 1 -> Step 2 -> Step 3 -> Step 3b -> Step 4 -> Step 1f -> Step 5
+  Step 0 -> Step 1a -> Step 1b -> 1b-usability -> Step 1c -> Step 1d -> Step 1e -> Step 1 -> Step 2 -> Step 3 -> Step 3b -> Step 4 -> Step 4b -> Step 4c -> Step 1f -> Step 5a -> Step 5 -> Step 6 -> Step 7 -> Step 8
 
 ### Key Scripts and Tools
 - `process_from_flow_workflow.py`: main orchestrator, runs 1b-usability/1d/1e before resuming the main flow.
 - `process_from_flow_langgraph.py`: LangGraph CLI (run/resume/cleanup/publish), supports `--stop-after` and `--publish/--commit`.
 - `process_from_flow_reference_usability.py`: Step 1b usability screening (LCIA vs LCI).
-- `process_from_flow_download_si.py`: download SI originals and write SI metadata.
+- `process_from_flow_download_si.py`: download SI originals and write SI metadata (supports `--doi/--cluster/--recommendation` filters, `--dry-run`, `--no-update-state`).
 - `mineru_for_process_si.py`: parse PDF/image SI into JSON structure.
-- `process_from_flow_reference_usage_tagging.py`: tag reference usage.
+- `process_from_flow_reference_usage_tagging.py`: tag reference usage (also writes tags to `step_1c_reference_clusters.reference_summaries`).
 - `process_from_flow_build_sources.py`: backfill source datasets from cached state.
+- `process_from_flow_placeholder_report.py`: generate placeholder resolution report (writes `cache/placeholder_report.json`).
 
 ### Run Notes
 - `process_from_flow_workflow.py` does not support `--no-llm` (Step 1b/1e require LLM).
 - `--min-si-hint` controls SI download threshold (none|possible|likely), with `--si-max-links`/`--si-timeout`.
 - `process_from_flow_langgraph.py --stop-after datasets` means run through dataset writeout; other values stop early and save state.
+- `--allow-density-conversion` enables LLM density estimates for mass<->volume mismatches (product/waste flows only).
+- Placeholder resolution runs once by default; to re-run, clear `placeholder_resolution_applied`/`placeholder_resolutions` then `--resume`.
+- `process_from_flow_workflow.py` clears `stop_after` before resuming the main pipeline.
 
 ## State Fields (state)
 - Input/context: `flow_path`, `flow_dataset`, `flow_summary`, `operation`, `scientific_references`.
 - Routes/processes: `technology_routes`, `process_routes`, `selected_route_id`, `technical_description`, `assumptions`, `scope`, `processes`.
+- Intended/completeness: `intended_applications`, `data_cut_off_and_completeness_principles`, `data_cutoff_principles_applied`, `data_cutoff_summary`.
 - Exchanges/matching: `process_exchanges`, `exchange_value_candidates`, `exchange_values_applied`, `matched_process_exchanges`.
 - Outputs: `process_datasets`, `source_datasets`, `source_references`.
 - Evaluation/markers: `coverage_metrics`, `coverage_history`, `stop_rule_decision`, `step_markers`, `stop_after`.
+- Unit alignment/density: `unit_alignment_applied`, `unit_alignment_summary`, `allow_density_conversion`, `density_conversion_applied`, `density_conversion_summary`.
+- Placeholder resolution: `placeholder_report`, `placeholder_resolutions`, `placeholder_resolution_applied`.
+- Balance review: `balance_review`, `balance_review_summary`.
 
 ## SI Injection Points (Actual Behavior)
 - Step 1: `TECH_DESCRIPTION_PROMPT` reads `si_snippets`.
@@ -112,12 +160,22 @@
 - Step 3b: `EXCHANGE_VALUE_PROMPT` reads `fulltext_references` + `si_snippets`.
 - Step 4/Step 5 do not read SI directly.
 - SI must be written back to `process_from_flow_state.json` before Step 1; otherwise rerun Step 1-3.
+- `si_snippets` come from MinerU outputs plus direct text-style SI (`docx/xlsx/csv/tsv/txt/md`), prioritizing primary cluster DOIs and ranked by `docx > tabular(xlsx/csv/tsv) > text > mineru`; max 3 DOIs, 1 snippet per DOI, 2000 chars each.
+
+## Text Field Sources (Implementation Details)
+- `processInformation.dataSetInformation.common:generalComment`: from Step 2 `process.description`, fallback to `technical_description`.
+- `exchanges.exchange.generalComment`: from Step 3 `exchange.generalComment` + evidence rollup, with enforced `tg_io_kind_tag` and `tg_io_uom_tag`.
+- `processInformation.technology.technologyDescriptionAndIncludedProcesses`: concatenates `technical_description` + `process.description` + global `assumptions` (not per-process `structure.assumptions`).
+- `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`: Step 5a per-process text from `description`/`boundary`/`assumptions`, fallback to global.
+- `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`: Step 8 per-process summary of placeholders/missing values/conversions.
 
 ## Outputs and Debugging
 - Output root: `artifacts/process_from_flow/<run_id>/` with `input/`, `cache/`, and `exports/`.
 - State file: `cache/process_from_flow_state.json`.
+- Placeholder report: `cache/placeholder_report.json` (from `resolve_placeholders` or `process_from_flow_placeholder_report.py`).
 - Resume: `uv run python scripts/origin/process_from_flow_langgraph.py --resume --run-id <run_id>`.
 - Backfill sources: `uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`.
+- Generate placeholder report: `uv run python scripts/origin/process_from_flow_placeholder_report.py --run-id <run_id>` (`--no-update-state` avoids writing to state).
 - Publish existing run: `uv run python scripts/origin/process_from_flow_langgraph.py --publish-only --run-id <run_id> [--publish-flows] [--commit]`.
 - Cleanup old runs: `uv run python scripts/origin/process_from_flow_langgraph.py --cleanup-only --retain-runs 3`.
 
@@ -193,6 +251,7 @@ uv run python test/test_scientific_references.py
 - Optional step: check if Step 1b fulltext supports route/process/exchange needs.
 - Mark `unusable` if the text only reports LCIA impact indicators (e.g., ADP/AP/GWP/EP/PED/RI) or impact units like `kg CO2 eq`, `kg SO2 eq`, `kg Sb eq`, `kg PO4 eq`, with no LCI inventory rows (kg, g, t, m2, m3, pcs, kWh, MJ).
 - If the paper hints Supporting Information/Appendix for inventory tables, record `si_hint` (`likely|possible|none`) and `si_reason`; still keep `decision=unusable` if the main text has no LCI tables.
+- If `si_hint=none` with no `si_reason`, the script auto-scans keywords in the text to backfill `likely/possible`.
 - Prompt: `src/tiangong_lca_spec/process_from_flow/prompts.py` `REFERENCE_USABILITY_PROMPT`.
 - Script: `uv run python scripts/origin/process_from_flow_reference_usability.py --run-id <run_id>`.
 - Output: `scientific_references.usability` in `process_from_flow_state.json`.
