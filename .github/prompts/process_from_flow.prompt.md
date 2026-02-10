@@ -28,7 +28,7 @@
 - Step 5 build process datasets: Emit final ILCD process datasets.
 - Step 6 resolve placeholders: Post-process unmatched exchanges with a second search pass.
 - Step 7 balance review: Mass/energy balance check (reports only).
-- Step 8 data cut-off & completeness: Summarize missing values and conversions.
+- Step 8 data cut-off & completeness: Summarize missing values/conversions, write data cut-off principles (LLM first, rule fallback), and rewrite process-level dataTreatment from final balance review.
 
 ## LangGraph Core Workflow (ProcessFromFlowService)
 ### Entry and Dependencies
@@ -61,7 +61,7 @@
 - Emissions add media suffix (`to air`/`to water`/`to soil`), plus `flow_type` and `search_hints`.
 - Append machine-readable tags to each exchange `generalComment`: `[tg_io_kind_tag=<flow_type>] [tg_io_uom_tag=<unit>]`.
 - Do not use ambiguous tag keys such as `classification`, `category`, or `typeOfDataSet`.
-- Assign `material_role` for each exchange (`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`); set `balance_exclude=true` for auxiliary/catalyst inputs not embodied in the product.
+- Assign `material_role` for each exchange (`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`); `balance_exclude` is optional explicit metadata, while `balance_review` still excludes auxiliary/catalyst by role even when the flag is absent.
 - Every exchange records `data_source`/`evidence`; inferred items must mark `source_type=expert_judgement`.
 - If references are usable, extra exchange evidence can be retrieved and stored in `scientific_references.step3`.
 
@@ -83,7 +83,7 @@
 - Enabled only when `allow_density_conversion=true` or CLI passes `--allow-density-conversion`.
 - Triggered only when unit_check is mass<->volume mismatch and flow_type is product/waste.
 - LLM returns `density_value`/`density_unit`/`assumptions` (`source_type=expert_judgement`); conversion sets `unit_check.status=converted_by_density` and records `density_used`, preserving originals.
-- Density assumptions and conversion notes are written to process `dataTreatmentAndExtrapolationsPrinciples`.
+- Density assumptions/conversion evidence stays on exchange fields (`flow_search.unit_check` and `density_used`); process-level treatment text is rewritten in Step 8.
 
 1f) build_sources
 - Generate ILCD source datasets from references (`tidas_sdk.create_source`), writing `source_datasets` and `source_references`.
@@ -99,7 +99,7 @@
 - Try `DatabaseCrudClient.select_flow` to fill flow version/shortDescription and flowProperty/unit group.
 - Ensure reference flow exchange; empty amounts fall back to `"1.0"`; validate via `tidas_sdk.create_process` (warnings only).
 - Exchange `referencesToDataSource` prefer `value_citations`/`value_evidence`; remaining evidence is rolled up to process level.
-- Also writes a quick balance note plus density conversion notes to `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataTreatmentAndExtrapolationsPrinciples`.
+- `build_process_datasets` no longer pre-writes process `dataTreatmentAndExtrapolationsPrinciples`; Step 8 rewrites that field after `balance_review` to keep process text aligned with final review output.
 
 6) resolve_placeholders (post-processing)
 - After `build_process_datasets`, scan exchanges with `referenceToFlowDataSet.unmatched:placeholder=true`.
@@ -116,7 +116,8 @@
 
 8) dataCutOffAndCompletenessPrinciples
 - After placeholder resolution/balance review, summarize missing amounts, placeholders, and unit/density conversions per process.
-- LLM writes `dataCutOffAndCompletenessPrinciples` (EN+ZH) to `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`.
+- `dataCutOffAndCompletenessPrinciples` are written per process to `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`: existing state/LLM output is used when available, otherwise deterministic fallback text is generated and bilingualized.
+- In the same step, process-level `dataTreatmentAndExtrapolationsPrinciples` is rewritten from final `balance_review` + `balance_review_summary` (including key counts such as `mass_core_check_processes`, `unit_mismatch_total`, `mapping_conflict_total`, `role_missing_total`).
 
 ## Origin Orchestration Workflow (scripts/origin)
 ### Goal and Order
@@ -124,18 +125,20 @@
 - Orchestration order:
   Step 0 -> Step 1a -> Step 1b -> 1b-usability -> Step 1c -> Step 1d -> Step 1e -> Step 1 -> Step 2 -> Step 3 -> Step 3b -> Step 4 -> Step 4b -> Step 4c -> Step 1f -> Step 5a -> Step 5 -> Step 6 -> Step 7 -> Step 8
 
-### Key Scripts and Tools
+### Core Scripts (Main Chain)
 - `process_from_flow_workflow.py`: main orchestrator, runs 1b-usability/1d/1e before resuming the main flow.
 - `process_from_flow_langgraph.py`: LangGraph CLI (run/resume/cleanup/publish), supports `--stop-after` and `--publish/--commit`.
 - `process_from_flow_reference_usability.py`: Step 1b usability screening (LCIA vs LCI).
 - `process_from_flow_download_si.py`: download SI originals and write SI metadata (supports `--doi/--cluster/--recommendation` filters, `--dry-run`, `--no-update-state`).
 - `mineru_for_process_si.py`: parse PDF/image SI into JSON structure.
 - `process_from_flow_reference_usage_tagging.py`: tag reference usage (also writes tags to `step_1c_reference_clusters.reference_summaries`).
+### Maintenance Utilities (Non-main-chain, Offline Backfill/Recompute)
 - `process_from_flow_build_sources.py`: backfill source datasets from cached state.
 - `process_from_flow_placeholder_report.py`: generate placeholder resolution report (writes `cache/placeholder_report.json`).
+- `product_flow_sdk_insert.py`: moved to `scripts/product_flow/product_flow_sdk_insert.py`; not part of the process_from_flow main chain.
 
 ### Run Notes
-- `process_from_flow_workflow.py` does not support `--no-llm` (Step 1b/1e require LLM).
+- `process_from_flow_workflow.py` does not expose `--no-llm` (Step 1b/1e require LLM); use `process_from_flow_langgraph.py --no-llm` for deterministic debugging.
 - `--min-si-hint` controls SI download threshold (none|possible|likely), with `--si-max-links`/`--si-timeout`.
 - `process_from_flow_langgraph.py --stop-after datasets` means run through dataset writeout; other values stop early and save state.
 - `--allow-density-conversion` enables LLM density estimates for mass<->volume mismatches (product/waste flows only).
@@ -145,7 +148,7 @@
 ## State Fields (state)
 - Input/context: `flow_path`, `flow_dataset`, `flow_summary`, `operation`, `scientific_references`.
 - Routes/processes: `technology_routes`, `process_routes`, `selected_route_id`, `technical_description`, `assumptions`, `scope`, `processes`.
-- Intended/completeness: `intended_applications`, `data_cut_off_and_completeness_principles`, `data_cutoff_principles_applied`, `data_cutoff_summary`.
+- Intended/completeness: `intended_applications`, `data_cut_off_and_completeness_principles`, `data_cutoff_principles_applied`, `data_cutoff_summary`, `data_treatment_and_extrapolations_principles`, `data_treatment_principles_applied`, `data_treatment_summary`.
 - Exchanges/matching: `process_exchanges`, `exchange_value_candidates`, `exchange_values_applied`, `matched_process_exchanges`.
 - Outputs: `process_datasets`, `source_datasets`, `source_references`.
 - Evaluation/markers: `coverage_metrics`, `coverage_history`, `stop_rule_decision`, `step_markers`, `stop_after`.
@@ -168,19 +171,22 @@
 - `processInformation.technology.technologyDescriptionAndIncludedProcesses`: concatenates `technical_description` + `process.description` + global `assumptions` (not per-process `structure.assumptions`).
 - `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`: Step 5a per-process text from `description`/`boundary`/`assumptions`, fallback to global.
 - `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`: Step 8 per-process summary of placeholders/missing values/conversions.
+- `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataTreatmentAndExtrapolationsPrinciples`: Step 8 post-balance rewrite aligned with `balance_review_summary` counters.
 
 ## Outputs and Debugging
 - Output root: `artifacts/process_from_flow/<run_id>/` with `input/`, `cache/`, and `exports/`.
 - State file: `cache/process_from_flow_state.json`.
 - Placeholder report: `cache/placeholder_report.json` (from `resolve_placeholders` or `process_from_flow_placeholder_report.py`).
 - Resume: `uv run python scripts/origin/process_from_flow_langgraph.py --resume --run-id <run_id>`.
-- Backfill sources: `uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`.
-- Generate placeholder report: `uv run python scripts/origin/process_from_flow_placeholder_report.py --run-id <run_id>` (`--no-update-state` avoids writing to state).
+- Maintenance backfill sources: `uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`.
+- Maintenance placeholder report: `uv run python scripts/origin/process_from_flow_placeholder_report.py --run-id <run_id>` (`--no-update-state` avoids writing to state).
 - Publish existing run: `uv run python scripts/origin/process_from_flow_langgraph.py --publish-only --run-id <run_id> [--publish-flows] [--commit]`.
 - Cleanup old runs: `uv run python scripts/origin/process_from_flow_langgraph.py --cleanup-only --retain-runs 3`.
 
 ## Publishing Flow (Flow/Source/Process)
-Recommended order: flows -> sources -> processes to avoid missing references.
+Actual order in `process_from_flow_langgraph.py`:
+- With `--publish-flows`: `flows -> sources -> processes`.
+- Without `--publish-flows`: `sources -> processes`.
 
 ### Dependencies and Configuration
 - Entrypoints: `FlowPublisher` / `ProcessPublisher` / `DatabaseCrudClient`.
@@ -238,9 +244,9 @@ If not configured or invalid, the workflow falls back to LLM common sense only.
 - `process_from_flow.mcp_client_closed`: MCP client closed
 
 ### Performance
-- Each literature search takes ~1-2 seconds.
+- Each literature search typically takes ~1-2 seconds (depends on network and service load).
 - Step 1b fulltext time depends on DOI count and extK.
-- Full workflow adds ~3-6 seconds (excluding extra fulltext retrieval).
+- Full workflow typically adds ~3-6 seconds (excluding extra fulltext retrieval; may vary by environment).
 
 ### Testing
 ```bash
@@ -257,7 +263,7 @@ uv run python test/test_scientific_references.py
 - Output: `scientific_references.usability` in `process_from_flow_state.json`.
 
 ## Usage Notes
-- Ensure LLM is configured; `process_from_flow_workflow.py` does not allow `--no-llm`.
+- Ensure LLM is configured; `process_from_flow_workflow.py` does not expose `--no-llm`.
 - Keep flow search/selector interfaces consistent (`FlowQuery` -> `(candidates, unmatched)`).
 - CLI adds Chinese translations by default; disable with `--no-translate-zh`.
 

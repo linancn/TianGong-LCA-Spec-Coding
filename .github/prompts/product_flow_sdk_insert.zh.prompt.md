@@ -15,21 +15,21 @@
 
 ## 单条/小批量运行
 - 干运行（仅生成文件，不入库）：  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --class-id 23161`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --class-id 23161`
 - 指定起止或数量：  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --start-index 100 --limit 20`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --start-index 100 --limit 20`
 - 指定 LLM 模型（默认读取 .secrets [openai].model，否则用 gpt-4o-mini）：  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --class-id 23161 --llm-model gpt-4o`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --class-id 23161 --llm-model gpt-4o`
 - 真正入库（MCP Database_CRUD_Tool）：  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --class-id 23161 44428 --commit`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --class-id 23161 44428 --commit`
 
 ## 全量/后台跑
 - 全量（新 UUID，每次运行都会新增）：  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --commit`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --commit`
 - 后台运行（防止会话中断）：  
   ```bash
   mkdir -p logs
-  nohup uv run python scripts/origin/product_flow_sdk_insert.py --commit \
+  nohup uv run python scripts/product_flow/product_flow_sdk_insert.py --commit \
     > logs/product_flow_sdk_insert_all.log 2>&1 &
   ```
   查看进度：`tail -f logs/product_flow_sdk_insert_all.log`

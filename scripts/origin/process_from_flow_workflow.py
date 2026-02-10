@@ -49,7 +49,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--operation", choices=("produce", "treat"), default="produce", help="Whether the process produces or treats the reference flow.")
     parser.add_argument("--run-id", help="Run identifier under artifacts/process_from_flow/<run_id>.")
     parser.add_argument("--secrets", type=Path, default=Path(".secrets/secrets.toml"), help="Secrets file for LLM/SI tools.")
-    parser.add_argument("--no-llm", action="store_true", help="Run without LLM (deterministic fallback).")
     parser.add_argument("--no-translate-zh", action="store_true", help="Skip adding Chinese translations.")
     parser.add_argument(
         "--allow-density-conversion",
@@ -89,8 +88,6 @@ def _run_reference_stage(args: argparse.Namespace, run_id: str) -> None:
         "--secrets",
         str(args.secrets),
     ]
-    if args.no_llm:
-        cmd.append("--no-llm")
     if args.no_translate_zh:
         cmd.append("--no-translate-zh")
     if args.allow_density_conversion:
@@ -185,8 +182,6 @@ def _run_main_pipeline(args: argparse.Namespace, run_id: str) -> None:
         "--secrets",
         str(args.secrets),
     ]
-    if args.no_llm:
-        cmd.append("--no-llm")
     if args.no_translate_zh:
         cmd.append("--no-translate-zh")
     if args.allow_density_conversion:
@@ -217,9 +212,6 @@ def _clear_stop_after(run_id: str) -> None:
 def main() -> None:
     args = parse_args()
     run_id = args.run_id or generate_run_id()
-
-    if args.no_llm:
-        raise SystemExit("--no-llm is not supported in this workflow (Step 1b/1e require LLM).")
 
     _run_reference_stage(args, run_id)
     _run_usability(args, run_id)

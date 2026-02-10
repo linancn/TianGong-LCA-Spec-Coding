@@ -41,10 +41,10 @@ mix_options: [...]
 
 ## CLI usage (script already wired to LLM; no rule toggles)
 - Dry-run, specific IDs:  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --class-id 23161 44428`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --class-id 23161 44428`
 - Override LLM model (else uses .secrets [openai].model or gpt-4o-mini):  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --class-id 23161 --llm-model gpt-4o`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --class-id 23161 --llm-model gpt-4o`
 - Insert to remote DB (single MCP session reused):  
-  `uv run python scripts/origin/product_flow_sdk_insert.py --class-id 23161 44428 --commit`
+  `uv run python scripts/product_flow/product_flow_sdk_insert.py --class-id 23161 44428 --commit`
 
 Outputs: `artifacts/cache/manual_flows/{classid}_{uuid}_{version}.json|.xml`, summary at `artifacts/cache/manual_flows/product_flow_sdk_insert_summary.json`, LLM choices logged to `llm_mix_rules.jsonl`.

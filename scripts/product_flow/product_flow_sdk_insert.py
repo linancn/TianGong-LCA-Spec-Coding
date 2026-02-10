@@ -9,8 +9,8 @@ Defaults:
 - Flow property: Mass (UUID 93a60a56-a3c8-11da-a746-0800200b9a66) version 03.00.003, meanValue 1.0; timestamp in UTC (YYYY-MM-DDTHH:MM:SSZ)
 
 Usage examples:
-  uv run python scripts/origin/product_flow_sdk_insert.py --limit 2              # dry-run, writes files
-  uv run python scripts/origin/product_flow_sdk_insert.py --commit --class-id 01142 01151
+  uv run python scripts/product_flow/product_flow_sdk_insert.py --limit 2              # dry-run, writes files
+  uv run python scripts/product_flow/product_flow_sdk_insert.py --commit --class-id 01142 01151
 """
 
 from __future__ import annotations

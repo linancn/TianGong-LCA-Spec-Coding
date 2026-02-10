@@ -2249,38 +2249,6 @@ def _build_balance_note(balance_state: dict[str, dict[str, Any]]) -> str | None:
     return "Balance check: " + "; ".join(lines)
 
 
-def _collect_density_notes(exchanges: list[dict[str, Any]]) -> list[str]:
-    notes: list[str] = []
-    for exchange in exchanges:
-        if not isinstance(exchange, dict):
-            continue
-        density_used = exchange.get("density_used")
-        if not isinstance(density_used, dict):
-            continue
-        name = str(exchange.get("exchangeName") or "").strip() or "unknown_exchange"
-        density_value = density_used.get("density_value")
-        density_unit = density_used.get("density_unit")
-        assumptions = str(density_used.get("assumptions") or "").strip() or None
-        source_type = str(density_used.get("source_type") or "").strip() or None
-        original_amount = density_used.get("original_amount")
-        original_unit = density_used.get("original_unit")
-        converted_amount = density_used.get("converted_amount")
-        converted_unit = density_used.get("converted_unit")
-        bits: list[str] = []
-        if density_value and density_unit:
-            bits.append(f"density={density_value} {density_unit}")
-        if assumptions:
-            bits.append(f"assumptions: {assumptions}")
-        if source_type:
-            bits.append(f"source: {source_type}")
-        if original_amount and original_unit and converted_amount and converted_unit:
-            bits.append(f"conversion: {original_amount} {original_unit} -> {converted_amount} {converted_unit}")
-        if not bits:
-            continue
-        notes.append(f"Density estimate used for exchange '{name}': " + "; ".join(bits))
-    return notes
-
-
 def _balance_state_summary(state: dict[str, Any]) -> dict[str, Any]:
     inputs = float(state.get("inputs") or 0.0)
     outputs = float(state.get("outputs") or 0.0)
@@ -3698,6 +3666,9 @@ class ProcessFromFlowState(TypedDict, total=False):
     balance_review: list[dict[str, Any]]
     balance_review_summary: dict[str, Any]
     data_cut_off_and_completeness_principles: dict[str, dict[str, str]] | dict[str, str] | list[str]
+    data_treatment_and_extrapolations_principles: dict[str, dict[str, str]] | dict[str, str] | list[str]
+    data_treatment_principles_applied: bool
+    data_treatment_summary: dict[str, Any]
     data_cutoff_principles_applied: bool
     data_cutoff_summary: dict[str, Any]
     step_markers: dict[str, bool]
@@ -3951,10 +3922,6 @@ def _coerce_bilingual_payload(
     fallback_en: str | None = None,
 ) -> list[dict[str, str]]:
     return _coerce_bilingual_multilang(value, translator=translator, fallback_en=fallback_en).to_plain_list()
-
-
-def _as_multilang_payload(value: Any, *, default_lang: str = "en") -> list[dict[str, str]]:
-    return _as_multilang_list(value, default_lang=default_lang).to_plain_list()
 
 
 def _global_reference(
@@ -4405,33 +4372,78 @@ def _fallback_cutoff_principles(summary: dict[str, Any]) -> list[str]:
     return notes[:3]
 
 
-def _apply_data_cutoff_principles(
-    process_datasets: list[dict[str, Any]],
-    principles: Any,
+def _format_balance_metric_for_treatment(label: str, metric: dict[str, Any]) -> str:
+    status = str(metric.get("status") or "insufficient").strip() or "insufficient"
+    inputs = _parse_amount_value(metric.get("inputs")) or 0.0
+    outputs = _parse_amount_value(metric.get("outputs")) or 0.0
+    ratio = _parse_amount_value(metric.get("ratio"))
+    count = int(metric.get("count") or 0)
+    unit = str(metric.get("unit") or "").strip()
+    suffix = f" {unit}" if unit else ""
+    ratio_text = f"{ratio:.3g}" if ratio is not None else "n/a"
+    return f"{label}: status={status}, inputs={_format_amount_value(inputs)}{suffix}, " f"outputs={_format_amount_value(outputs)}{suffix}, ratio={ratio_text}, n={count}"
+
+
+def _balance_entry_snapshot(balance_entry: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(balance_entry, dict):
+        return {"status": "missing"}
+    return {
+        "status": str(balance_entry.get("status") or "insufficient").strip() or "insufficient",
+        "mass_status": str((balance_entry.get("mass") or {}).get("status") or "insufficient").strip() or "insufficient",
+        "mass_core_status": str((balance_entry.get("mass_core") or {}).get("status") or "insufficient").strip() or "insufficient",
+        "energy_status": str((balance_entry.get("energy") or {}).get("status") or "insufficient").strip() or "insufficient",
+        "unit_mismatch_count": int(balance_entry.get("unit_mismatch_count") or 0),
+        "unit_assumption_count": int(balance_entry.get("unit_assumption_count") or 0),
+        "density_estimate_count": int(balance_entry.get("density_estimate_count") or 0),
+        "mapping_conflict_count": int(balance_entry.get("mapping_conflict_count") or 0),
+        "role_missing_count": int(balance_entry.get("role_missing_count") or 0),
+        "balance_excluded_count": int(balance_entry.get("balance_excluded_count") or 0),
+        "core_exchange_count": int(balance_entry.get("core_exchange_count") or 0),
+        "exchange_count": int(balance_entry.get("exchange_count") or 0),
+    }
+
+
+def _fallback_data_treatment_principles(
     *,
-    translator: Translator | None = None,
-    fallback_en: str | None = None,
-) -> list[dict[str, Any]]:
-    if not process_datasets:
-        return process_datasets
-    entries = _coerce_bilingual_payload(principles, translator=translator, fallback_en=fallback_en)
-    updated = copy.deepcopy(process_datasets)
-    for dataset in updated:
-        if not isinstance(dataset, dict):
-            continue
-        process_block = dataset.get("processDataSet")
-        if not isinstance(process_block, dict):
-            continue
-        modelling = process_block.get("modellingAndValidation")
-        if not isinstance(modelling, dict):
-            modelling = {}
-            process_block["modellingAndValidation"] = modelling
-        dsr = modelling.get("dataSourcesTreatmentAndRepresentativeness")
-        if not isinstance(dsr, dict):
-            dsr = {}
-            modelling["dataSourcesTreatmentAndRepresentativeness"] = dsr
-        dsr["dataCutOffAndCompletenessPrinciples"] = list(entries)
-    return updated
+    process_id: str,
+    balance_entry: dict[str, Any] | None,
+    balance_summary: dict[str, Any] | None,
+) -> list[str]:
+    notes: list[str] = []
+    snapshot = _balance_entry_snapshot(balance_entry)
+    status = str(snapshot.get("status") or "insufficient")
+    notes.append(
+        f"Balance review outcome ({process_id}): status={status}, " f"core_exchange_count={snapshot.get('core_exchange_count', 0)}, exchange_count={snapshot.get('exchange_count', 0)}."
+    )
+    if isinstance(balance_entry, dict):
+        for label in ("mass_core", "mass", "energy"):
+            metric = balance_entry.get(label)
+            if isinstance(metric, dict):
+                notes.append(_format_balance_metric_for_treatment(label, metric))
+        risk_fields = (
+            "unit_mismatch_count",
+            "unit_assumption_count",
+            "density_estimate_count",
+            "mapping_conflict_count",
+            "role_missing_count",
+            "balance_excluded_count",
+        )
+        risk_parts = [f"{name}={snapshot.get(name, 0)}" for name in risk_fields if int(snapshot.get(name, 0) or 0) > 0]
+        if risk_parts:
+            notes.append("Review flags: " + ", ".join(risk_parts) + ".")
+        else:
+            notes.append("Review flags: none.")
+    else:
+        notes.append("Balance review details unavailable; keep exchange-level assumptions and source traceability for manual verification.")
+    if isinstance(balance_summary, dict) and balance_summary:
+        notes.append(
+            "Run balance summary: "
+            f"mass_core_check_processes={int(balance_summary.get('mass_core_check_processes') or 0)}, "
+            f"unit_mismatch_total={int(balance_summary.get('unit_mismatch_total') or 0)}, "
+            f"mapping_conflict_total={int(balance_summary.get('mapping_conflict_total') or 0)}, "
+            f"role_missing_total={int(balance_summary.get('role_missing_total') or 0)}."
+        )
+    return notes[:5]
 
 
 def _normalize_quantitative_reference(value: Any, fallback_flow_name: str | None) -> str:
@@ -4545,33 +4557,6 @@ def _ensure_media_suffix(name: str, *, direction: str, flow_type: str, is_refere
         return name
     medium = _infer_media_suffix(name)
     return f"{name}, to {medium}" if medium else name
-
-
-def _build_search_hints(name: str) -> list[str]:
-    hints: set[str] = set()
-    lower = name.lower()
-    if lower == "water, fresh":
-        hints.add("Freshwater")
-    if "freshwater" in lower:
-        hints.add("Water, fresh")
-    if "diesel" in lower:
-        hints.add("Diesel fuel")
-    if "electricity" in lower:
-        hints.add("Power, electric")
-    if "nitrogen fertilizer" in lower:
-        hints.add("Nitrogenous fertilizer")
-    if "phosphate fertilizer" in lower or "p2o5" in lower:
-        hints.add("Phosphate fertilizer")
-    if "potash" in lower or "k2o" in lower:
-        hints.add("Potassium fertilizer")
-    if "labor" in lower:
-        hints.add("Labour")
-    if "methane" in lower:
-        hints.add("CH4")
-    if "pesticide" in lower:
-        hints.add("Pesticide")
-    cleaned = [hint for hint in hints if hint.lower() != lower]
-    return sorted(cleaned)
 
 
 def _normalize_exchange_label(value: str | None) -> str:
@@ -6608,10 +6593,6 @@ def _build_langgraph(
                 process_reference_items: dict[str, GlobalReferenceTypeVariant1Item] = {}
                 reference_internal_id: str | None = None
                 next_internal_id = 1
-                balance_state = {
-                    "mass": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
-                    "energy": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
-                }
                 if isinstance(exchanges_raw, list):
                     exchanges_raw = _dedupe_product_uuid_exchanges(
                         exchanges_raw,
@@ -6628,9 +6609,7 @@ def _build_langgraph(
                         direction = "Input"
                     if bool(exchange.get("is_reference_flow")):
                         direction = reference_direction
-                    amount_value = _parse_amount_value(exchange.get("amount"))
                     exchange_unit = str(exchange.get("unit") or "").strip()
-                    material_role = _normalize_material_role(exchange.get("material_role") or exchange.get("materialRole"))
                     selected_uuid = None
                     selected_version = None
                     selected_base_name = None
@@ -6686,32 +6665,6 @@ def _build_langgraph(
                     else:
                         reference = _placeholder_flow_reference(name, translator=translator)
                         reference_info = None
-
-                    flow_kind = _exchange_flow_type_for_dedupe(exchange, direction=direction)
-                    balance_unit, _ = _resolve_exchange_balance_unit(
-                        exchange,
-                        reference_info=reference_info,
-                        material_role=material_role,
-                        flow_kind=flow_kind,
-                    )
-                    if amount_value is not None and balance_unit:
-                        dimension, converted, unit_label = _convert_exchange_amount_for_balance(
-                            amount_value,
-                            balance_unit,
-                            reference_info,
-                        )
-                        if dimension and converted is not None:
-                            dim_state = balance_state[dimension]
-                            if dim_state["unit"] and unit_label and dim_state["unit"] != unit_label:
-                                pass
-                            else:
-                                if unit_label:
-                                    dim_state["unit"] = unit_label
-                                if direction == "Input":
-                                    dim_state["inputs"] += converted
-                                else:
-                                    dim_state["outputs"] += converted
-                                dim_state["count"] += 1
 
                     amount = exchange.get("amount")
                     amount_text = _default_exchange_amount() if amount in (None, "", 0) else str(amount)
@@ -6865,16 +6818,7 @@ def _build_langgraph(
                 exchanges = ProcessesProcessDataSetExchanges(exchange=exchange_items)
                 process_reference_list = list(process_reference_items.values())
                 process_reference_items_final = process_reference_list or default_reference_items
-                balance_note = _build_balance_note(balance_state)
-                density_notes = _collect_density_notes(exchanges_raw) if isinstance(exchanges_raw, list) else []
-                data_treatment_notes: list[str] = []
-                if balance_note:
-                    data_treatment_notes.append(balance_note)
-                if density_notes:
-                    data_treatment_notes.extend(density_notes)
                 data_sources_kwargs: dict[str, Any] = {"reference_to_data_source": process_reference_items_final}
-                if data_treatment_notes:
-                    data_sources_kwargs["data_treatment_and_extrapolations_principles"] = _as_multilang_list(data_treatment_notes)
                 modelling_and_validation = ProcessesProcessDataSetModellingAndValidation(
                     lci_method_and_allocation=ProcessDataSetModellingAndValidationLCIMethodAndAllocation(type_of_data_set="Unit process, single operation"),
                     data_sources_treatment_and_representativeness=(ProcessDataSetModellingAndValidationDataSourcesTreatmentAndRepresentativeness(**data_sources_kwargs)),
@@ -7487,18 +7431,26 @@ def _build_langgraph(
         }
 
     def generate_data_cutoff_principles(state: ProcessFromFlowState) -> ProcessFromFlowState:
-        if state.get("data_cutoff_principles_applied"):
+        if state.get("data_cutoff_principles_applied") and state.get("data_treatment_principles_applied"):
             return {}
         process_datasets = state.get("process_datasets")
         if not isinstance(process_datasets, list) or not process_datasets:
-            return {"data_cutoff_principles_applied": True}
+            return {
+                "data_cutoff_principles_applied": True,
+                "data_treatment_principles_applied": True,
+            }
         process_list = [item for item in (state.get("processes") or []) if isinstance(item, dict)]
         process_ids = [str(item.get("process_id") or "").strip() for item in process_list]
         plan_index = {str(item.get("process_id") or "").strip(): item for item in process_list if isinstance(item, dict)}
         existing_source = state.get("data_cut_off_and_completeness_principles")
+        balance_review = state.get("balance_review") if isinstance(state.get("balance_review"), list) else []
+        balance_summary = state.get("balance_review_summary") if isinstance(state.get("balance_review_summary"), dict) else {}
+        balance_index = {str(item.get("process_id") or "").strip(): item for item in balance_review if isinstance(item, dict) and str(item.get("process_id") or "").strip()}
         updated_datasets = copy.deepcopy(process_datasets)
         principles_map: dict[str, dict[str, str]] = {}
         summary_map: dict[str, dict[str, Any]] = {}
+        treatment_map: dict[str, dict[str, str]] = {}
+        treatment_summary_map: dict[str, dict[str, Any]] = {}
 
         for idx, dataset in enumerate(updated_datasets):
             if not isinstance(dataset, dict):
@@ -7576,9 +7528,29 @@ def _build_langgraph(
                 dsr = {}
                 modelling["dataSourcesTreatmentAndRepresentativeness"] = dsr
             dsr["dataCutOffAndCompletenessPrinciples"] = list(entries)
+            balance_entry = balance_index.get(process_id)
+            treatment_summary = _balance_entry_snapshot(balance_entry)
+            treatment_summary_map[process_id] = treatment_summary
+            treatment_fallback_en = _join_texts(
+                _fallback_data_treatment_principles(
+                    process_id=process_id,
+                    balance_entry=balance_entry,
+                    balance_summary=balance_summary,
+                )
+            )
+            treatment_entries = _coerce_bilingual_payload(
+                {"en": treatment_fallback_en} if treatment_fallback_en else {},
+                translator=translator,
+                fallback_en=treatment_fallback_en,
+            )
+            dsr["dataTreatmentAndExtrapolationsPrinciples"] = list(treatment_entries)
+            treatment_map[process_id] = _normalize_bilingual_text(treatment_entries)
         return {
             "process_datasets": updated_datasets,
             "data_cut_off_and_completeness_principles": principles_map,
+            "data_treatment_and_extrapolations_principles": treatment_map,
+            "data_treatment_principles_applied": True,
+            "data_treatment_summary": treatment_summary_map,
             "data_cutoff_principles_applied": True,
             "data_cutoff_summary": summary_map,
             "step_markers": _update_step_markers(state, "data_cutoff"),
