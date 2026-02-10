@@ -15,6 +15,7 @@ Interface:
       --schema    Override product flow category schema (default: packaged tidas_flows_product_category.json).
 
 The script runs sequentially, one MCP call per flow, no implicit retries.
+Flow payloads are validated/normalised via tidas_sdk before optional CRUD publish.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
+
+from tidas_sdk import create_flow
 
 from tiangong_lca_spec.core.config import get_settings
 from tiangong_lca_spec.core.constants import build_dataset_format_reference
@@ -55,6 +58,12 @@ class FlowInput:
 
 
 # ---------------------------- Helpers ---------------------------- #
+
+DEFAULT_TREATMENT = "Unspecified treatment"
+DEFAULT_MIX = "Production mix, at plant"
+DEFAULT_FLOW_VERSION = "01.01.000"
+MASS_FLOW_PROPERTY_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"
+MASS_FLOW_PROPERTY_VERSION = "03.00.003"
 
 
 def _lang_entry(text: str, lang: str = "en") -> dict[str, Any]:
@@ -86,11 +95,20 @@ def _compliance_block() -> dict[str, Any]:
                 "@type": "source data set",
                 "@uri": build_local_dataset_uri("source", uuid_value, version),
                 "@version": version,
-                "common:shortDescription": _lang_entry("ILCD Data Network - Entry-level", "en"),
+                "common:shortDescription": [_lang_entry("ILCD Data Network - Entry-level", "en")],
             },
             "common:approvalOfOverallCompliance": "Fully compliant",
         }
     }
+
+
+def _dataset_format_reference() -> dict[str, Any]:
+    """Normalize dataset format reference for strict tidas_sdk validation."""
+    reference = build_dataset_format_reference()
+    short_description = reference.get("common:shortDescription")
+    if isinstance(short_description, dict):
+        reference["common:shortDescription"] = [short_description]
+    return reference
 
 
 def _ensure_list(value: Any) -> list[str]:
@@ -192,14 +210,14 @@ def build_classification_path(target_code: str, schema_path: Any) -> list[dict[s
 def build_flow_dataset(entry: FlowInput, classification: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
     base_en = (entry.base_en or entry.leaf_name).strip()
     base_zh = (entry.base_zh or entry.leaf_name_zh or base_en).strip()
-    treatment = (entry.treatment or "Unspecified treatment").strip()
-    mix = (entry.mix or "Production mix, at plant").strip()
+    treatment = (entry.treatment or DEFAULT_TREATMENT).strip()
+    mix = (entry.mix or DEFAULT_MIX).strip()
     en_synonyms = _ensure_list(entry.en_synonyms) or [base_en]
     zh_synonyms = _ensure_list(entry.zh_synonyms) or [base_zh]
     comment = entry.comment or entry.desc or entry.leaf_name
 
     flow_uuid = str(uuid4())
-    version = "01.01.000"
+    version = DEFAULT_FLOW_VERSION
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     dataset = {
@@ -245,7 +263,7 @@ def build_flow_dataset(entry: FlowInput, classification: list[dict[str, str]]) -
         "administrativeInformation": {
             "dataEntryBy": {
                 "common:timeStamp": timestamp,
-                "common:referenceToDataSetFormat": build_dataset_format_reference(),
+                "common:referenceToDataSetFormat": _dataset_format_reference(),
                 "common:referenceToPersonOrEntityEnteringTheData": _contact_reference(),
             },
             "publicationAndOwnership": {
@@ -259,15 +277,40 @@ def build_flow_dataset(entry: FlowInput, classification: list[dict[str, str]]) -
                 "meanValue": "1.0",
                 "referenceToFlowPropertyDataSet": {
                     "@type": "flow property data set",
-                    "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
-                    "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
-                    "@version": "03.00.003",
-                    "common:shortDescription": _lang_entry("Mass", "en"),
+                    "@refObjectId": MASS_FLOW_PROPERTY_UUID,
+                    "@uri": f"../flowproperties/{MASS_FLOW_PROPERTY_UUID}_{MASS_FLOW_PROPERTY_VERSION}.xml",
+                    "@version": MASS_FLOW_PROPERTY_VERSION,
+                    "common:shortDescription": [_lang_entry("Mass", "en")],
                 },
             }
         },
     }
     return flow_uuid, dataset
+
+
+def _normalize_timestamp(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            return value
+    try:
+        dt = datetime.fromisoformat(str(value))
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return str(value)
+
+
+def build_flow_payload(flow_dataset: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize payload via tidas_sdk before CRUD publish."""
+    flow = create_flow({"flowDataSet": flow_dataset}, validate=True)
+    payload = flow.to_json(by_alias=True, exclude_none=True)
+    ts = payload["flowDataSet"]["administrativeInformation"]["dataEntryBy"]["common:timeStamp"]
+    payload["flowDataSet"]["administrativeInformation"]["dataEntryBy"]["common:timeStamp"] = _normalize_timestamp(ts)
+    return payload
 
 
 def write_log(log_path: Path, rows: Iterable[dict[str, str]]) -> None:
@@ -322,15 +365,20 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 classification = build_classification_path(entry.class_id, schema_path)
                 flow_uuid, dataset = build_flow_dataset(entry, classification)
+                payload_dataset = build_flow_payload(dataset)
+                payload_uuid = str(payload_dataset["flowDataSet"]["flowInformation"]["dataSetInformation"]["common:UUID"]).strip()
+                if payload_uuid:
+                    flow_uuid = payload_uuid
+                version = str(payload_dataset["flowDataSet"]["administrativeInformation"]["publicationAndOwnership"]["common:dataSetVersion"]).strip() or DEFAULT_FLOW_VERSION
                 payload = {
                     "operation": "insert",
                     "table": "flows",
                     "id": flow_uuid,
-                    "jsonOrdered": {"flowDataSet": dataset},
+                    "jsonOrdered": payload_dataset,
                 }
                 if args.commit and client:
                     result = client.invoke_json_tool(settings.flow_search_service_name, "Database_CRUD_Tool", payload)
-                    message = f"inserted version {dataset['administrativeInformation']['publicationAndOwnership']['common:dataSetVersion']}"
+                    message = f"inserted version {version}"
                     status = "success"
                     print(f"[OK] {entry.class_id} {entry.leaf_name} -> {flow_uuid}")
                     successes += 1
