@@ -120,6 +120,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Actually invoke Database_CRUD_Tool (default: dry-run).",
     )
+    parser.add_argument(
+        "--skip-balance-check",
+        action="store_true",
+        help="Skip balance quality gate before publish (not recommended).",
+    )
     return parser.parse_args()
 
 
@@ -402,6 +407,65 @@ def _load_source_datasets(run_id: str) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             datasets.append(payload)
     return datasets
+
+
+def _load_run_state(run_id: str) -> dict[str, Any]:
+    state_path = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / run_id / "cache" / "process_from_flow_state.json"
+    if not state_path.exists():
+        raise SystemExit(f"State file not found for run {run_id}: {state_path}")
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise SystemExit(f"State payload is not an object: {state_path}")
+    return payload
+
+
+def _enforce_balance_quality_gate(run_id: str) -> None:
+    state = _load_run_state(run_id)
+    review = state.get("balance_review")
+    if not isinstance(review, list) or not review:
+        raise SystemExit("Balance quality gate failed: missing balance_review in run state. " "Re-run the workflow to generate balance review before publishing.")
+
+    failures: list[str] = []
+    for entry in review:
+        if not isinstance(entry, Mapping):
+            continue
+        process_id = str(entry.get("process_id") or "").strip() or "unknown"
+        process_name = str(entry.get("process_name") or "").strip() or process_id
+        core_exchange_count = int(entry.get("core_exchange_count") or 0)
+        mass_core = entry.get("mass_core") if isinstance(entry.get("mass_core"), Mapping) else None
+        if mass_core is None and isinstance(entry.get("mass"), Mapping):
+            mass_core = entry.get("mass")
+        core_status = str((mass_core or {}).get("status") or "").strip().lower()
+        core_ratio = (mass_core or {}).get("ratio")
+        unit_mismatch_count = int(entry.get("unit_mismatch_count") or 0)
+        mapping_conflict_count = int(entry.get("mapping_conflict_count") or 0)
+        overall_status = str(entry.get("status") or "").strip().lower()
+
+        reasons: list[str] = []
+        if core_exchange_count > 0 and core_status != "ok":
+            reasons.append(f"core_mass_status={core_status or 'unknown'} ratio={core_ratio}")
+        if unit_mismatch_count > 0:
+            reasons.append(f"unit_mismatch_count={unit_mismatch_count}")
+        if mapping_conflict_count > 0:
+            reasons.append(f"mapping_conflict_count={mapping_conflict_count}")
+        # Keep existing status as an additional signal for backward compatibility.
+        if overall_status in {"check", "insufficient"}:
+            reasons.append(f"overall_status={overall_status}")
+
+        if reasons:
+            failures.append(f"{process_id} ({process_name}): " + ", ".join(reasons))
+
+    if failures:
+        preview = "\n".join(f"- {item}" for item in failures[:10])
+        extra = ""
+        if len(failures) > 10:
+            extra = f"\n... and {len(failures) - 10} more process(es)."
+        raise SystemExit(
+            "Balance quality gate failed. Please fix process exchanges and rerun before publish.\n"
+            f"run_id={run_id}\n{preview}{extra}\n"
+            "Use --skip-balance-check only when you explicitly accept these risks."
+        )
+    print(f"Balance quality gate passed for run {run_id}.", file=sys.stderr)
 
 
 def _extract_lang_text(value: Any) -> str:
@@ -785,6 +849,8 @@ def main() -> None:
     if args.publish_only:
         run_id = _resolve_run_id(args.run_id)
         exports_dir = ensure_run_exports_dir(run_id)
+        if not args.skip_balance_check:
+            _enforce_balance_quality_gate(run_id)
         llm = None
         if args.publish_flows and not args.no_llm and args.secrets.exists():
             api_key, model, base_url = load_secrets(args.secrets)
@@ -899,6 +965,8 @@ def main() -> None:
             source_written.append(target)
         print(f"Wrote {len(source_written)} source dataset(s) to {exports_dir / 'sources'}", file=sys.stderr)
     if args.publish:
+        if not args.skip_balance_check:
+            _enforce_balance_quality_gate(run_id)
         if args.publish_flows:
             flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm, exports_dir=exports_dir)
             if args.commit and flow_plans:

@@ -1877,6 +1877,21 @@ _UNIT_DIMENSIONS: dict[str, tuple[str, float]] = {
     "ml": ("volume", 1.0e-6),
 }
 
+_AMBIGUOUS_BALANCE_UNITS = {
+    "unit",
+    "units",
+    "item",
+    "items",
+    "piece",
+    "pieces",
+    "pc",
+    "pcs",
+    "ea",
+    "count",
+    "set",
+    "batch",
+}
+
 
 def _convert_amount_simple(amount: float, from_unit: str, to_unit: str) -> float | None:
     from_key = _normalize_unit_token(from_unit)
@@ -2227,6 +2242,64 @@ def _convert_exchange_amount_for_balance(
         if converted is not None:
             return dimension, converted, target_unit
     return None, None, None
+
+
+def _is_ambiguous_balance_unit(value: str | None) -> bool:
+    token = _normalize_unit_token(value)
+    if not token:
+        return True
+    return token in _AMBIGUOUS_BALANCE_UNITS
+
+
+def _resolve_exchange_balance_unit(
+    exchange: dict[str, Any],
+    *,
+    reference_info: FlowReferenceInfo | None,
+    material_role: str | None,
+    flow_kind: str | None,
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    unit_text = str(exchange.get("unit") or "").strip()
+    tags = _parse_exchange_comment_tags(exchange.get("generalComment"))
+    tag_unit = str(tags.get(_EXCHANGE_UNIT_TAG_NAME) or "").strip()
+    normalized_role = _normalize_material_role(material_role)
+    normalized_kind = _normalize_flow_type(flow_kind)
+
+    resolved = unit_text
+    if _is_ambiguous_balance_unit(resolved) and tag_unit and not _is_ambiguous_balance_unit(tag_unit):
+        resolved = tag_unit
+        reasons.append("uom_from_comment_tag")
+
+    unit_group = reference_info.unit_group if isinstance(reference_info, FlowReferenceInfo) else None
+    dimension = _unit_group_dimension(unit_group)
+    reference_unit = unit_group.reference_unit if unit_group else ""
+    if _is_ambiguous_balance_unit(resolved):
+        # For core material exchanges, when the unit is ambiguous (e.g. "unit"),
+        # fall back to the matched flow reference unit to keep mass balance computable.
+        if reference_unit and dimension in {"mass", "energy"} and (normalized_role in _BALANCE_CORE_ROLES or normalized_kind in {"product", "waste"}):
+            resolved = reference_unit
+            reasons.append("assume_flow_reference_unit")
+
+    return resolved, reasons
+
+
+def _is_core_mass_exchange(
+    *,
+    material_role: str | None,
+    flow_kind: str | None,
+    balance_exclude: bool | None,
+) -> bool:
+    if balance_exclude is True:
+        return False
+    normalized_role = _normalize_material_role(material_role)
+    if normalized_role in _BALANCE_EXCLUDE_ROLES:
+        return False
+    if normalized_role in {"energy", "emission", "service"}:
+        return False
+    if normalized_role in _BALANCE_CORE_ROLES:
+        return True
+    normalized_kind = _normalize_flow_type(flow_kind)
+    return normalized_kind in {"product", "waste"}
 
 
 def _assess_unit_compatibility(
@@ -2749,6 +2822,20 @@ def _exchange_comment_tag_block(*, flow_kind: Any, unit: Any) -> str:
     return f"[{_EXCHANGE_KIND_TAG_NAME}={kind_tag}] [{_EXCHANGE_UNIT_TAG_NAME}={unit_tag}]"
 
 
+def _parse_exchange_comment_tags(comment: Any) -> dict[str, str]:
+    text = str(comment).strip() if comment is not None else ""
+    if not text:
+        return {}
+    parsed: dict[str, str] = {}
+    for match in _EXCHANGE_COMMENT_TAG_CAPTURE_PATTERN.finditer(text):
+        key = str(match.group("name") or "").strip().lower()
+        value = str(match.group("value") or "").strip()
+        if not key:
+            continue
+        parsed[key] = value
+    return parsed
+
+
 def _strip_exchange_comment_tags(comment: Any) -> str:
     text = str(comment).strip() if comment is not None else ""
     if not text:
@@ -2767,7 +2854,38 @@ def _apply_exchange_comment_tags(comment: Any, *, flow_kind: Any, unit: Any) -> 
     return tags
 
 
-def _ensure_exchange_comment_tags(exchange: dict[str, Any]) -> None:
+def _resolve_exchange_comment_tag_unit(
+    exchange: dict[str, Any],
+    *,
+    reference_info: FlowReferenceInfo | None = None,
+    fallback_unit: str | None = None,
+) -> str:
+    if isinstance(reference_info, FlowReferenceInfo):
+        unit_group = reference_info.unit_group
+        if isinstance(unit_group, UnitGroupInfo):
+            ref_unit = str(unit_group.reference_unit or "").strip()
+            if ref_unit:
+                return ref_unit
+    flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+    unit_check = flow_search.get("unit_check") if isinstance(flow_search.get("unit_check"), dict) else {}
+    for key in ("flow_reference_unit", "converted_unit"):
+        candidate = str(unit_check.get(key) or "").strip()
+        if candidate:
+            return candidate
+    fallback = str(fallback_unit or "").strip()
+    if fallback:
+        return fallback
+    unit = str(exchange.get("unit") or "").strip()
+    if unit:
+        return unit
+    tags = _parse_exchange_comment_tags(exchange.get("generalComment"))
+    tag_unit = str(tags.get(_EXCHANGE_UNIT_TAG_NAME) or "").strip()
+    if tag_unit:
+        return tag_unit
+    return "unit"
+
+
+def _ensure_exchange_comment_tags(exchange: dict[str, Any], *, preferred_unit: str | None = None) -> None:
     direction = str(exchange.get("exchangeDirection") or "").strip()
     is_reference = bool(exchange.get("is_reference_flow"))
     flow_kind = _normalize_flow_type(exchange.get("flow_type") or exchange.get("flowType"))
@@ -2777,7 +2895,9 @@ def _ensure_exchange_comment_tags(exchange: dict[str, Any]) -> None:
             direction=direction,
             is_reference_flow=is_reference,
         )
-    unit = str(exchange.get("unit") or "").strip() or "unit"
+    unit = str(preferred_unit or "").strip()
+    if not unit:
+        unit = _resolve_exchange_comment_tag_unit(exchange)
     exchange["generalComment"] = _apply_exchange_comment_tags(
         exchange.get("generalComment"),
         flow_kind=flow_kind,
@@ -3391,6 +3511,10 @@ _EXCHANGE_COMMENT_TAG_PATTERN = re.compile(
     rf"\[(?:{_EXCHANGE_KIND_TAG_NAME}|{_EXCHANGE_UNIT_TAG_NAME})=[^\]]*\]",
     re.IGNORECASE,
 )
+_EXCHANGE_COMMENT_TAG_CAPTURE_PATTERN = re.compile(
+    rf"\[(?P<name>{_EXCHANGE_KIND_TAG_NAME}|{_EXCHANGE_UNIT_TAG_NAME})=(?P<value>[^\]]*)\]",
+    re.IGNORECASE,
+)
 _FLOW_NAME_FIELDS = ("baseName", "treatmentStandardsRoutes", "mixAndLocationTypes")
 _FLOW_QUALIFIER_FIELDS = ("flowProperties",)
 _MEDIA_SUFFIXES = ("to air", "to water", "to soil")
@@ -3439,6 +3563,7 @@ _MATERIAL_ROLE_ALIASES = {
     "unknown": "unknown",
 }
 _BALANCE_EXCLUDE_ROLES = {"auxiliary", "catalyst"}
+_BALANCE_CORE_ROLES = {"raw_material", "product", "waste"}
 
 
 class ProcessFromFlowState(TypedDict, total=False):
@@ -5833,7 +5958,12 @@ def _build_langgraph(
 
                     flow_search["unit_check"] = unit_check
                     exchange["flow_search"] = flow_search
-                    _ensure_exchange_comment_tags(exchange)
+                    tag_unit = _resolve_exchange_comment_tag_unit(
+                        exchange,
+                        reference_info=reference_info,
+                        fallback_unit=reference_unit,
+                    )
+                    _ensure_exchange_comment_tags(exchange, preferred_unit=tag_unit)
         finally:
             if should_close_crud and crud_client:
                 crud_client.close()
@@ -6092,7 +6222,12 @@ def _build_langgraph(
                     unit_check["review_required"] = True
                     flow_search["unit_check"] = unit_check
                     exchange["flow_search"] = flow_search
-                    _ensure_exchange_comment_tags(exchange)
+                    tag_unit = _resolve_exchange_comment_tag_unit(
+                        exchange,
+                        reference_info=reference_info,
+                        fallback_unit=flow_reference_unit,
+                    )
+                    _ensure_exchange_comment_tags(exchange, preferred_unit=tag_unit)
                     summary["exchange_converted"] += 1
         finally:
             if should_close_crud and crud_client:
@@ -6369,6 +6504,7 @@ def _build_langgraph(
                         direction = reference_direction
                     amount_value = _parse_amount_value(exchange.get("amount"))
                     exchange_unit = str(exchange.get("unit") or "").strip()
+                    material_role = _normalize_material_role(exchange.get("material_role") or exchange.get("materialRole"))
                     selected_uuid = None
                     selected_version = None
                     selected_base_name = None
@@ -6425,22 +6561,31 @@ def _build_langgraph(
                         reference = _placeholder_flow_reference(name, translator=translator)
                         reference_info = None
 
-                    if amount_value is not None and exchange_unit and isinstance(reference_info, FlowReferenceInfo):
-                        unit_group = reference_info.unit_group
-                        dimension = _unit_group_dimension(unit_group)
-                        if dimension and unit_group:
-                            converted = _convert_amount_with_unit_group(amount_value, exchange_unit, unit_group)
-                            if converted is not None:
-                                dim_state = balance_state[dimension]
-                                if dim_state["unit"] and dim_state["unit"] != unit_group.reference_unit:
-                                    pass
+                    flow_kind = _exchange_flow_type_for_dedupe(exchange, direction=direction)
+                    balance_unit, _ = _resolve_exchange_balance_unit(
+                        exchange,
+                        reference_info=reference_info,
+                        material_role=material_role,
+                        flow_kind=flow_kind,
+                    )
+                    if amount_value is not None and balance_unit:
+                        dimension, converted, unit_label = _convert_exchange_amount_for_balance(
+                            amount_value,
+                            balance_unit,
+                            reference_info,
+                        )
+                        if dimension and converted is not None:
+                            dim_state = balance_state[dimension]
+                            if dim_state["unit"] and unit_label and dim_state["unit"] != unit_label:
+                                pass
+                            else:
+                                if unit_label:
+                                    dim_state["unit"] = unit_label
+                                if direction == "Input":
+                                    dim_state["inputs"] += converted
                                 else:
-                                    dim_state["unit"] = unit_group.reference_unit
-                                    if direction == "Input":
-                                        dim_state["inputs"] += converted
-                                    else:
-                                        dim_state["outputs"] += converted
-                                    dim_state["count"] += 1
+                                    dim_state["outputs"] += converted
+                                dim_state["count"] += 1
 
                     amount = exchange.get("amount")
                     amount_text = _default_exchange_amount() if amount in (None, "", 0) else str(amount)
@@ -6454,7 +6599,11 @@ def _build_langgraph(
                         else:
                             comment_text = evidence_text
                     comment_flow_kind = _exchange_flow_type_for_dedupe(exchange, direction=direction)
-                    comment_unit = str(exchange.get("unit") or "").strip() or exchange_unit or "unit"
+                    comment_unit = _resolve_exchange_comment_tag_unit(
+                        exchange,
+                        reference_info=reference_info,
+                        fallback_unit=exchange_unit,
+                    )
                     comment_text = _apply_exchange_comment_tags(
                         comment_text,
                         flow_kind=comment_flow_kind,
@@ -6822,10 +6971,16 @@ def _build_langgraph(
             "process_ok": 0,
             "process_check": 0,
             "process_insufficient": 0,
+            "mass_core_check_processes": 0,
+            "mass_core_insufficient_processes": 0,
             "unit_mismatch_total": 0,
             "unit_mismatch_processes": 0,
             "density_estimate_total": 0,
             "density_estimate_processes": 0,
+            "unit_assumption_total": 0,
+            "unit_assumption_processes": 0,
+            "mapping_conflict_total": 0,
+            "mapping_conflict_processes": 0,
             "balance_excluded_total": 0,
             "balance_excluded_processes": 0,
             "role_missing_total": 0,
@@ -6884,10 +7039,14 @@ def _build_langgraph(
                     "mass": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
                     "energy": {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""},
                 }
+                core_mass_state = {"inputs": 0.0, "outputs": 0.0, "count": 0, "unit": ""}
                 unit_mismatches: list[dict[str, Any]] = []
                 density_estimates: list[dict[str, Any]] = []
+                unit_assumptions: list[dict[str, Any]] = []
+                core_mass_refs: list[dict[str, Any]] = []
                 excluded_count = 0
                 missing_role_count = 0
+                core_exchange_count = 0
                 for exchange in exchanges:
                     if not isinstance(exchange, dict):
                         continue
@@ -6895,16 +7054,27 @@ def _build_langgraph(
                     if not material_role or material_role == "unknown":
                         missing_role_count += 1
                     balance_exclude = _normalize_balance_exclude(exchange.get("balance_exclude") or exchange.get("balanceExclude"))
-                    if balance_exclude is True or (material_role in _BALANCE_EXCLUDE_ROLES):
-                        excluded_count += 1
-                        continue
-                    amount_value = _parse_amount_value(exchange.get("amount"))
-                    exchange_unit = str(exchange.get("unit") or "").strip()
                     direction = str(exchange.get("exchangeDirection") or "").strip()
                     if direction not in {"Input", "Output"}:
                         direction = "Input"
                     if bool(exchange.get("is_reference_flow")):
                         direction = reference_direction
+                    comment_tags = _parse_exchange_comment_tags(exchange.get("generalComment"))
+                    flow_kind = _normalize_flow_type(comment_tags.get(_EXCHANGE_KIND_TAG_NAME))
+                    if not flow_kind:
+                        flow_kind = _exchange_flow_type_for_dedupe(exchange, direction=direction)
+                    is_core_exchange = _is_core_mass_exchange(
+                        material_role=material_role,
+                        flow_kind=flow_kind,
+                        balance_exclude=balance_exclude,
+                    )
+                    if is_core_exchange:
+                        core_exchange_count += 1
+                    if balance_exclude is True or (material_role in _BALANCE_EXCLUDE_ROLES):
+                        excluded_count += 1
+                        continue
+                    amount_value = _parse_amount_value(exchange.get("amount"))
+                    exchange_unit = str(exchange.get("unit") or "").strip()
                     flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
                     selected_uuid = str(flow_search.get("selected_uuid") or "").strip() or None
                     reference_info = None
@@ -6956,9 +7126,26 @@ def _build_langgraph(
                             }
                         )
 
-                    if amount_value is None or not exchange_unit:
+                    balance_unit, assumption_reasons = _resolve_exchange_balance_unit(
+                        exchange,
+                        reference_info=reference_info,
+                        material_role=material_role,
+                        flow_kind=flow_kind,
+                    )
+                    if assumption_reasons:
+                        unit_assumptions.append(
+                            {
+                                "exchange_name": str(exchange.get("exchangeName") or "").strip(),
+                                "exchange_direction": direction,
+                                "original_unit": exchange_unit or None,
+                                "resolved_unit": balance_unit or None,
+                                "reasons": assumption_reasons,
+                                "flow_uuid": selected_uuid,
+                            }
+                        )
+                    if amount_value is None or not balance_unit:
                         continue
-                    dimension, converted, unit_label = _convert_exchange_amount_for_balance(amount_value, exchange_unit, reference_info)
+                    dimension, converted, unit_label = _convert_exchange_amount_for_balance(amount_value, balance_unit, reference_info)
                     if dimension and converted is not None:
                         dim_state = balance_state[dimension]
                         if dim_state["unit"] and unit_label and dim_state["unit"] != unit_label:
@@ -6970,10 +7157,61 @@ def _build_langgraph(
                         else:
                             dim_state["outputs"] += converted
                         dim_state["count"] += 1
+                        if dimension == "mass" and is_core_exchange:
+                            if core_mass_state["unit"] and unit_label and core_mass_state["unit"] != unit_label:
+                                continue
+                            if unit_label:
+                                core_mass_state["unit"] = unit_label
+                            if direction == "Input":
+                                core_mass_state["inputs"] += converted
+                            else:
+                                core_mass_state["outputs"] += converted
+                            core_mass_state["count"] += 1
+                            if selected_uuid:
+                                core_mass_refs.append(
+                                    {
+                                        "uuid": selected_uuid,
+                                        "exchange_name": str(exchange.get("exchangeName") or "").strip(),
+                                        "direction": direction,
+                                        "is_reference_flow": bool(exchange.get("is_reference_flow")),
+                                    }
+                                )
 
                 mass_summary = _balance_state_summary(balance_state["mass"])
+                mass_core_summary = _balance_state_summary(core_mass_state)
                 energy_summary = _balance_state_summary(balance_state["energy"])
                 status = _merge_balance_status(mass_summary.get("status"), energy_summary.get("status"))
+                mapping_conflicts: list[dict[str, Any]] = []
+                reference_output_uuids = {
+                    str(item.get("uuid") or "").strip() for item in core_mass_refs if item.get("is_reference_flow") and str(item.get("direction") or "").strip() == reference_direction
+                }
+                if reference_output_uuids:
+                    seen_conflicts: set[tuple[str, str]] = set()
+                    for item in core_mass_refs:
+                        uuid_value = str(item.get("uuid") or "").strip()
+                        if not uuid_value:
+                            continue
+                        if str(item.get("direction") or "").strip() != "Input":
+                            continue
+                        if item.get("is_reference_flow"):
+                            continue
+                        if uuid_value not in reference_output_uuids:
+                            continue
+                        key = (uuid_value, str(item.get("exchange_name") or "").strip())
+                        if key in seen_conflicts:
+                            continue
+                        seen_conflicts.add(key)
+                        mapping_conflicts.append(
+                            {
+                                "flow_uuid": uuid_value,
+                                "exchange_name": str(item.get("exchange_name") or "").strip(),
+                                "reason": "input_uses_reference_output_flow_uuid",
+                            }
+                        )
+                if core_exchange_count and mass_core_summary.get("status") != "ok":
+                    status = "check"
+                if unit_mismatches or mapping_conflicts:
+                    status = "check"
                 note = _build_balance_note(balance_state)
                 reviews.append(
                     {
@@ -6981,12 +7219,18 @@ def _build_langgraph(
                         "process_name": process_name,
                         "status": status,
                         "mass": mass_summary,
+                        "mass_core": mass_core_summary,
                         "energy": energy_summary,
                         "note": note,
                         "unit_mismatches": unit_mismatches,
                         "unit_mismatch_count": len(unit_mismatches),
                         "density_estimates": density_estimates,
                         "density_estimate_count": len(density_estimates),
+                        "unit_assumptions": unit_assumptions,
+                        "unit_assumption_count": len(unit_assumptions),
+                        "mapping_conflicts": mapping_conflicts,
+                        "mapping_conflict_count": len(mapping_conflicts),
+                        "core_exchange_count": core_exchange_count,
                         "balance_excluded_count": excluded_count,
                         "role_missing_count": missing_role_count,
                         "exchange_count": len(exchanges),
@@ -6999,12 +7243,22 @@ def _build_langgraph(
                 if density_estimates:
                     summary["density_estimate_total"] += len(density_estimates)
                     summary["density_estimate_processes"] += 1
+                if unit_assumptions:
+                    summary["unit_assumption_total"] += len(unit_assumptions)
+                    summary["unit_assumption_processes"] += 1
+                if mapping_conflicts:
+                    summary["mapping_conflict_total"] += len(mapping_conflicts)
+                    summary["mapping_conflict_processes"] += 1
                 if excluded_count:
                     summary["balance_excluded_total"] += excluded_count
                     summary["balance_excluded_processes"] += 1
                 if missing_role_count:
                     summary["role_missing_total"] += missing_role_count
                     summary["role_missing_processes"] += 1
+                if mass_core_summary.get("status") == "check":
+                    summary["mass_core_check_processes"] += 1
+                elif core_exchange_count and mass_core_summary.get("status") == "insufficient":
+                    summary["mass_core_insufficient_processes"] += 1
                 if status == "check":
                     summary["process_check"] += 1
                     LOGGER.warning(
@@ -7013,8 +7267,12 @@ def _build_langgraph(
                         process_name=process_name,
                         mass_status=mass_summary.get("status"),
                         mass_ratio=mass_summary.get("ratio"),
+                        mass_core_status=mass_core_summary.get("status"),
+                        mass_core_ratio=mass_core_summary.get("ratio"),
                         energy_status=energy_summary.get("status"),
                         energy_ratio=energy_summary.get("ratio"),
+                        mapping_conflict_count=len(mapping_conflicts),
+                        unit_assumption_count=len(unit_assumptions),
                     )
                 elif status == "ok":
                     summary["process_ok"] += 1

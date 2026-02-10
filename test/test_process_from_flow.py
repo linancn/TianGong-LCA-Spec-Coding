@@ -7,6 +7,14 @@ from uuid import uuid4
 
 from tiangong_lca_spec.core.models import FlowCandidate, FlowQuery
 from tiangong_lca_spec.process_from_flow import ProcessFromFlowService
+from tiangong_lca_spec.process_from_flow.service import (
+    FlowReferenceInfo,
+    UnitGroupInfo,
+    _is_core_mass_exchange,
+    _parse_exchange_comment_tags,
+    _resolve_exchange_balance_unit,
+    _resolve_exchange_comment_tag_unit,
+)
 
 
 class FakeLLM:
@@ -385,3 +393,74 @@ def test_process_from_flow_exchange_comments_include_io_tags(tmp_path: Path) -> 
             texts.append(comment_block.strip())
         assert any("[tg_io_kind_tag=" in text for text in texts)
         assert any("[tg_io_uom_tag=" in text for text in texts)
+
+
+def test_parse_exchange_comment_tags_extracts_kind_and_uom() -> None:
+    comment = "example [tg_io_kind_tag=product] [tg_io_uom_tag=kg]"
+    parsed = _parse_exchange_comment_tags(comment)
+    assert parsed.get("tg_io_kind_tag") == "product"
+    assert parsed.get("tg_io_uom_tag") == "kg"
+
+
+def test_resolve_exchange_balance_unit_prefers_comment_uom_when_unit_is_ambiguous() -> None:
+    exchange = {
+        "unit": "unit",
+        "generalComment": "input [tg_io_kind_tag=product] [tg_io_uom_tag=kg]",
+    }
+    resolved, reasons = _resolve_exchange_balance_unit(
+        exchange,
+        reference_info=None,
+        material_role="raw_material",
+        flow_kind="product",
+    )
+    assert resolved == "kg"
+    assert "uom_from_comment_tag" in reasons
+
+
+def test_resolve_exchange_balance_unit_can_fallback_to_flow_reference_unit() -> None:
+    reference_info = FlowReferenceInfo(
+        flow_property_id="93a60a56-a3c8-11da-a746-0800200b9a66",
+        unit_group=UnitGroupInfo(
+            unit_group_id="mass",
+            name="Units of mass",
+            reference_unit="kg",
+            units={"kg": 1.0},
+        ),
+    )
+    exchange = {
+        "unit": "unit",
+        "generalComment": "input [tg_io_kind_tag=product] [tg_io_uom_tag=unit]",
+    }
+    resolved, reasons = _resolve_exchange_balance_unit(
+        exchange,
+        reference_info=reference_info,
+        material_role="raw_material",
+        flow_kind="product",
+    )
+    assert resolved == "kg"
+    assert "assume_flow_reference_unit" in reasons
+
+
+def test_is_core_mass_exchange_respects_roles_and_exclude() -> None:
+    assert _is_core_mass_exchange(material_role="raw_material", flow_kind="product", balance_exclude=False) is True
+    assert _is_core_mass_exchange(material_role="product", flow_kind="product", balance_exclude=False) is True
+    assert _is_core_mass_exchange(material_role="energy", flow_kind="product", balance_exclude=False) is False
+    assert _is_core_mass_exchange(material_role="auxiliary", flow_kind="product", balance_exclude=True) is False
+
+
+def test_resolve_exchange_comment_tag_unit_prefers_flow_reference_unit() -> None:
+    reference_info = FlowReferenceInfo(
+        flow_property_id="93a60a56-a3c8-11da-a746-0800200b9a66",
+        unit_group=UnitGroupInfo(
+            unit_group_id="mass",
+            name="Units of mass",
+            reference_unit="kg",
+            units={"kg": 1.0},
+        ),
+    )
+    exchange = {
+        "unit": "unit",
+        "generalComment": "input [tg_io_kind_tag=product] [tg_io_uom_tag=unit]",
+    }
+    resolved = _resolve_exchange_comment_tag_unit(exchange, reference_info=reference_info)
+    assert resolved == "kg"
