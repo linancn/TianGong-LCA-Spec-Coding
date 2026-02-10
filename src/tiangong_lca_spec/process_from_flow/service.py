@@ -171,6 +171,18 @@ _FLOW_PROPERTY_CACHE: dict[str, FlowPropertyInfo] = {}
 _UNIT_GROUP_CACHE: dict[str, UnitGroupInfo] = {}
 
 
+FLOW_QUERY_REWRITE_PROMPT = (
+    "You rewrite LCA exchange names for flow search.\n"
+    "Given one exchange name and constraints, output concise alternative product/exchange names that may exist in a flow database.\n"
+    "Rules:\n"
+    "1. Keep the same semantic object; do NOT broaden scope.\n"
+    "2. Preserve constraints (flow_type, direction, unit, compartment) conceptually.\n"
+    "3. Prefer canonical commodity names and common aliases.\n"
+    "4. Remove end-use qualifiers like 'for pigs' when they are not intrinsic to the commodity.\n"
+    "Return strict JSON object with key `query_variants` as an array of strings (max 5), no extra text."
+)
+
+
 def _search_scientific_references(
     query: str,
     *,
@@ -591,6 +603,94 @@ def _compact_text(value: str, *, limit: int = 160) -> str:
         return text
     trimmed = text[:limit].rsplit(" ", 1)[0]
     return trimmed or text[:limit]
+
+
+def _extract_rewrite_variant_strings(raw: Any) -> list[str]:
+    values: list[str] = []
+
+    def _append(value: Any) -> None:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                values.append(text)
+            return
+        if isinstance(value, dict):
+            for key in ("query", "exchange_name", "name", "text", "value"):
+                item = value.get(key)
+                if isinstance(item, str) and item.strip():
+                    values.append(item.strip())
+            return
+
+    if isinstance(raw, list):
+        for item in raw:
+            _append(item)
+        return values
+    _append(raw)
+    return values
+
+
+def _generate_flow_query_rewrites_with_llm(
+    *,
+    llm: LanguageModelProtocol | None,
+    exchange_name: str,
+    comment: str | None,
+    flow_type: str | None,
+    direction: str | None,
+    unit: str | None,
+    expected_compartment: str | None,
+    search_hints: list[str] | None,
+    max_variants: int = 5,
+) -> list[str]:
+    if llm is None:
+        return []
+    if not exchange_name.strip():
+        return []
+
+    payload = {
+        "prompt": FLOW_QUERY_REWRITE_PROMPT,
+        "context": {
+            "exchange_name": exchange_name,
+            "general_comment": comment,
+            "flow_type": flow_type,
+            "direction": direction,
+            "unit": unit,
+            "expected_compartment": expected_compartment,
+            "search_hints": search_hints or [],
+        },
+        "response_format": {"type": "json_object"},
+    }
+    try:
+        raw = llm.invoke(payload)
+        data = _ensure_dict(raw)
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning("process_from_flow.query_rewrite_llm_failed", exchange=exchange_name, error=str(exc))
+        return []
+
+    candidates: list[str] = []
+    for key in ("query_variants", "variants", "rewrites", "search_queries", "queries"):
+        candidates.extend(_extract_rewrite_variant_strings(data.get(key)))
+    if not candidates and isinstance(data.get("primary_query"), str):
+        candidates.append(str(data.get("primary_query")).strip())
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    original_norm = _normalize_exchange_label(exchange_name)
+    for item in candidates:
+        text = str(item).strip()
+        if not text:
+            continue
+        normalized = _normalize_exchange_label(text)
+        if not normalized:
+            continue
+        if normalized == original_norm:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(text)
+        if len(deduped) >= max(1, max_variants):
+            break
+    return deduped
 
 
 def _extract_doi_from_text(value: str) -> str | None:
@@ -4668,6 +4768,8 @@ def _serialize_candidate_list(candidates: list[FlowCandidate], *, limit: int = 1
                 "flow_type": candidate.flow_type,
                 "version": candidate.version,
                 "classification_path": classification,
+                "category_path": candidate.category_path,
+                "cas": candidate.cas,
             }
         )
     return serialized
@@ -4691,6 +4793,8 @@ def _serialize_flow_search_candidates(candidates: list[dict[str, Any]], *, limit
                 "flow_type": candidate.get("flow_type"),
                 "version": candidate.get("version"),
                 "classification_path": classification,
+                "category_path": candidate.get("category_path"),
+                "cas": candidate.get("cas"),
             }
         )
     return serialized
@@ -5791,12 +5895,32 @@ def _build_langgraph(
                     continue
                 name = str(exchange.get("exchangeName") or "").strip()
                 comment = _strip_exchange_comment_tags(exchange.get("generalComment")) or None
+                flow_type = _normalize_flow_type(exchange.get("flow_type")) or None
+                direction = str(exchange.get("exchangeDirection") or "").strip() or None
+                unit = str(exchange.get("unit") or "").strip() or None
                 search_hints = exchange.get("search_hints") or []
+                expected_compartment = _infer_media_suffix(f"{name} {comment or ''}")
+
+                constraint_bits: list[str] = []
+                if flow_type:
+                    constraint_bits.append(f"flow_type={flow_type}")
+                if direction:
+                    constraint_bits.append(f"direction={direction}")
+                if unit:
+                    constraint_bits.append(f"unit={unit}")
+                if expected_compartment:
+                    constraint_bits.append(f"compartment={expected_compartment}")
                 if isinstance(search_hints, list) and search_hints:
                     hint_text = ", ".join([str(item) for item in search_hints if str(item).strip()])
                     if hint_text:
-                        comment = f"{comment} | search_hints: {hint_text}" if comment else f"search_hints: {hint_text}"
-                query = FlowQuery(exchange_name=name or reference_name or "unknown_exchange", description=comment)
+                        constraint_bits.append(f"search_hints={hint_text}")
+
+                query_desc = comment
+                if constraint_bits:
+                    constraint_text = "; ".join(constraint_bits)
+                    query_desc = f"{query_desc} | constraints: {constraint_text}" if query_desc else f"constraints: {constraint_text}"
+
+                query = FlowQuery(exchange_name=name or reference_name or "unknown_exchange", description=query_desc)
                 candidates, unmatched = flow_search_fn(query)
                 candidates = _dedupe_candidates_by_uuid_version(candidates)
                 candidates = candidates[:10]
@@ -5823,7 +5947,7 @@ def _build_langgraph(
                     {
                         **exchange,
                         "flow_search": {
-                            "query": {"exchange_name": query.exchange_name, "description": comment},
+                            "query": {"exchange_name": query.exchange_name, "description": query_desc},
                             "candidates": [
                                 {
                                     "uuid": cand.uuid,
@@ -5835,6 +5959,8 @@ def _build_langgraph(
                                     "version": cand.version,
                                     "geography": cand.geography,
                                     "classification": cand.classification,
+                                    "category_path": cand.category_path,
+                                    "cas": cand.cas,
                                     "general_comment": cand.general_comment,
                                 }
                                 for cand in candidates
@@ -6831,6 +6957,7 @@ def _build_langgraph(
             }
         match_index = _index_matched_exchanges(updated_matches)
         resolutions: list[dict[str, Any]] = []
+        rewrite_cache: dict[str, list[str]] = {}
         for entry in placeholders:
             matched_exchange = _match_placeholder_exchange(entry, match_index)
             if not matched_exchange:
@@ -6893,9 +7020,73 @@ def _build_langgraph(
             if selected is not None and not getattr(selected, "uuid", None):
                 selected = None
                 selected_reason = "Selected candidate missing UUID; skipping resolution."
+            rewrite_variants: list[str] = []
+            rewrite_queries: list[dict[str, str]] = []
+            rewrite_applied = False
+            if selected is None and llm is not None:
+                cache_key = "||".join(
+                    [
+                        _normalize_exchange_label(exchange_name),
+                        _normalize_exchange_label(comment or ""),
+                        str(flow_type or "").strip().lower(),
+                        str(direction or "").strip().lower(),
+                        str(unit or "").strip().lower(),
+                    ]
+                )
+                if cache_key in rewrite_cache:
+                    rewrite_variants = rewrite_cache[cache_key]
+                else:
+                    rewrite_variants = _generate_flow_query_rewrites_with_llm(
+                        llm=llm,
+                        exchange_name=exchange_name,
+                        comment=comment,
+                        flow_type=flow_type,
+                        direction=direction,
+                        unit=unit,
+                        expected_compartment=expected_compartment,
+                        search_hints=search_hints,
+                    )
+                    rewrite_cache[cache_key] = rewrite_variants
+                if rewrite_variants:
+                    rewrite_applied = True
+                    expanded_candidates: list[FlowCandidate] = list(candidates)
+                    for rewritten_name in rewrite_variants:
+                        rewritten_query = FlowQuery(exchange_name=rewritten_name, description=query_desc)
+                        rewrite_queries.append(
+                            {
+                                "exchange_name": rewritten_query.exchange_name,
+                                "description": rewritten_query.description or "",
+                            }
+                        )
+                        rewritten_candidates, _ = flow_search_fn(rewritten_query)
+                        if rewritten_candidates:
+                            expanded_candidates.extend(rewritten_candidates[:10])
+                    expanded_candidates = _dedupe_candidates_by_uuid_version(expanded_candidates)[:20]
+                    expanded_filtered, expanded_filter_info = _filter_placeholder_candidates(
+                        expanded_candidates,
+                        expected_flow_type=flow_type,
+                        expected_compartment=expected_compartment,
+                    )
+                    expanded_filtered = expanded_filtered[:10]
+                    expanded_decision = selector.select(query, selector_exchange, expanded_filtered)
+                    expanded_selected = expanded_decision.candidate
+                    expanded_reason = expanded_decision.reasoning
+                    if expanded_selected is not None and not getattr(expanded_selected, "uuid", None):
+                        expanded_selected = None
+                        expanded_reason = "Selected candidate missing UUID; skipping resolution."
+                    candidates = expanded_candidates
+                    filtered = expanded_filtered
+                    filter_info = expanded_filter_info
+                    if expanded_selected is not None:
+                        selected = expanded_selected
+                        selected_reason = expanded_reason or "Selected after LLM rewrite search."
+                    elif expanded_reason:
+                        selected_reason = expanded_reason
             if not selected_reason:
                 if selected is not None:
                     selected_reason = "Selected by second-pass search."
+                elif rewrite_applied:
+                    selected_reason = "No suitable candidate selected after LLM rewrite search."
                 elif not filtered:
                     selected_reason = "No candidates remaining after placeholder filters."
                 else:
@@ -6911,6 +7102,10 @@ def _build_langgraph(
             flow_search["resolution_candidates"] = candidate_list
             flow_search["resolution_raw_candidates"] = raw_candidate_list
             flow_search["resolution_filters"] = filter_info
+            if rewrite_variants:
+                flow_search["llm_rewrite_variants"] = rewrite_variants
+            if rewrite_queries:
+                flow_search["llm_rewrite_queries"] = rewrite_queries
             if selected is not None:
                 flow_search["selected_uuid"] = selected.uuid
                 flow_search["selected_reason"] = selected_reason
@@ -6946,6 +7141,8 @@ def _build_langgraph(
                     "candidate_list": candidate_list,
                     "candidate_list_raw": raw_candidate_list,
                     "filters": filter_info,
+                    "llm_rewrite_variants": rewrite_variants,
+                    "llm_rewrite_queries": rewrite_queries,
                 }
             )
         return {

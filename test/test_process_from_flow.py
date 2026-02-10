@@ -10,6 +10,7 @@ from tiangong_lca_spec.process_from_flow import ProcessFromFlowService
 from tiangong_lca_spec.process_from_flow.service import (
     FlowReferenceInfo,
     UnitGroupInfo,
+    _generate_flow_query_rewrites_with_llm,
     _is_core_mass_exchange,
     _parse_exchange_comment_tags,
     _resolve_exchange_balance_unit,
@@ -187,6 +188,14 @@ class NoisyLLM(FakeLLM):
                 ]
             }
         return super().invoke(input_data)
+
+
+class RewriteLLM:
+    def __init__(self, response: Any) -> None:
+        self.response = response
+
+    def invoke(self, input_data: dict[str, Any]) -> Any:  # noqa: ARG002
+        return self.response
 
 
 def fake_flow_search(query: FlowQuery) -> tuple[list[FlowCandidate], list[object]]:
@@ -464,3 +473,46 @@ def test_resolve_exchange_comment_tag_unit_prefers_flow_reference_unit() -> None
     }
     resolved = _resolve_exchange_comment_tag_unit(exchange, reference_info=reference_info)
     assert resolved == "kg"
+
+
+def test_generate_flow_query_rewrites_with_llm_dedupes_and_excludes_original() -> None:
+    llm = RewriteLLM(
+        {
+            "query_variants": [
+                "Tap water",
+                "tap water",
+                "water supply",
+                "Drinking water for pigs",
+                {"query": "potable water"},
+            ]
+        }
+    )
+    rewrites = _generate_flow_query_rewrites_with_llm(
+        llm=llm,
+        exchange_name="Drinking water for pigs",
+        comment="Pig farm input",
+        flow_type="product",
+        direction="Input",
+        unit="m3",
+        expected_compartment="water",
+        search_hints=["water"],
+    )
+    assert rewrites == ["Tap water", "water supply", "potable water"]
+
+
+def test_generate_flow_query_rewrites_with_llm_handles_failures() -> None:
+    class BrokenLLM:
+        def invoke(self, input_data: dict[str, Any]) -> Any:  # noqa: ARG002
+            raise RuntimeError("boom")
+
+    rewrites = _generate_flow_query_rewrites_with_llm(
+        llm=BrokenLLM(),
+        exchange_name="Drinking water for pigs",
+        comment=None,
+        flow_type="product",
+        direction="Input",
+        unit="m3",
+        expected_compartment="water",
+        search_hints=[],
+    )
+    assert rewrites == []

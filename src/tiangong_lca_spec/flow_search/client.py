@@ -49,6 +49,14 @@ class FlowSearchClient:
     def search(self, query: FlowQuery) -> list[dict[str, Any]]:
         """Execute the remote flow search and return parsed candidates."""
         arguments = self._build_arguments(query)
+        return self._search_with_arguments(arguments)
+
+    def search_query_text(self, query_text: str) -> list[dict[str, Any]]:
+        """Execute flow search with a pre-built query payload."""
+        arguments = {"query": str(query_text or "").strip()}
+        return self._search_with_arguments(arguments)
+
+    def _search_with_arguments(self, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
         LOGGER.info("flow_search.request", arguments=arguments)
         try:
             raw = self._call_with_retry(arguments)
@@ -154,6 +162,12 @@ class FlowSearchClient:
         geography = _extract_geography(info.get("geography"))
         flow_properties = _preferred_language_text(name_block.get("flowProperties"))
         flow_type = _normalize_flow_type(flow.get("modellingAndValidation", {}).get("LCIMethod", {}).get("typeOfDataSet"))
+        classification_info = data_info.get("classificationInformation", {})
+        classification = classification_info.get("common:classification", {}).get("common:class")
+        if not classification:
+            classification = classification_info.get("common:elementaryFlowCategorization", {}).get("common:category")
+        category_path = _classification_path(classification)
+        cas_number = data_info.get("casNumber") or data_info.get("CASNumber") or data_info.get("cas_number")
         return {
             "uuid": data_info.get("common:UUID") or flow.get("@uuid"),
             "base_name": base_name,
@@ -164,7 +178,9 @@ class FlowSearchClient:
             "version": flow.get("administrativeInformation", {}).get("publicationAndOwnership", {}).get("common:dataSetVersion"),
             "general_comment": _preferred_language_text(data_info.get("common:generalComment")),
             "geography": geography,
-            "classification": data_info.get("classificationInformation", {}).get("common:classification", {}).get("common:class"),
+            "classification": classification,
+            "category_path": category_path,
+            "cas": str(cas_number).strip() if cas_number else None,
         }
 
 
@@ -295,3 +311,27 @@ def _extract_geography(raw_geo: Any) -> dict[str, Any] | None:
         description = _first_text(location.get("descriptionOfRestrictions")) or _first_text(location.get("common:other"))
         return {"code": code, "description": description}
     return None
+
+
+def _classification_path(classification: Any) -> str | None:
+    if classification is None:
+        return None
+    items: list[Any]
+    if isinstance(classification, list):
+        items = classification
+    elif isinstance(classification, dict):
+        items = [classification]
+    else:
+        return None
+    path: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("#text") or item.get("text")
+        if isinstance(text, str):
+            cleaned = text.strip()
+            if cleaned:
+                path.append(cleaned)
+    if not path:
+        return None
+    return " > ".join(path)
