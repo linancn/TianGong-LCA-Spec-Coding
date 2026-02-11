@@ -23,6 +23,7 @@ from tiangong_lca_spec.flow_alignment.selector import LanguageModelProtocol
 from tiangong_lca_spec.process_extraction.merge import merge_results
 from tiangong_lca_spec.process_extraction.tidas_mapping import ILCD_ENTRY_LEVEL_REFERENCE_ID
 from tiangong_lca_spec.process_extraction.validators import is_placeholder_value
+from tiangong_lca_spec.product_flow_creation import ProductFlowCreateRequest, ProductFlowCreationService
 from tiangong_lca_spec.tidas_validation import TidasValidationService
 
 DEFAULT_FORMAT_SOURCE_UUID = ILCD_FORMAT_SOURCE_UUID
@@ -392,6 +393,54 @@ def _extract_text(value: Any) -> str:
         if isinstance(text, str):
             return text.strip()
     return str(value).strip()
+
+
+def _extract_lang_text(value: Any, lang: str = "en") -> str:
+    entries = _normalise_language(value, default_lang=lang)
+    target = (lang or "en").strip().lower()
+    fallback = ""
+    for entry in entries:
+        text = _extract_text(entry.get("#text"))
+        if not text:
+            continue
+        entry_lang = _extract_text(entry.get("@xml:lang")).lower()
+        if entry_lang == target:
+            return text
+        if not fallback:
+            fallback = text
+    return fallback
+
+
+def _split_synonyms(value: str) -> list[str]:
+    text = _extract_text(value).replace("；", ";")
+    if not text:
+        return []
+    return [chunk.strip() for chunk in text.split(";") if chunk.strip()]
+
+
+def _classification_entries(classification: Mapping[str, Any]) -> list[dict[str, str]]:
+    payload = classification.get("common:classification")
+    if not isinstance(payload, Mapping):
+        return []
+    classes = payload.get("common:class")
+    if isinstance(classes, Mapping):
+        classes = [classes]
+    if not isinstance(classes, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for index, item in enumerate(classes):
+        if not isinstance(item, Mapping):
+            continue
+        text = _extract_text(item.get("#text"))
+        if not text:
+            continue
+        level = _extract_text(item.get("@level")) or str(index)
+        class_id = _extract_text(item.get("@classId"))
+        entry: dict[str, str] = {"@level": level, "#text": text}
+        if class_id:
+            entry["@classId"] = class_id
+        entries.append(entry)
+    return entries
 
 
 ALLOWED_CHINESE_VALUES = {"天工LCA数据团队"}
@@ -1158,16 +1207,6 @@ def _build_source_classification(reference_node: dict[str, Any], uuid_value: str
     return _source_classification_entry(class_id, label)
 
 
-def _flow_property_reference() -> dict[str, Any]:
-    return {
-        "@type": "flow property data set",
-        "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
-        "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
-        "@version": "03.00.003",
-        "common:shortDescription": _language_entry("Mass"),
-    }
-
-
 def flow_compliance_declarations() -> dict[str, Any]:
     """Return the default compliance declaration block for generated datasets.
 
@@ -1244,13 +1283,9 @@ def _build_flow_dataset(
         classification = _build_waste_classification(candidate)
     else:
         classification = _build_product_classification(candidate)
-
-    en_synonyms = hints.get("en_synonyms") or []
-    synonyms_block: list[dict[str, str]] = []
-    if en_synonyms:
-        synonyms_block.append(_language_entry("; ".join(en_synonyms), "en"))
-    if not synonyms_block:
-        synonyms_block.append(_language_entry(name, "en"))
+    class_entries = _classification_entries(classification)
+    if not class_entries:
+        class_entries = _classification_entries(_build_product_classification(candidate))
 
     treatment_candidates = hints.get("state_purity") or hints.get("source_or_pathway") or hints.get("abbreviation") or [name]
     treatment_text = _unique_join(treatment_candidates)
@@ -1276,66 +1311,43 @@ def _build_flow_dataset(
         process_name=process_name,
         llm=comment_llm,
     )
-    name_block = {
-        "baseName": [_language_entry(name, "en")],
-        "treatmentStandardsRoutes": [_language_entry(treatment_text or name, "en")],
-        "mixAndLocationTypes": [_language_entry(mix_text, "en")],
-    }
+    zh_candidates = hints.get("zh_synonyms") or []
+    base_name_zh = _extract_text(zh_candidates[0]) if zh_candidates else name
+    service = ProductFlowCreationService()
+    request = ProductFlowCreateRequest(
+        class_id=str(class_entries[-1].get("@classId") or ""),
+        classification=class_entries,
+        base_name_en=name,
+        base_name_zh=base_name_zh,
+        treatment_en=treatment_text or name,
+        mix_en=mix_text,
+        comment_en=_extract_lang_text(comment_entries, "en") or _extract_text(exchange.get("generalComment")) or f"Auto-generated for {name}",
+        comment_zh=_extract_lang_text(comment_entries, "zh") or None,
+        synonyms_en=[value for value in (hints.get("en_synonyms") or []) if _extract_text(value)],
+        synonyms_zh=[value for value in (hints.get("zh_synonyms") or []) if _extract_text(value)],
+        flow_type=flow_type,
+        flow_uuid=uuid_value,
+        version=DEFAULT_DATA_SET_VERSION,
+        timestamp=timestamp,
+        mean_value="1",
+    )
 
-    dataset_version = DEFAULT_DATA_SET_VERSION
-    compliance_block = flow_compliance_declarations()
-    modelling_section: dict[str, Any] = {
-        "LCIMethod": {
-            "typeOfDataSet": flow_type,
-        },
-    }
-    if compliance_block:
-        modelling_section["complianceDeclarations"] = compliance_block
+    try:
+        built = service.build(request, allow_validation_fallback=True)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning(
+            "artifact_builder.flow_build_failed",
+            process=process_name,
+            exchange=name,
+            error=str(exc),
+        )
+        return None
 
-    dataset = {
-        "flowDataSet": {
-            "@xmlns": "http://lca.jrc.it/ILCD/Flow",
-            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
-            "@xmlns:ecn": "http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber",
-            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-            "@version": "1.1",
-            "@locations": "../ILCDLocations.xml",
-            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
-            "flowInformation": {
-                "dataSetInformation": {
-                    "common:UUID": uuid_value,
-                    "name": name_block,
-                    "common:synonyms": synonyms_block,
-                    "common:generalComment": comment_entries,
-                    "classificationInformation": classification,
-                },
-                "quantitativeReference": {
-                    "referenceToReferenceFlowProperty": "0",
-                },
-            },
-            "modellingAndValidation": modelling_section,
-            "administrativeInformation": {
-                "dataEntryBy": {
-                    "common:timeStamp": timestamp,
-                    "common:referenceToDataSetFormat": _format_reference_block(format_source_uuid),
-                    "common:referenceToPersonOrEntityEnteringTheData": _data_entry_reference(),
-                },
-                "publicationAndOwnership": {
-                    "common:dataSetVersion": dataset_version,
-                    "common:permanentDataSetURI": _permanent_dataset_uri("flow", uuid_value, dataset_version),
-                    "common:referenceToOwnershipOfDataSet": _ownership_reference(),
-                },
-            },
-            "flowProperties": {
-                "flowProperty": {
-                    "@dataSetInternalID": "0",
-                    "meanValue": "1",
-                    "referenceToFlowPropertyDataSet": _flow_property_reference(),
-                }
-            },
-        }
-    }
-    return uuid_value, dataset
+    flow_dataset = dict(built.dataset)
+    publication = flow_dataset.get("administrativeInformation", {}).get("publicationAndOwnership")
+    if isinstance(publication, dict):
+        publication["common:permanentDataSetURI"] = _permanent_dataset_uri("flow", built.flow_uuid, built.version)
+    return built.flow_uuid, {"flowDataSet": flow_dataset}
 
 
 def _collect_unmatched_exchanges(

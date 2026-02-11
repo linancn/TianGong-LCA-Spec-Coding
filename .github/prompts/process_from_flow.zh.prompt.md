@@ -191,7 +191,7 @@
 ### 依赖与配置
 - 入口类：`FlowPublisher` / `ProcessPublisher` / `DatabaseCrudClient`。
 - MCP 服务：`.secrets/secrets.toml` 配置 `tiangong_lca_remote`（`Database_CRUD_Tool`）。
-- LLM：用于 flow 类型与产品分类推断，并在新建 flow 时补全/翻译必填中英文字段；无 LLM 或 LLM 失败时回退到现有拼装逻辑并记录日志。
+- LLM：用于 flow 类型/产品分类推断，以及新建 flow 时的中英字段补全；无 LLM 或 LLM 失败时回退规则默认值并记录日志。
 
 ### Step 0：发布 sources（可选但推荐）
 - `--publish/--publish-only` 会在发布 process 前先发布 sources。
@@ -203,11 +203,12 @@
 - 可补充 `matchingDetail.selectedCandidate`（由 `flow_search` 结果映射）以便分类与流属性选择。
 
 ### Step 2：发布/更新 flows
-- Flow 数据集由 `tidas_sdk.create_flow` 构建与校验（失败则降级为非校验构建并记录日志）。
+- Flow 数据集由 `FlowPublisher` 内部统一调用 `ProductFlowCreationService` 构建，并走 `tidas_sdk.create_flow` 校验（允许 validation fallback，失败会记录日志）。
 - `FlowPublisher.prepare_from_alignment()` 生成 `FlowPublishPlan`：
   - 占位 `referenceToFlowDataSet` → insert。
   - 已匹配但缺少 flow property → update（版本自动 +1）。
   - Elementary flow 不新建；Product/Waste flow 生成 ILCD flow。
+- `FlowPublisher.publish()` 发布时会再调用 `FlowDedupService` 检查远端是否已存在同 UUID，并在 `insert/update/reuse` 间切换；最终动作可能与 plan mode 不同。
 - LLM 辅助字段补全/翻译（新建 flow 必做）：
   - `baseName`/`treatmentStandardsRoutes`/`mixAndLocationTypes`/`common:synonyms`/`common:generalComment` 需中英文成对输出。
   - 仅有单语时，LLM 翻译补齐另一语种；两种语言都缺失时，LLM 依据 exchange/FlowSearch hints/候选信息生成简短字段。

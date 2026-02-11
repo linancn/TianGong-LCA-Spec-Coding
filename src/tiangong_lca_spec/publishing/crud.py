@@ -7,21 +7,26 @@ import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
 
-from tidas_sdk import create_flow
-
 from tiangong_lca_spec.core.config import Settings, get_settings
-from tiangong_lca_spec.core.constants import build_dataset_format_reference
 from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
-from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
-from tiangong_lca_spec.tidas.flow_property_registry import FlowPropertyRegistry, get_default_registry
-from tiangong_lca_spec.workflow.artifacts import flow_compliance_declarations
+from tiangong_lca_spec.core.uris import build_portal_uri
+from tiangong_lca_spec.product_flow_creation import (
+    FlowDedupService,
+    ProductFlowCreateRequest,
+    ProductFlowCreationService,
+)
+from tiangong_lca_spec.tidas.flow_property_registry import (
+    DEFAULT_FLOW_PROPERTY_VERSION,
+    FLOW_PROPERTY_VERSION_OVERRIDES,
+    FlowPropertyRegistry,
+    get_default_registry,
+)
 
 LOGGER = get_logger(__name__)
 
@@ -44,11 +49,6 @@ FLOW_TEXT_PROMPT = (
     "- Avoid semicolons; use commas if needed.\n"
     "- Output must be valid JSON; do not add extra keys."
 )
-
-
-def _utc_timestamp() -> str:
-    """Return ISO timestamp in the format required by Supabase validator."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _coerce_text(value: Any) -> str:
@@ -900,6 +900,8 @@ class FlowPublisher:
         self._llm = llm
         self._flow_type_classifier = flow_type_classifier or FlowTypeClassifier(llm)
         self._product_category_selector = product_category_selector or FlowProductCategorySelector(llm)
+        self._flow_creation = ProductFlowCreationService()
+        self._flow_dedup = FlowDedupService(self._crud)
         self._prepared: list[FlowPublishPlan] = []
 
     def _resolve_default_property(self, requested: str | None) -> str:
@@ -983,7 +985,30 @@ class FlowPublisher:
                 )
                 continue
             payload = {"flowDataSet": plan.dataset}
-            if plan.mode == "update":
+            version = (
+                _coerce_text(
+                    _get_nested(
+                        plan.dataset,
+                        ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"),
+                    )
+                )
+                or "01.01.000"
+            )
+            decision = self._flow_dedup.decide(
+                flow_uuid=plan.uuid,
+                version=version,
+                preferred_action=plan.mode if plan.mode in {"insert", "update"} else "auto",
+            )
+            if decision.action == "reuse":
+                LOGGER.info(
+                    "flow_publish.reuse_existing",
+                    exchange=plan.exchange_name,
+                    process=plan.process_name,
+                    uuid=plan.uuid,
+                    reason=decision.reason,
+                )
+                continue
+            if decision.action == "update":
                 result = self._crud.update_flow(payload)
             else:
                 result = self._crud.insert_flow(payload)
@@ -1121,9 +1146,22 @@ class FlowPublisher:
             comment_en=text_fields.get("comment_en"),
             comment_zh=text_fields.get("comment_zh"),
         )
-        flow_property_block = self._registry.build_flow_property_block(
-            property_uuid,
-            mean_value=mean_value or "1.0",
+        name_block = self._build_name_block(
+            candidate,
+            hints,
+            en_name,
+            zh_name,
+            treatment_en=text_fields.get("treatment_en"),
+            treatment_zh=text_fields.get("treatment_zh"),
+            mix_en=text_fields.get("mix_en"),
+            mix_zh=text_fields.get("mix_zh"),
+        )
+        synonyms_block = self._build_synonyms(
+            hints,
+            en_name,
+            zh_name,
+            synonyms_en=text_fields.get("synonyms_en"),
+            synonyms_zh=text_fields.get("synonyms_zh"),
         )
         unit = _resolve_unit(exchange)
         if unit and property_uuid == self._default_flow_property_uuid and property_uuid == "93a60a56-a3c8-11da-a746-0800200b9a66" and unit.lower() in {"kwh", "mj", "gj"}:
@@ -1133,54 +1171,48 @@ class FlowPublisher:
                 note="Flow property defaults to mass; please update energy reference manually.",
             )
 
-        dataset = {
-            "@xmlns": "http://lca.jrc.it/ILCD/Flow",
-            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
-            "@xmlns:ecn": "http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber",
-            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-            "@locations": "../ILCDLocations.xml",
-            "@version": "1.1",
-            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
-            "flowInformation": {
-                "dataSetInformation": {
-                    "common:UUID": uuid_value,
-                    "name": self._build_name_block(
-                        candidate,
-                        hints,
-                        en_name,
-                        zh_name,
-                        treatment_en=text_fields.get("treatment_en"),
-                        treatment_zh=text_fields.get("treatment_zh"),
-                        mix_en=text_fields.get("mix_en"),
-                        mix_zh=text_fields.get("mix_zh"),
-                    ),
-                    "common:synonyms": self._build_synonyms(
-                        hints,
-                        en_name,
-                        zh_name,
-                        synonyms_en=text_fields.get("synonyms_en"),
-                        synonyms_zh=text_fields.get("synonyms_zh"),
-                    ),
-                    "common:generalComment": comment_entries,
-                    "classificationInformation": classification,
-                },
-                "quantitativeReference": {
-                    "referenceToReferenceFlowProperty": "0",
-                },
-            },
-            "modellingAndValidation": self._build_modelling_section(flow_type),
-            "administrativeInformation": self._build_administrative_section(version),
-            "flowProperties": flow_property_block,
-        }
-        dataset["administrativeInformation"]["publicationAndOwnership"]["common:permanentDataSetURI"] = build_portal_uri("flow", uuid_value, version)
+        class_entries = self._extract_classification_entries(classification)
+        if not class_entries:
+            class_entries = self._extract_classification_entries(_default_product_classification())
 
-        dataset = self._finalize_flow_dataset(
-            dataset,
-            exchange_name=exchange_name,
-            process_name=process_name,
+        flow_property = self._registry.get(property_uuid)
+        property_version = FLOW_PROPERTY_VERSION_OVERRIDES.get(flow_property.uuid, DEFAULT_FLOW_PROPERTY_VERSION)
+        request = ProductFlowCreateRequest(
+            class_id=str(class_entries[-1].get("@classId") or ""),
+            classification=class_entries,
+            base_name_en=en_name,
+            base_name_zh=zh_name,
+            treatment_en=self._extract_language_text(name_block.get("treatmentStandardsRoutes"), "en") or en_name,
+            treatment_zh=self._extract_language_text(name_block.get("treatmentStandardsRoutes"), "zh") or None,
+            mix_en=self._extract_language_text(name_block.get("mixAndLocationTypes"), "en") or en_name,
+            mix_zh=self._extract_language_text(name_block.get("mixAndLocationTypes"), "zh") or None,
+            comment_en=self._extract_language_text(comment_entries, "en") or exchange_name,
+            comment_zh=self._extract_language_text(comment_entries, "zh") or None,
+            synonyms_en=self._split_synonyms(self._extract_language_text(synonyms_block, "en")),
+            synonyms_zh=self._split_synonyms(self._extract_language_text(synonyms_block, "zh")),
+            flow_type=flow_type,
+            flow_uuid=uuid_value,
+            version=version,
+            mean_value=mean_value or "1.0",
+            flow_property_uuid=flow_property.uuid,
+            flow_property_version=property_version,
+            flow_property_name_en=flow_property.name,
         )
-        uuid_value = _coerce_text(_get_nested(dataset, ("flowInformation", "dataSetInformation", "common:UUID"))) or uuid_value
-        version = _coerce_text(_get_nested(dataset, ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"))) or version
+
+        try:
+            built = self._flow_creation.build(request, allow_validation_fallback=True)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning(
+                "flow_publish.flow_validation_failed",
+                exchange=exchange_name,
+                process=process_name,
+                error=str(exc),
+            )
+            return None
+
+        dataset = dict(built.dataset)
+        uuid_value = built.flow_uuid
+        version = built.version
         publication = _get_nested(dataset, ("administrativeInformation", "publicationAndOwnership"))
         if isinstance(publication, Mapping):
             publication["common:permanentDataSetURI"] = build_portal_uri("flow", uuid_value, version)
@@ -1194,51 +1226,6 @@ class FlowPublisher:
             "common:shortDescription": _language_entry(exchange_name),
         }
         return dataset, exchange_ref
-
-    def _finalize_flow_dataset(
-        self,
-        dataset: Mapping[str, Any],
-        *,
-        exchange_name: str,
-        process_name: str,
-    ) -> dict[str, Any]:
-        payload = {"flowDataSet": dataset}
-        validated_on_init = False
-        try:
-            entity = create_flow(payload, validate=True)
-            validated_on_init = True
-        except Exception as exc:  # pylint: disable=broad-except
-            LOGGER.warning(
-                "flow_publish.flow_validation_failed",
-                exchange=exchange_name,
-                process=process_name,
-                error=str(exc),
-            )
-            entity = create_flow(payload, validate=False)
-
-        if validated_on_init:
-            errors = entity.last_validation_error()
-            if errors:
-                LOGGER.warning(
-                    "flow_publish.flow_not_valid",
-                    exchange=exchange_name,
-                    process=process_name,
-                    error=str(errors),
-                )
-        else:
-            valid = entity.validate(mode="pydantic")
-            if not valid:
-                errors = entity.last_validation_error()
-                LOGGER.warning(
-                    "flow_publish.flow_not_valid",
-                    exchange=exchange_name,
-                    process=process_name,
-                    error=str(errors),
-                )
-
-        flow_payload = entity.model.model_dump(mode="json", by_alias=True, exclude_none=True)
-        flow_dataset = _resolve_dataset_root(flow_payload, root_key="flowDataSet", dataset_kind="flow")
-        return dict(flow_dataset)
 
     @staticmethod
     def _resolve_flow_uuid(
@@ -1472,6 +1459,64 @@ class FlowPublisher:
         return name_block
 
     @staticmethod
+    def _extract_classification_entries(classification: Mapping[str, Any]) -> list[dict[str, str]]:
+        payload = classification.get("common:classification")
+        if not isinstance(payload, Mapping):
+            return []
+        classes = payload.get("common:class")
+        if isinstance(classes, Mapping):
+            classes = [classes]
+        if not isinstance(classes, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for index, item in enumerate(classes):
+            if not isinstance(item, Mapping):
+                continue
+            level = _coerce_text(item.get("@level")) or str(index)
+            text = _coerce_text(item.get("#text"))
+            if not text:
+                continue
+            entry: dict[str, str] = {"@level": level, "#text": text}
+            class_id = _coerce_text(item.get("@classId"))
+            if class_id:
+                entry["@classId"] = class_id
+            normalized.append(entry)
+        return normalized
+
+    @staticmethod
+    def _extract_language_text(entries: Any, lang: str) -> str:
+        if isinstance(entries, Mapping):
+            entries = [entries]
+        if not isinstance(entries, list):
+            return ""
+        fallback = ""
+        target = (lang or "").strip().lower()
+        for item in entries:
+            if not isinstance(item, Mapping):
+                continue
+            text = _normalize_text(item.get("#text"))
+            if not text:
+                continue
+            item_lang = _coerce_text(item.get("@xml:lang")).lower()
+            if item_lang == target:
+                return text
+            if not fallback:
+                fallback = text
+        return fallback
+
+    @staticmethod
+    def _split_synonyms(text: str) -> list[str]:
+        normalized = _normalize_text(text)
+        if not normalized:
+            return []
+        parts: list[str] = []
+        for chunk in normalized.replace("；", ";").split(";"):
+            value = chunk.strip()
+            if value:
+                parts.append(value)
+        return parts
+
+    @staticmethod
     def _build_synonyms(
         hints: Mapping[str, list[str] | str],
         en_name: str,
@@ -1502,43 +1547,6 @@ class FlowPublisher:
             _language_entry(en_synonyms, "en"),
             _language_entry(zh_synonyms, "zh"),
         ]
-
-    @staticmethod
-    def _build_modelling_section(flow_type: str) -> dict[str, Any]:
-        modelling_section: dict[str, Any] = {
-            "LCIMethod": {
-                "typeOfDataSet": flow_type,
-            },
-        }
-        compliance_block = flow_compliance_declarations()
-        if compliance_block:
-            modelling_section["complianceDeclarations"] = compliance_block
-        return modelling_section
-
-    @staticmethod
-    def _build_administrative_section(version: str) -> dict[str, Any]:
-        def _default_contact_reference() -> dict[str, Any]:
-            contact_uuid = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
-            contact_version = "01.00.000"
-            return {
-                "@type": "contact data set",
-                "@refObjectId": contact_uuid,
-                "@uri": build_local_dataset_uri("contact data set", contact_uuid, contact_version),
-                "@version": contact_version,
-                "common:shortDescription": [_language_entry("Tiangong LCA Data Working Group")],
-            }
-
-        return {
-            "dataEntryBy": {
-                "common:timeStamp": _utc_timestamp(),
-                "common:referenceToDataSetFormat": build_dataset_format_reference(),
-                "common:referenceToPersonOrEntityEnteringTheData": _default_contact_reference(),
-            },
-            "publicationAndOwnership": {
-                "common:dataSetVersion": version,
-                "common:referenceToOwnershipOfDataSet": _default_contact_reference(),
-            },
-        }
 
 
 def _bump_version(version: str) -> str:

@@ -11,6 +11,9 @@
 - 本文：规范层（做什么、怎么做才合规）。
 - `scripts/md/bulk_insert_product_flows.py`：当前 manual adapter 的批量执行脚本。
 - `scripts/product_flow/product_flow_sdk_insert.py`：classification 批量任务脚本（另一类 adapter）。
+- `src/tiangong_lca_spec/product_flow_creation/service.py`：统一 `ProductFlowCreationService`（公共 builder，负责 ILCD 组装 + `tidas_sdk` 校验）。
+- `src/tiangong_lca_spec/product_flow_creation/dedup.py`：`FlowDedupService`（发布前动作决策：insert/update/reuse），当前由 `FlowPublisher` 发布链路使用。
+- `src/tiangong_lca_spec/publishing/crud.py`、`src/tiangong_lca_spec/workflow/artifacts.py`：已接入同一 builder；`FlowPublisher.publish` 已调用 dedup 决策避免重复插入。
 - `scripts/origin/process_from_flow_langgraph.py`：process_from_flow 主链入口（非 manual）。
 
 ## 统一能力约束（硬规则）
@@ -18,13 +21,13 @@
 2. `classificationInformation` 必填。
 3. `common:synonyms` 必须提供 EN/ZH 两条；缺失时用 `baseName` 回填，不允许空。
 4. `flowProperties` 默认使用 Mass（UUID `93a60a56-a3c8-11da-a746-0800200b9a66`，`meanValue=1.0`）。
-5. 先查重再发布：优先判断 `reuse/update`，最后才 `insert`。
+5. 当前 `bulk_insert_product_flows.py --commit` 执行策略为直接 `insert`；若需 `reuse/update`，需先 `--select-id` 或改走 `FlowPublisher` 发布链路。
 6. 单条只做一次发布动作；失败先修 payload 再重试，禁止盲目循环重跑。
 
 ## 当前执行入口（bulk 手工批量）
 `scripts/md/bulk_insert_product_flows.py`
 
-- 技术路线：先按默认策略+输入覆盖组装数据，再走 `tidas_sdk.create_flow(validate=True)` 校验与标准化，最后才执行 CRUD 发布（不再走未校验 JSON 直发）。
+- 技术路线：先按默认策略+输入覆盖生成 `ProductFlowCreateRequest`，再调用 `ProductFlowCreationService` 组装并走 `tidas_sdk.create_flow(validate=True)` 校验与标准化，最后执行 CRUD 发布（不再走未校验 JSON 直发）。
 
 - 输入字段：
   - 必填：`class_id`、`leaf_name`
@@ -48,4 +51,4 @@
 - 确认本次动作是 `insert` 还是 `update`（避免同 UUID 误插入）。
 
 ## 迁移说明（统一收束）
-后续统一能力落地后，manual 入口仍保留，但核心逻辑将收束到统一 `ProductFlowBuilder + FlowDedupService + FlowPublisher`，脚本只保留参数解析与任务编排。
+manual 入口持续保留，核心构建逻辑已收束到统一 `ProductFlowCreationService`；`FlowPublisher`/`artifacts` 已复用该能力。dedup 动作决策当前已在 `FlowPublisher` 落地，manual/bulk 入口后续可按同一策略接入。

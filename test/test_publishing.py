@@ -33,6 +33,28 @@ class DummyCrudClient:
         pass
 
 
+class TrackingCrudClient:
+    def __init__(self, *, flow_exists: bool) -> None:
+        self.flow_exists = flow_exists
+        self.operations: list[str] = []
+
+    def select_flow(self, flow_uuid, *, version=None):
+        if not self.flow_exists:
+            return None
+        return {"flowInformation": {"dataSetInformation": {"common:UUID": flow_uuid}}}
+
+    def insert_flow(self, dataset):
+        self.operations.append("insert")
+        return {"operation": "insert", "ok": True}
+
+    def update_flow(self, dataset):
+        self.operations.append("update")
+        return {"operation": "update", "ok": True}
+
+    def close(self):
+        pass
+
+
 class StubLLM:
     def __init__(self):
         self.calls = 0
@@ -95,7 +117,19 @@ def test_flow_publisher_builds_plan_without_network():
     dataset = plan.dataset
     assert dataset["flowInformation"]["dataSetInformation"]["common:UUID"] == plan.uuid
     assert dataset["modellingAndValidation"]["LCIMethod"]["typeOfDataSet"] == "Product flow"
-    assert dataset["modellingAndValidation"]["complianceDeclarations"] == EXPECTED_COMPLIANCE_DECLARATIONS
+    compliance = dataset["modellingAndValidation"]["complianceDeclarations"]["compliance"]
+    expected = EXPECTED_COMPLIANCE_DECLARATIONS["compliance"]
+    assert compliance["common:approvalOfOverallCompliance"] == expected["common:approvalOfOverallCompliance"]
+    ref = compliance["common:referenceToComplianceSystem"]
+    expected_ref = expected["common:referenceToComplianceSystem"]
+    assert ref["@refObjectId"] == expected_ref["@refObjectId"]
+    assert ref["@type"] == expected_ref["@type"]
+    assert ref["@uri"] == expected_ref["@uri"]
+    assert ref["@version"] == expected_ref["@version"]
+    short_desc = ref.get("common:shortDescription")
+    if isinstance(short_desc, list):
+        short_desc = short_desc[0] if short_desc else {}
+    assert short_desc["#text"] == "ILCD Data Network - Entry-level"
     classes = dataset["flowInformation"]["dataSetInformation"]["classificationInformation"]["common:classification"]["common:class"]
     codes = [entry.get("@classId") for entry in classes]
     assert "1710" in codes
@@ -114,3 +148,15 @@ def test_alignment_updates_replace_placeholders():
     assert replacements == 1
     ref = alignment_entries[0]["origin_exchanges"]["Electric power"][0]["referenceToFlowDataSet"]
     assert ref["@refObjectId"] == "1234"
+
+
+def test_flow_publisher_publish_switches_to_update_when_uuid_exists():
+    stub_llm = StubLLM()
+    crud = TrackingCrudClient(flow_exists=True)
+    publisher = FlowPublisher(crud_client=crud, dry_run=False, llm=stub_llm)
+    plans = publisher.prepare_from_alignment(_build_alignment_payload())
+    assert len(plans) == 1
+    results = publisher.publish()
+    assert len(results) == 1
+    assert crud.operations == ["update"]
+    publisher.close()

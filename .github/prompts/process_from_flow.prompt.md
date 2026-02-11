@@ -191,7 +191,7 @@ Actual order in `process_from_flow_langgraph.py`:
 ### Dependencies and Configuration
 - Entrypoints: `FlowPublisher` / `ProcessPublisher` / `DatabaseCrudClient`.
 - MCP service: configure `tiangong_lca_remote` in `.secrets/secrets.toml` (`Database_CRUD_Tool`).
-- LLM optional: used for flow type and product category inference.
+- LLM optional: used for flow type/product category inference and bilingual field completion for new flows; failures fall back to deterministic defaults with logs.
 
 ### Step 0: Publish sources (optional but recommended)
 - `--publish/--publish-only` publishes sources before processes.
@@ -203,10 +203,12 @@ Actual order in `process_from_flow_langgraph.py`:
 - Optionally add `matchingDetail.selectedCandidate` mapped from `flow_search` for better classification/property selection.
 
 ### Step 2: Publish/update flows
+- `FlowPublisher` builds flow datasets via shared `ProductFlowCreationService`, then validates through `tidas_sdk.create_flow` (validation fallback is allowed and logged).
 - `FlowPublisher.prepare_from_alignment()` builds `FlowPublishPlan`:
   - Placeholder `referenceToFlowDataSet` -> insert.
   - Matched but missing flow property -> update (version +1).
   - Elementary flows are not created; Product/Waste flows generate ILCD flow datasets.
+- `FlowPublisher.publish()` applies `FlowDedupService` at publish time and can switch final action among `insert/update/reuse` based on remote existence checks, so final action may differ from plan mode.
 - Auto inference:
   - `FlowTypeClassifier`: LLM first, fallback rules.
   - `FlowProductCategorySelector`: pick product category level by level.
