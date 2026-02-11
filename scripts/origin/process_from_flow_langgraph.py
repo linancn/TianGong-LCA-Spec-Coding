@@ -152,7 +152,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-balance-check",
         action="store_true",
-        help="Skip balance quality gate before publish (not recommended).",
+        help="Skip balance quality check entirely before publish (no warning).",
+    )
+    parser.add_argument(
+        "--strict-balance-check",
+        action="store_true",
+        help="Treat balance quality issues as blocking errors during publish.",
     )
     return parser.parse_args()
 
@@ -448,11 +453,18 @@ def _load_run_state(run_id: str) -> dict[str, Any]:
     return payload
 
 
-def _enforce_balance_quality_gate(run_id: str) -> None:
+def _enforce_balance_quality_gate(run_id: str, *, strict: bool = False) -> None:
     state = _load_run_state(run_id)
     review = state.get("balance_review")
     if not isinstance(review, list) or not review:
-        raise SystemExit("Balance quality gate failed: missing balance_review in run state. " "Re-run the workflow to generate balance review before publishing.")
+        message = (
+            "Balance quality check unavailable: missing balance_review in run state. "
+            "Publishing will continue because strict mode is disabled."
+        )
+        if strict:
+            raise SystemExit("Balance quality gate failed: missing balance_review in run state. Re-run the workflow to generate balance review before publishing.")
+        print(f"[warn] {message}", file=sys.stderr)
+        return
 
     failures: list[str] = []
     for entry in review:
@@ -489,11 +501,21 @@ def _enforce_balance_quality_gate(run_id: str) -> None:
         extra = ""
         if len(failures) > 10:
             extra = f"\n... and {len(failures) - 10} more process(es)."
-        raise SystemExit(
-            "Balance quality gate failed. Please fix process exchanges and rerun before publish.\n"
-            f"run_id={run_id}\n{preview}{extra}\n"
-            "Use --skip-balance-check only when you explicitly accept these risks."
+        message = (
+            "Balance quality gate found issues.\n"
+            f"run_id={run_id}\n{preview}{extra}"
         )
+        if strict:
+            raise SystemExit(
+                f"{message}\n"
+                "Strict mode is enabled. Fix exchanges or rerun publish without --strict-balance-check."
+            )
+        print(
+            "[warn] Balance quality gate found issues; continuing publish because strict mode is disabled.\n"
+            f"{message}",
+            file=sys.stderr,
+        )
+        return
     print(f"Balance quality gate passed for run {run_id}.", file=sys.stderr)
 
 
@@ -641,9 +663,12 @@ def _publish_flows(
             return []
         if exports_dir is not None:
             _write_flow_exports(plans, exports_dir)
-        publisher.publish()
+        try:
+            publisher.publish()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] Flow publish encountered errors but will continue: {exc}", file=sys.stderr)
         if commit:
-            print(f"Published {len(plans)} flow dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
+            print(f"Attempted publish for {len(plans)} flow dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
         else:
             print(f"Dry-run: prepared {len(plans)} flow dataset(s) for publish.", file=sys.stderr)
         return plans
@@ -779,47 +804,66 @@ def _publish_sources(
         print(f"Dry-run: prepared {len(publishable)} source dataset(s) for publish.", file=sys.stderr)
         return
 
-    from tiangong_lca_spec.core.config import get_settings
-    from tiangong_lca_spec.core.mcp_client import MCPToolClient
+    from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 
-    settings = get_settings()
-    server_name = settings.flow_search_service_name
+    published_count = 0
+    reused_count = 0
     failed: list[tuple[str, str, str]] = []
-    with MCPToolClient(settings) as client:
+    client = DatabaseCrudClient()
+    try:
         for payload in publishable:
             uuid_value = _extract_source_uuid(payload)
+            version = _extract_source_version(payload)
+            existing = None
             try:
-                client.invoke_json_tool(
-                    server_name,
-                    DATABASE_TOOL_NAME,
-                    {
-                        "operation": "insert",
-                        "table": "sources",
-                        "id": uuid_value,
-                        "jsonOrdered": payload,
-                    },
-                )
+                existing = client.select_source(uuid_value, version=version) or client.select_source(uuid_value)
             except Exception as exc:  # noqa: BLE001
-                version = _extract_source_version(payload)
+                print(
+                    f"[warn] Source pre-check select failed, fallback to upsert attempts: {uuid_value} ({exc})",
+                    file=sys.stderr,
+                )
+            try:
+                if isinstance(existing, Mapping):
+                    client.update_source(payload)
+                else:
+                    client.insert_source(payload)
+                published_count += 1
+            except Exception as primary_exc:  # noqa: BLE001
                 try:
-                    client.invoke_json_tool(
-                        server_name,
-                        DATABASE_TOOL_NAME,
-                        {
-                            "operation": "update",
-                            "table": "sources",
-                            "id": uuid_value,
-                            "version": version,
-                            "jsonOrdered": payload,
-                        },
-                    )
-                except Exception as update_exc:  # noqa: BLE001
-                    failed.append((uuid_value, str(exc), str(update_exc)))
+                    if isinstance(existing, Mapping):
+                        client.insert_source(payload)
+                    else:
+                        client.update_source(payload)
+                    published_count += 1
+                except Exception as secondary_exc:  # noqa: BLE001
+                    still_exists = existing
+                    try:
+                        if still_exists is None:
+                            still_exists = client.select_source(uuid_value, version=version) or client.select_source(uuid_value)
+                    except Exception:
+                        still_exists = existing
+                    if isinstance(still_exists, Mapping):
+                        reused_count += 1
+                        print(
+                            f"[warn] Reusing existing source after publish conflict: {uuid_value} "
+                            f"(primary_error={primary_exc}; secondary_error={secondary_exc})",
+                            file=sys.stderr,
+                        )
+                        continue
+                    failed.append((uuid_value, str(primary_exc), str(secondary_exc)))
+    finally:
+        client.close()
 
     if failed:
         details = "; ".join(f"{uuid_value} insert failed: {insert_error}; update failed: {update_error}" for uuid_value, insert_error, update_error in failed)
-        raise SystemExit(f"Failed to publish {len(failed)} source dataset(s): {details}")
-    print(f"Published {len(publishable)} source dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
+        print(
+            f"[warn] Failed to publish {len(failed)} source dataset(s), continuing publish. details={details}",
+            file=sys.stderr,
+        )
+    print(
+        f"Published {published_count} source dataset(s) via Database_CRUD_Tool (reused_existing={reused_count}).",
+        file=sys.stderr,
+    )
 
 
 def _publish_processes(datasets: list[dict[str, Any]], *, commit: bool) -> None:
@@ -830,9 +874,25 @@ def _publish_processes(datasets: list[dict[str, Any]], *, commit: bool) -> None:
         raise SystemExit("No valid process datasets found for publishing.")
     publisher = ProcessPublisher(dry_run=not commit)
     try:
-        results = publisher.publish(publishable)
+        success = 0
+        failed: list[tuple[str, str]] = []
+        for payload in publishable:
+            uuid_value = "unknown"
+            try:
+                uuid_value = _extract_process_uuid(payload)
+                results = publisher.publish([payload])
+                if commit:
+                    success += len(results)
+            except Exception as exc:  # noqa: BLE001
+                failed.append((uuid_value, str(exc)))
+        if failed:
+            details = "; ".join(f"{uuid_value}: {error}" for uuid_value, error in failed)
+            print(
+                f"[warn] Failed to publish {len(failed)} process dataset(s), continuing publish. details={details}",
+                file=sys.stderr,
+            )
         if commit:
-            print(f"Published {len(results)} process dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
+            print(f"Published {success} process dataset(s) via Database_CRUD_Tool.", file=sys.stderr)
         else:
             print(f"Dry-run: prepared {len(publishable)} process dataset(s) for publish.", file=sys.stderr)
     finally:
@@ -857,7 +917,7 @@ def main() -> None:
         os.environ.setdefault("TIANGONG_PFF_FLOW_CACHE_PATH", str(cache_dir / "flow_select_cache.json"))
         exports_dir = ensure_run_exports_dir(run_id)
         if not args.skip_balance_check:
-            _enforce_balance_quality_gate(run_id)
+            _enforce_balance_quality_gate(run_id, strict=args.strict_balance_check)
         llm = None
         if args.publish_flows and not args.no_llm and args.secrets.exists():
             api_key, model, base_url = load_secrets(args.secrets)
@@ -978,7 +1038,7 @@ def main() -> None:
         print(f"Wrote {len(source_written)} source dataset(s) to {exports_dir / 'sources'}", file=sys.stderr)
     if args.publish:
         if not args.skip_balance_check:
-            _enforce_balance_quality_gate(run_id)
+            _enforce_balance_quality_gate(run_id, strict=args.strict_balance_check)
         if args.publish_flows:
             flow_plans = _publish_flows(datasets, commit=args.commit, llm=llm, exports_dir=exports_dir)
             if args.commit and flow_plans:

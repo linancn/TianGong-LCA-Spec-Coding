@@ -476,12 +476,16 @@ class FlowProductCategorySelector:
                     line = raw_line.strip()
                     if not line:
                         continue
-                    if "\t" in line:
-                        cat_code, desc = line.split("\t", 1)
-                    else:
-                        parts = line.split(None, 1)
-                        cat_code = parts[0]
-                        desc = parts[1] if len(parts) > 1 else ""
+                    # Hierarchy helper scripts print data rows as "<code>\\t<description>".
+                    # Informational lines like "No direct children found for <code>" must be ignored.
+                    if "\t" not in line:
+                        LOGGER.debug(
+                            "flow_publish.product_category_skip_non_data_line",
+                            code=code,
+                            line=line,
+                        )
+                        continue
+                    cat_code, desc = line.split("\t", 1)
                     cat_code = cat_code.strip()
                     desc = desc.strip()
                     if cat_code:
@@ -883,6 +887,95 @@ class DatabaseCrudClient:
             }
         )
 
+    def select_process(self, process_uuid: str, *, version: str | None = None) -> dict[str, Any] | None:
+        uuid_value = _coerce_text(process_uuid)
+        if not uuid_value:
+            return None
+        version_value = _coerce_text(version) or None
+        if version_value:
+            raw = self._invoke(
+                {
+                    "operation": "select",
+                    "table": "processes",
+                    "id": uuid_value,
+                    "version": version_value,
+                }
+            )
+            dataset = self._extract_process_dataset(raw)
+            if dataset is not None:
+                return copy.deepcopy(dataset)
+        raw = self._invoke({"operation": "select", "table": "processes", "id": uuid_value})
+        dataset = self._extract_process_dataset(raw)
+        if dataset is None:
+            return None
+        return copy.deepcopy(dataset)
+
+    def insert_source(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
+        root_key = "sourceDataSet" if "sourceDataSet" in dataset else None
+        source_root = _resolve_dataset_root(dataset, root_key=root_key, dataset_kind="source")
+        uuid_value = _require_uuid(
+            _get_nested(source_root, ("sourceInformation", "dataSetInformation", "common:UUID")),
+            "source",
+        )
+        json_payload = dataset if root_key else {"sourceDataSet": source_root}
+        return self._invoke(
+            {
+                "operation": "insert",
+                "table": "sources",
+                "id": uuid_value,
+                "jsonOrdered": json_payload,
+            }
+        )
+
+    def update_source(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
+        root_key = "sourceDataSet" if "sourceDataSet" in dataset else None
+        source_root = _resolve_dataset_root(dataset, root_key=root_key, dataset_kind="source")
+        uuid_value = _require_uuid(
+            _get_nested(source_root, ("sourceInformation", "dataSetInformation", "common:UUID")),
+            "source",
+        )
+        version_candidate = _coerce_text(
+            _get_nested(
+                source_root,
+                ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"),
+            )
+        )
+        if not version_candidate:
+            version_candidate = "01.01.000"
+        json_payload = dataset if root_key else {"sourceDataSet": source_root}
+        return self._invoke(
+            {
+                "operation": "update",
+                "table": "sources",
+                "id": uuid_value,
+                "version": version_candidate,
+                "jsonOrdered": json_payload,
+            }
+        )
+
+    def select_source(self, source_uuid: str, *, version: str | None = None) -> dict[str, Any] | None:
+        uuid_value = _coerce_text(source_uuid)
+        if not uuid_value:
+            return None
+        version_value = _coerce_text(version) or None
+        if version_value:
+            raw = self._invoke(
+                {
+                    "operation": "select",
+                    "table": "sources",
+                    "id": uuid_value,
+                    "version": version_value,
+                }
+            )
+            dataset = self._extract_source_dataset(raw)
+            if dataset is not None:
+                return copy.deepcopy(dataset)
+        raw = self._invoke({"operation": "select", "table": "sources", "id": uuid_value})
+        dataset = self._extract_source_dataset(raw)
+        if dataset is None:
+            return None
+        return copy.deepcopy(dataset)
+
     def update_process(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
         root_key = "processDataSet" if "processDataSet" in dataset else None
         process_root = _resolve_dataset_root(dataset, root_key=root_key, dataset_kind="process")
@@ -951,6 +1044,38 @@ class DatabaseCrudClient:
                     payload = record.get(key)
                     if isinstance(payload, dict) and isinstance(payload.get("flowDataSet"), dict):
                         return payload.get("flowDataSet")
+        return None
+
+    @staticmethod
+    def _extract_process_dataset(raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        if isinstance(raw.get("processDataSet"), dict):
+            return raw.get("processDataSet")
+        data = raw.get("data")
+        if isinstance(data, list) and data:
+            record = data[0] if isinstance(data[0], dict) else None
+            if isinstance(record, dict):
+                for key in ("json_ordered", "json"):
+                    payload = record.get(key)
+                    if isinstance(payload, dict) and isinstance(payload.get("processDataSet"), dict):
+                        return payload.get("processDataSet")
+        return None
+
+    @staticmethod
+    def _extract_source_dataset(raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        if isinstance(raw.get("sourceDataSet"), dict):
+            return raw.get("sourceDataSet")
+        data = raw.get("data")
+        if isinstance(data, list) and data:
+            record = data[0] if isinstance(data[0], dict) else None
+            if isinstance(record, dict):
+                for key in ("json_ordered", "json"):
+                    payload = record.get(key)
+                    if isinstance(payload, dict) and isinstance(payload.get("sourceDataSet"), dict):
+                        return payload.get("sourceDataSet")
         return None
 
     @staticmethod
@@ -1256,10 +1381,59 @@ class FlowPublisher:
                     reason=decision.reason,
                 )
                 continue
+
+            actions: list[str] = [decision.action]
             if decision.action == "update":
-                result = self._crud.update_flow(payload)
-            else:
-                result = self._crud.insert_flow(payload)
+                actions.append("insert")
+            elif decision.action == "insert":
+                actions.append("update")
+
+            result: dict[str, Any] | None = None
+            last_error: Exception | None = None
+            for action in actions:
+                try:
+                    if action == "update":
+                        result = self._crud.update_flow(payload)
+                    else:
+                        result = self._crud.insert_flow(payload)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    LOGGER.warning(
+                        "flow_publish.action_failed",
+                        exchange=plan.exchange_name,
+                        process=plan.process_name,
+                        uuid=plan.uuid,
+                        action=action,
+                        error=str(exc),
+                    )
+
+            if result is None:
+                existing = None
+                try:
+                    existing = self._crud.select_flow(plan.uuid, version=version) or self._crud.select_flow(plan.uuid)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning(
+                        "flow_publish.reuse_check_failed",
+                        exchange=plan.exchange_name,
+                        process=plan.process_name,
+                        uuid=plan.uuid,
+                        error=str(exc),
+                    )
+                if isinstance(existing, Mapping):
+                    LOGGER.warning(
+                        "flow_publish.reuse_existing_after_error",
+                        exchange=plan.exchange_name,
+                        process=plan.process_name,
+                        uuid=plan.uuid,
+                    )
+                    results.append({"id": plan.uuid, "action": "reuse"})
+                    continue
+                if isinstance(last_error, Exception):
+                    raise SpecCodingError(
+                        f"Failed to publish flow '{plan.exchange_name}' ({plan.uuid}) after insert/update attempts."
+                    ) from last_error
+                raise SpecCodingError(f"Failed to publish flow '{plan.exchange_name}' ({plan.uuid}).")
             results.append(result)
         return results
 
@@ -1841,16 +2015,69 @@ class ProcessPublisher:
             name_block = process_info.get("dataSetInformation", {}).get("name", {})
             process_name = _coerce_text(name_block.get("baseName"))
             uuid_value = _coerce_text(process_info.get("dataSetInformation", {}).get("common:UUID"))
+            version_value = _coerce_text(
+                _get_nested(
+                    process_payload,
+                    ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"),
+                )
+            ) or "01.01.000"
             if self._dry_run:
                 LOGGER.info("process_publish.dry_run", name=process_name)
                 continue
+            existing = None
             try:
-                result = self._crud.insert_process(payload)
-            except SpecCodingError:
+                existing = self._crud.select_process(uuid_value, version=version_value) or self._crud.select_process(uuid_value)
+            except Exception as exists_exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "process_publish.precheck_failed",
+                    name=process_name,
+                    uuid=uuid_value,
+                    error=str(exists_exc),
+                )
+
+            actions: list[str] = ["update", "insert"] if isinstance(existing, Mapping) else ["insert", "update"]
+            result: dict[str, Any] | None = None
+            errors: list[Exception] = []
+            for action in actions:
                 try:
-                    result = self._crud.update_process(payload)
-                except SpecCodingError as exc:  # pragma: no cover - network errors bubbled up
-                    raise SpecCodingError(f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})") from exc
+                    if action == "update":
+                        result = self._crud.update_process(payload)
+                    else:
+                        result = self._crud.insert_process(payload)
+                    break
+                except SpecCodingError as exc:
+                    errors.append(exc)
+                    LOGGER.warning(
+                        "process_publish.action_failed",
+                        name=process_name,
+                        uuid=uuid_value,
+                        action=action,
+                        error=str(exc),
+                    )
+
+            if result is None:
+                final_existing = existing
+                if final_existing is None:
+                    try:
+                        final_existing = self._crud.select_process(uuid_value, version=version_value) or self._crud.select_process(uuid_value)
+                    except Exception as exists_exc:  # noqa: BLE001
+                        LOGGER.warning(
+                            "process_publish.reuse_check_failed",
+                            name=process_name,
+                            uuid=uuid_value,
+                            error=str(exists_exc),
+                        )
+                if isinstance(final_existing, Mapping):
+                    LOGGER.warning(
+                        "process_publish.reuse_existing_after_error",
+                        name=process_name,
+                        uuid=uuid_value,
+                    )
+                    results.append({"id": uuid_value, "action": "reuse"})
+                    continue
+                if errors:
+                    raise SpecCodingError(f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})") from errors[-1]
+                raise SpecCodingError(f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})")
             results.append(result)
         return results
 
