@@ -55,6 +55,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Allow LLM-based density conversion for mass/volume mismatches.",
     )
+    parser.add_argument(
+        "--auto-balance-revise",
+        action="store_true",
+        help=("After the first balance review, auto-revise severe core-mass imbalances " "on non-reference exchanges, then recompute balance review."),
+    )
     parser.add_argument("--min-si-hint", default="possible", help="Min si_hint to download (none|possible|likely).")
     parser.add_argument("--si-max-links", type=int, help="Max SI links per DOI.")
     parser.add_argument("--si-timeout", type=float, help="HTTP timeout for SI download.")
@@ -92,6 +97,8 @@ def _run_reference_stage(args: argparse.Namespace, run_id: str) -> None:
         cmd.append("--no-translate-zh")
     if args.allow_density_conversion:
         cmd.append("--allow-density-conversion")
+    if args.auto_balance_revise:
+        cmd.append("--auto-balance-revise")
     _run_python(script, cmd)
 
 
@@ -186,6 +193,8 @@ def _run_main_pipeline(args: argparse.Namespace, run_id: str) -> None:
         cmd.append("--no-translate-zh")
     if args.allow_density_conversion:
         cmd.append("--allow-density-conversion")
+    if args.auto_balance_revise:
+        cmd.append("--auto-balance-revise")
     if args.stop_after:
         cmd.extend(["--stop-after", args.stop_after])
     if args.publish:

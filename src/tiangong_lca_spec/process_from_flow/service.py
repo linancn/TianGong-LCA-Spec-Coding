@@ -2320,6 +2320,51 @@ def _convert_exchange_amount_for_balance(
     return None, None, None
 
 
+def _convert_amount_from_unit_group_reference(
+    amount_in_reference_unit: float,
+    unit: str,
+    unit_group: UnitGroupInfo,
+) -> float | None:
+    unit_key = _normalize_unit_token(unit)
+    if not unit_key:
+        return None
+    factor = unit_group.units.get(unit_key)
+    if factor in (None, 0):
+        return None
+    return amount_in_reference_unit / factor
+
+
+def _convert_balance_amount_to_resolved_unit(
+    amount: float,
+    *,
+    balance_unit: str | None,
+    resolved_unit: str | None,
+    reference_info: FlowReferenceInfo | None,
+) -> float | None:
+    balance_unit_text = str(balance_unit or "").strip()
+    resolved_unit_text = str(resolved_unit or "").strip()
+    if not resolved_unit_text:
+        return None
+    if not balance_unit_text:
+        balance_unit_text = resolved_unit_text
+    if _normalize_unit_token(balance_unit_text) == _normalize_unit_token(resolved_unit_text):
+        return amount
+    if reference_info and reference_info.unit_group:
+        unit_group = reference_info.unit_group
+        reference_unit = str(unit_group.reference_unit or "").strip()
+        if reference_unit:
+            in_reference = amount
+            if _normalize_unit_token(balance_unit_text) != _normalize_unit_token(reference_unit):
+                converted = _convert_amount_simple(amount, balance_unit_text, reference_unit)
+                if converted is None:
+                    return None
+                in_reference = converted
+            by_group = _convert_amount_from_unit_group_reference(in_reference, resolved_unit_text, unit_group)
+            if by_group is not None:
+                return by_group
+    return _convert_amount_simple(amount, balance_unit_text, resolved_unit_text)
+
+
 def _is_ambiguous_balance_unit(value: str | None) -> bool:
     token = _normalize_unit_token(value)
     if not token:
@@ -3650,6 +3695,7 @@ class ProcessFromFlowState(TypedDict, total=False):
     operation: str
     stop_after: str
     allow_density_conversion: bool
+    auto_balance_revise: bool
     technical_description: str
     assumptions: list[str]
     scope: str
@@ -3674,7 +3720,11 @@ class ProcessFromFlowState(TypedDict, total=False):
     density_conversion_applied: bool
     density_conversion_summary: dict[str, Any]
     balance_review: list[dict[str, Any]]
+    balance_review_initial: list[dict[str, Any]]
     balance_review_summary: dict[str, Any]
+    balance_review_summary_initial: dict[str, Any]
+    balance_revise_applied: bool
+    balance_revise_summary: dict[str, Any]
     data_cut_off_and_completeness_principles: dict[str, dict[str, str]] | dict[str, str] | list[str]
     data_treatment_and_extrapolations_principles: dict[str, dict[str, str]] | dict[str, str] | list[str]
     data_treatment_principles_applied: bool
@@ -5018,6 +5068,95 @@ def _extract_process_dataset_name(dataset: dict[str, Any]) -> str | None:
     return base_name
 
 
+def _extract_exchange_name_text(value: Any) -> str:
+    return _pick_lang(value, prefer="en") or _pick_lang(value, prefer="zh") or ""
+
+
+def _effective_exchange_direction(exchange: dict[str, Any], *, reference_direction: str) -> str:
+    direction = str(exchange.get("exchangeDirection") or "").strip()
+    if direction not in {"Input", "Output"}:
+        direction = "Input"
+    if bool(exchange.get("is_reference_flow")):
+        return reference_direction
+    return direction
+
+
+def _process_dataset_lookup_by_process_id(
+    state: ProcessFromFlowState,
+    process_datasets: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
+    dataset_by_process_id: dict[str, dict[str, Any]] = {}
+    dataset_index_by_process_id: dict[str, int] = {}
+    process_list = [item for item in (state.get("processes") or []) if isinstance(item, dict)]
+    process_ids = [str(item.get("process_id") or "").strip() for item in process_list]
+    for idx, dataset in enumerate(process_datasets):
+        if not isinstance(dataset, dict):
+            continue
+        process_id = process_ids[idx] if idx < len(process_ids) else ""
+        if not process_id:
+            continue
+        dataset_by_process_id[process_id] = dataset
+        dataset_index_by_process_id[process_id] = idx
+    return dataset_by_process_id, dataset_index_by_process_id
+
+
+def _update_dataset_exchange_amount_from_match(
+    dataset_payload: dict[str, Any],
+    *,
+    matched_exchange: dict[str, Any],
+    exchange_index_hint: int | None,
+    amount_text: str,
+) -> bool:
+    process_block = dataset_payload.get("processDataSet") if isinstance(dataset_payload.get("processDataSet"), dict) else dataset_payload
+    if not isinstance(process_block, dict):
+        return False
+    exchanges_block = process_block.get("exchanges")
+    if not isinstance(exchanges_block, dict):
+        return False
+    exchanges = exchanges_block.get("exchange")
+    if not isinstance(exchanges, list):
+        return False
+
+    target_name = _normalize_exchange_label(str(matched_exchange.get("exchangeName") or "").strip())
+    target_direction = str(matched_exchange.get("exchangeDirection") or "").strip()
+    target_is_reference = bool(matched_exchange.get("is_reference_flow"))
+
+    def _match_index(idx: int) -> bool:
+        if idx < 0 or idx >= len(exchanges):
+            return False
+        item = exchanges[idx]
+        if not isinstance(item, dict):
+            return False
+        name = _normalize_exchange_label(_extract_exchange_name_text(item.get("exchangeName")))
+        direction = str(item.get("exchangeDirection") or "").strip()
+        internal_ref = bool(item.get("referenceToFlowDataSet", {}).get("unmatched:placeholder")) if isinstance(item.get("referenceToFlowDataSet"), dict) else False
+        if target_name and name and target_name != name:
+            return False
+        if target_direction and direction and target_direction != direction:
+            return False
+        # If matched exchange is reference flow, prefer dataset exchange carrying internalRef id mapping.
+        if target_is_reference and not internal_ref and target_name and name != target_name:
+            return False
+        return True
+
+    selected_index: int | None = None
+    if isinstance(exchange_index_hint, int) and _match_index(exchange_index_hint):
+        selected_index = exchange_index_hint
+    else:
+        for idx in range(len(exchanges)):
+            if _match_index(idx):
+                selected_index = idx
+                break
+    if selected_index is None:
+        return False
+    target_exchange = exchanges[selected_index]
+    if not isinstance(target_exchange, dict):
+        return False
+    target_exchange["meanAmount"] = amount_text
+    target_exchange["resultingAmount"] = amount_text
+    return True
+
+
 def _collect_placeholder_entries(
     state: ProcessFromFlowState,
     *,
@@ -5217,6 +5356,256 @@ def _build_placeholder_report(state: ProcessFromFlowState) -> list[dict[str, Any
             }
         )
     return report
+
+
+def _apply_balance_auto_revisions(
+    state: ProcessFromFlowState,
+    *,
+    process_exchanges: list[dict[str, Any]],
+    reviews: list[dict[str, Any]],
+    settings: Settings,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, dict[str, Any]]:
+    revised_matches = copy.deepcopy(process_exchanges)
+    process_datasets = state.get("process_datasets")
+    revised_datasets = copy.deepcopy(process_datasets) if isinstance(process_datasets, list) else None
+    dataset_by_process_id: dict[str, dict[str, Any]] = {}
+    if isinstance(revised_datasets, list):
+        dataset_by_process_id, _ = _process_dataset_lookup_by_process_id(state, revised_datasets)
+
+    review_index: dict[str, dict[str, Any]] = {}
+    for item in reviews:
+        if not isinstance(item, dict):
+            continue
+        process_id = str(item.get("process_id") or "").strip()
+        if process_id:
+            review_index[process_id] = item
+
+    summary: dict[str, Any] = {
+        "enabled": True,
+        "candidate_processes": 0,
+        "revised_processes": 0,
+        "revised_exchanges": 0,
+        "skipped_processes": [],
+        "changes": [],
+    }
+    reference_direction = _reference_direction(state.get("operation"))
+    flow_cache: dict[str, FlowReferenceInfo | None] = {}
+    crud_client: DatabaseCrudClient | None = None
+    should_close_crud = False
+    needs_crud = False
+    for proc in revised_matches:
+        exchanges = proc.get("exchanges") if isinstance(proc, dict) else None
+        if not isinstance(exchanges, list):
+            continue
+        for exchange in exchanges:
+            if not isinstance(exchange, dict):
+                continue
+            flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+            if flow_search.get("selected_uuid"):
+                needs_crud = True
+                break
+        if needs_crud:
+            break
+    if needs_crud:
+        try:
+            crud_client = DatabaseCrudClient(settings)
+            should_close_crud = True
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning("process_from_flow.balance_revise_crud_init_failed", error=str(exc))
+            crud_client = None
+
+    try:
+        for proc_idx, proc in enumerate(revised_matches):
+            if not isinstance(proc, dict):
+                continue
+            process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
+            review = review_index.get(process_id) if process_id else None
+            if not isinstance(review, dict):
+                continue
+            mass_core = review.get("mass_core")
+            if not isinstance(mass_core, dict):
+                continue
+            if str(mass_core.get("status") or "").strip().lower() != "check":
+                continue
+            inputs = _parse_amount_value(mass_core.get("inputs"))
+            outputs = _parse_amount_value(mass_core.get("outputs"))
+            if inputs is None or outputs is None or inputs <= 0 or outputs <= 0:
+                summary["skipped_processes"].append(
+                    {
+                        "process_id": process_id or f"process_{proc_idx + 1}",
+                        "reason": "mass_core_inputs_or_outputs_missing",
+                    }
+                )
+                continue
+            if outputs > inputs:
+                target_direction = "Output"
+                imbalance = outputs - inputs
+            elif inputs > outputs:
+                target_direction = "Input"
+                imbalance = inputs - outputs
+            else:
+                continue
+            if imbalance <= 0:
+                continue
+            summary["candidate_processes"] += 1
+
+            exchanges = proc.get("exchanges") if isinstance(proc.get("exchanges"), list) else []
+            adjustable: list[dict[str, Any]] = []
+            for ex_idx, exchange in enumerate(exchanges):
+                if not isinstance(exchange, dict):
+                    continue
+                direction = _effective_exchange_direction(exchange, reference_direction=reference_direction)
+                if direction != target_direction:
+                    continue
+                if bool(exchange.get("is_reference_flow")):
+                    continue
+                material_role = _normalize_material_role(exchange.get("material_role") or exchange.get("materialRole"))
+                balance_exclude = _normalize_balance_exclude(exchange.get("balance_exclude") or exchange.get("balanceExclude"))
+                comment_tags = _parse_exchange_comment_tags(exchange.get("generalComment"))
+                flow_kind = _normalize_flow_type(comment_tags.get(_EXCHANGE_KIND_TAG_NAME))
+                if not flow_kind:
+                    flow_kind = _exchange_flow_type_for_dedupe(exchange, direction=direction)
+                if not _is_core_mass_exchange(
+                    material_role=material_role,
+                    flow_kind=flow_kind,
+                    balance_exclude=balance_exclude,
+                ):
+                    continue
+
+                amount_value = _parse_amount_value(exchange.get("amount"))
+                if amount_value is None:
+                    continue
+                flow_search = exchange.get("flow_search") if isinstance(exchange.get("flow_search"), dict) else {}
+                selected_uuid = str(flow_search.get("selected_uuid") or "").strip() or None
+                reference_info = None
+                if selected_uuid:
+                    if selected_uuid in flow_cache:
+                        reference_info = flow_cache[selected_uuid]
+                    else:
+                        flow_dataset = None
+                        if crud_client:
+                            try:
+                                flow_dataset = crud_client.select_flow(selected_uuid)
+                            except Exception as exc:  # pylint: disable=broad-except
+                                LOGGER.warning(
+                                    "process_from_flow.balance_revise_flow_select_failed",
+                                    flow_id=selected_uuid,
+                                    error=str(exc),
+                                )
+                        reference_info = _flow_reference_info_from_dataset(flow_dataset) if flow_dataset else None
+                        flow_cache[selected_uuid] = reference_info
+                resolved_unit, _ = _resolve_exchange_balance_unit(
+                    exchange,
+                    reference_info=reference_info,
+                    material_role=material_role,
+                    flow_kind=flow_kind,
+                )
+                if not resolved_unit:
+                    continue
+                dimension, converted, converted_unit = _convert_exchange_amount_for_balance(
+                    amount_value,
+                    resolved_unit,
+                    reference_info,
+                )
+                if dimension != "mass" or converted is None or converted <= 0:
+                    continue
+                adjustable.append(
+                    {
+                        "exchange": exchange,
+                        "exchange_index": ex_idx,
+                        "matched_name": str(exchange.get("exchangeName") or "").strip(),
+                        "matched_direction": direction,
+                        "converted_amount": float(converted),
+                        "converted_unit": str(converted_unit or "").strip() or None,
+                        "resolved_unit": resolved_unit,
+                        "reference_info": reference_info,
+                        "selected_uuid": selected_uuid,
+                    }
+                )
+
+            total_adjustable = sum(item["converted_amount"] for item in adjustable)
+            if total_adjustable <= 0:
+                summary["skipped_processes"].append(
+                    {
+                        "process_id": process_id or f"process_{proc_idx + 1}",
+                        "reason": f"no_adjustable_core_mass_exchanges_on_{target_direction.lower()}_side",
+                    }
+                )
+                continue
+
+            reduction = min(imbalance, total_adjustable)
+            ratio = 1.0 - (reduction / total_adjustable)
+            revised_count_for_process = 0
+            dataset_payload = dataset_by_process_id.get(process_id) if process_id else None
+            if dataset_payload is None and isinstance(revised_datasets, list) and 0 <= proc_idx < len(revised_datasets):
+                candidate = revised_datasets[proc_idx]
+                if isinstance(candidate, dict):
+                    dataset_payload = candidate
+
+            for item in adjustable:
+                exchange = item["exchange"]
+                old_amount = _parse_amount_value(exchange.get("amount"))
+                if old_amount is None:
+                    continue
+                new_converted = item["converted_amount"] * ratio
+                new_amount = _convert_balance_amount_to_resolved_unit(
+                    new_converted,
+                    balance_unit=item["converted_unit"],
+                    resolved_unit=item["resolved_unit"],
+                    reference_info=item["reference_info"],
+                )
+                if new_amount is None or new_amount < 0:
+                    continue
+                old_text = _format_amount_value(old_amount)
+                new_text = _format_amount_value(new_amount)
+                if old_text == new_text:
+                    continue
+                exchange["amount"] = new_text
+                exchange["balance_auto_revise"] = {
+                    "applied": True,
+                    "old_amount": old_text,
+                    "new_amount": new_text,
+                    "resolved_unit_basis": item["resolved_unit"],
+                    "balance_unit": item["converted_unit"],
+                    "process_direction_adjusted": target_direction,
+                }
+                dataset_updated = False
+                if isinstance(dataset_payload, dict):
+                    dataset_updated = _update_dataset_exchange_amount_from_match(
+                        dataset_payload,
+                        matched_exchange=exchange,
+                        exchange_index_hint=item["exchange_index"],
+                        amount_text=new_text,
+                    )
+                summary["changes"].append(
+                    {
+                        "process_id": process_id or f"process_{proc_idx + 1}",
+                        "exchange_name": item["matched_name"],
+                        "exchange_direction": item["matched_direction"],
+                        "flow_uuid": item["selected_uuid"],
+                        "old_amount": old_text,
+                        "new_amount": new_text,
+                        "resolved_unit_basis": item["resolved_unit"],
+                        "dataset_synced": dataset_updated,
+                    }
+                )
+                revised_count_for_process += 1
+
+            if revised_count_for_process:
+                summary["revised_processes"] += 1
+                summary["revised_exchanges"] += revised_count_for_process
+            else:
+                summary["skipped_processes"].append(
+                    {
+                        "process_id": process_id or f"process_{proc_idx + 1}",
+                        "reason": "adjustable_exchanges_found_but_no_amount_changes_applied",
+                    }
+                )
+    finally:
+        if should_close_crud and crud_client:
+            crud_client.close()
+
+    return revised_matches, revised_datasets, summary
 
 
 def _normalize_route_processes(
@@ -7553,6 +7942,7 @@ def _build_langgraph(
     def balance_review(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if "balance_review" in state:
             return {}
+        auto_balance_revise = bool(state.get("auto_balance_revise")) and not bool(state.get("balance_revise_applied"))
         process_exchanges = state.get("matched_process_exchanges")
         if not isinstance(process_exchanges, list):
             process_exchanges = state.get("process_exchanges")
@@ -7876,6 +8266,55 @@ def _build_langgraph(
                 crud_client.close()
 
         LOGGER.info("process_from_flow.balance_review_completed", **summary)
+        if auto_balance_revise:
+            revised_matches, revised_datasets, revise_summary = _apply_balance_auto_revisions(
+                state,
+                process_exchanges=process_exchanges,
+                reviews=reviews,
+                settings=settings,
+            )
+            LOGGER.info(
+                "process_from_flow.balance_auto_revise_completed",
+                revised_processes=int(revise_summary.get("revised_processes") or 0),
+                revised_exchanges=int(revise_summary.get("revised_exchanges") or 0),
+                candidate_processes=int(revise_summary.get("candidate_processes") or 0),
+            )
+            if int(revise_summary.get("revised_exchanges") or 0) > 0:
+                checkpoint_state: ProcessFromFlowState = dict(state)
+                checkpoint_state["matched_process_exchanges"] = revised_matches
+                if isinstance(revised_datasets, list):
+                    checkpoint_state["process_datasets"] = revised_datasets
+                checkpoint_state["balance_review_initial"] = reviews
+                checkpoint_state["balance_review_summary_initial"] = summary
+                checkpoint_state["balance_revise_applied"] = True
+                checkpoint_state["balance_revise_summary"] = revise_summary
+                _persist_runtime_state(checkpoint_state, reason="after_balance_auto_revise")
+
+                rerun_state: ProcessFromFlowState = dict(state)
+                rerun_state["matched_process_exchanges"] = revised_matches
+                if isinstance(revised_datasets, list):
+                    rerun_state["process_datasets"] = revised_datasets
+                rerun_state["balance_revise_applied"] = True
+                rerun_state.pop("balance_review", None)
+                rerun_state.pop("balance_review_summary", None)
+                rerun_result = balance_review(rerun_state)
+                rerun_result["matched_process_exchanges"] = revised_matches
+                if isinstance(revised_datasets, list):
+                    rerun_result["process_datasets"] = revised_datasets
+                rerun_result["balance_revise_applied"] = True
+                rerun_result["balance_revise_summary"] = revise_summary
+                rerun_result["balance_review_initial"] = reviews
+                rerun_result["balance_review_summary_initial"] = summary
+                return rerun_result
+            return {
+                "balance_review": reviews,
+                "balance_review_summary": summary,
+                "balance_review_initial": reviews,
+                "balance_review_summary_initial": summary,
+                "balance_revise_applied": True,
+                "balance_revise_summary": revise_summary,
+                "step_markers": _update_step_markers(state, "balance_review"),
+            }
         return {
             "balance_review": reviews,
             "balance_review_summary": summary,

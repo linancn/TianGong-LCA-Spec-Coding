@@ -28,6 +28,7 @@
 - Step 5 build process datasets：输出最终 ILCD process 数据集。
 - Step 6 resolve placeholders：对占位符 exchange 进行二次检索与筛选，回填匹配结果并输出占位符报告。
 - Step 7 balance review：对每个 process 的 mass/energy 进行平衡校验，生成 review 报告（不拦截流程）。
+- Step 7b balance auto revise（可选）：启用 `--auto-balance-revise` 时，在首次平衡校验后对严重失衡（`mass_core.status=check`）过程的非参考流核心 exchange 做保守数值修订，并重算平衡结果。
 - Step 8 data cut-off & completeness：在占位符补全与平衡校验后汇总缺失/占位符/换算信息，优先由 LLM 生成 dataCutOffAndCompletenessPrinciples（失败回退规则文本），并统一回写 process 级 dataTreatment。
 
 ## LangGraph 核心工作流（ProcessFromFlowService）
@@ -113,6 +114,12 @@
 - 对 `material_role=auxiliary|catalyst` 或 `balance_exclude=true` 的 exchange 不计入平衡统计。
 - 输出 `balance_review`/`balance_review_summary`，标记 `ok|check|insufficient` 并记录 warning；不改写 exchange 数值。
 - 同时记录 `unit_mismatches` 与 `density_estimates` 以便人工复核。
+
+7b) balance_auto_revise（可选，后处理）
+- 仅在 state/CLI 启用 `auto_balance_revise`（`--auto-balance-revise`）时触发，且每次 run 最多执行一次（`balance_revise_applied` 防重复）。
+- 基于首次 `balance_review` 的 `mass_core` 结果，对 `status=check` 的过程在失衡方向（Input/Output）选择可修订的核心质量 exchange（排除参考流、辅助/催化剂、显式 `balance_exclude=true`）。
+- 采用保守比例修订：仅缩减失衡侧总量，不放大另一侧；回写 `matched_process_exchanges[*].exchanges[*].amount`，并同步 `process_datasets` 中对应 exchange 的 `meanAmount/resultingAmount`。
+- 修订完成后自动重算 `balance_review`，并保留首次结果到 `balance_review_initial`/`balance_review_summary_initial`，修订统计写入 `balance_revise_summary`。
 
 8) dataCutOffAndCompletenessPrinciples
 - 在 `resolve_placeholders`/`balance_review` 之后为每个 process 汇总缺失量值、占位符、单位换算/密度换算等信息。

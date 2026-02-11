@@ -91,6 +91,11 @@ def parse_args() -> argparse.Namespace:
         help="Allow LLM-based density estimates for mass<->volume conversions (product/waste flows only).",
     )
     parser.add_argument(
+        "--auto-balance-revise",
+        action="store_true",
+        help=("After the first balance review, auto-revise severe core-mass imbalances " "on non-reference exchanges, then recompute balance review."),
+    )
+    parser.add_argument(
         "--retain-runs",
         type=int,
         help="Manually clean process_from_flow run directories, keeping only the most recent N runs under artifacts/process_from_flow/.",
@@ -923,6 +928,10 @@ def main() -> None:
         if initial_state is None:
             initial_state = {}
         initial_state["allow_density_conversion"] = True
+    if args.auto_balance_revise:
+        if initial_state is None:
+            initial_state = {}
+        initial_state["auto_balance_revise"] = True
 
     service = ProcessFromFlowService(llm=llm, translator=translator)
     stop_after = None if args.stop_after == "datasets" else args.stop_after

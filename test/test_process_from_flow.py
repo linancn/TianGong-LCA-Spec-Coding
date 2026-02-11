@@ -190,6 +190,40 @@ class NoisyLLM(FakeLLM):
         return super().invoke(input_data)
 
 
+class ImbalancedLLM(FakeLLM):
+    def invoke(self, input_data: dict[str, Any]) -> Any:
+        prompt = str(input_data.get("prompt") or "")
+        if prompt.startswith("You are defining the inventory exchanges"):
+            return {
+                "processes": [
+                    {
+                        "process_id": "P1",
+                        "exchanges": [
+                            {
+                                "exchangeDirection": "Output",
+                                "exchangeName": "Test flow",
+                                "generalComment": "Reference flow output.",
+                                "unit": "kg",
+                                "amount": "1.0",
+                                "is_reference_flow": True,
+                                "material_role": "product",
+                            },
+                            {
+                                "exchangeDirection": "Input",
+                                "exchangeName": "Raw material",
+                                "generalComment": "Core input.",
+                                "unit": "kg",
+                                "amount": "5.0",
+                                "is_reference_flow": False,
+                                "material_role": "raw_material",
+                            },
+                        ],
+                    }
+                ]
+            }
+        return super().invoke(input_data)
+
+
 class RewriteLLM:
     def __init__(self, response: Any) -> None:
         self.response = response
@@ -516,3 +550,63 @@ def test_generate_flow_query_rewrites_with_llm_handles_failures() -> None:
         search_hints=[],
     )
     assert rewrites == []
+
+
+def test_process_from_flow_auto_balance_revise_recomputes_balance(tmp_path: Path) -> None:
+    flow_uuid = str(uuid4())
+    flow_path = tmp_path / "flow.json"
+    flow_path.write_text(
+        json.dumps(
+            {
+                "flowDataSet": {
+                    "flowInformation": {
+                        "dataSetInformation": {
+                            "common:UUID": flow_uuid,
+                            "name": {
+                                "baseName": [{"@xml:lang": "en", "#text": "Test flow"}],
+                                "treatmentStandardsRoutes": [{"@xml:lang": "en", "#text": "Finished product, manufactured"}],
+                                "mixAndLocationTypes": [{"@xml:lang": "en", "#text": "Production mix, at plant"}],
+                                "flowProperties": [],
+                            },
+                            "classificationInformation": {"common:classification": {"common:class": [{"@level": "0", "@classId": "0", "#text": "Test"}]}},
+                            "common:generalComment": [{"@xml:lang": "en", "#text": "Test flow general comment."}],
+                        }
+                    },
+                    "administrativeInformation": {"publicationAndOwnership": {"common:dataSetVersion": "01.01.000"}},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    llm = ImbalancedLLM()
+    service = ProcessFromFlowService(llm=llm, flow_search_fn=fake_flow_search)
+    state = service.run(
+        flow_path=flow_path,
+        operation="produce",
+        initial_state={"auto_balance_revise": True},
+    )
+
+    assert state.get("balance_revise_applied") is True
+    initial_review = state.get("balance_review_initial") or []
+    final_review = state.get("balance_review") or []
+    assert isinstance(initial_review, list) and initial_review
+    assert isinstance(final_review, list) and final_review
+    assert initial_review[0].get("mass_core", {}).get("status") == "check"
+    assert final_review[0].get("mass_core", {}).get("status") == "ok"
+
+    matches = state.get("matched_process_exchanges") or []
+    assert isinstance(matches, list) and matches
+    revised_amount = None
+    for exchange in matches[0].get("exchanges", []):
+        if str(exchange.get("exchangeName") or "").strip() == "Raw material":
+            revised_amount = str(exchange.get("amount") or "").strip()
+            break
+    assert revised_amount == "1"
+
+    datasets = state.get("process_datasets") or []
+    assert isinstance(datasets, list) and datasets
+    process_exchanges = datasets[0]["processDataSet"]["exchanges"]["exchange"]
+    input_amounts = [str(item.get("meanAmount") or "").strip() for item in process_exchanges if str(item.get("exchangeDirection") or "").strip() == "Input"]
+    assert "1" in input_amounts
