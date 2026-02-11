@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -6650,24 +6651,42 @@ def _build_langgraph(
         matched: list[dict[str, Any]] = []
         flow_summary = state.get("flow_summary") or {}
         reference_name = flow_summary.get("base_name_en") or ""
+        raw_processes = state.get("process_exchanges") or []
 
-        for proc in state.get("process_exchanges") or []:
+        process_entries: list[tuple[str, list[dict[str, Any]]]] = []
+        for proc in raw_processes:
+            if not isinstance(proc, dict):
+                continue
             process_id = str(proc.get("process_id") or proc.get("processId") or "").strip()
             exchanges = proc.get("exchanges") or []
             if not process_id or not isinstance(exchanges, list):
                 continue
+            valid_exchanges = [item for item in exchanges if isinstance(item, dict)]
+            if not valid_exchanges:
+                continue
+            process_entries.append((process_id, valid_exchanges))
+
+        total_processes = len(process_entries)
+        total_exchanges = sum(len(exchanges) for _, exchanges in process_entries)
+        progress_start = time.perf_counter()
+        completed_exchanges = 0
+
+        LOGGER.info(
+            "process_from_flow.match_flows_started",
+            process_total=total_processes,
+            exchange_total=total_exchanges,
+        )
+
+        for process_index, (process_id, exchanges) in enumerate(process_entries, start=1):
             reference_flow_name = None
             for exchange in exchanges:
-                if not isinstance(exchange, dict):
-                    continue
                 if exchange.get("is_reference_flow"):
                     reference_flow_name = str(exchange.get("exchangeName") or "").strip() or None
                     if reference_flow_name:
                         break
             matched_exchanges: list[dict[str, Any]] = []
-            for exchange in exchanges:
-                if not isinstance(exchange, dict):
-                    continue
+            process_exchange_total = len(exchanges)
+            for exchange_index, exchange in enumerate(exchanges, start=1):
                 name = str(exchange.get("exchangeName") or "").strip()
                 comment = _strip_exchange_comment_tags(exchange.get("generalComment")) or None
                 flow_type = _normalize_flow_type(exchange.get("flow_type")) or None
@@ -6747,7 +6766,32 @@ def _build_langgraph(
                         },
                     }
                 )
+
+                completed_exchanges += 1
+                elapsed_seconds = time.perf_counter() - progress_start
+                remaining = max(total_exchanges - completed_exchanges, 0)
+                eta_seconds = (elapsed_seconds / completed_exchanges * remaining) if completed_exchanges > 0 else None
+                LOGGER.info(
+                    "process_from_flow.match_flows_progress",
+                    process_id=process_id,
+                    process_index=process_index,
+                    process_total=total_processes,
+                    exchange_index=exchange_index,
+                    exchange_total=process_exchange_total,
+                    completed=completed_exchanges,
+                    total=total_exchanges,
+                    elapsed_seconds=round(elapsed_seconds, 2),
+                    eta_seconds=round(float(eta_seconds), 2) if eta_seconds is not None else None,
+                )
             matched.append({"process_id": process_id, "exchanges": matched_exchanges})
+
+        elapsed_total = time.perf_counter() - progress_start
+        LOGGER.info(
+            "process_from_flow.match_flows_completed",
+            process_total=total_processes,
+            exchange_total=total_exchanges,
+            elapsed_seconds=round(elapsed_total, 2),
+        )
         return {"matched_process_exchanges": matched}
 
     def align_exchange_units(state: ProcessFromFlowState) -> ProcessFromFlowState:

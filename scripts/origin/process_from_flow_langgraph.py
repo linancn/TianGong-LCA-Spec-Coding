@@ -67,6 +67,30 @@ PROCESS_FROM_FLOW_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
 LATEST_RUN_ID_PATH = PROCESS_FROM_FLOW_ARTIFACTS_ROOT / ".latest_run_id"
 DATABASE_TOOL_NAME = "Database_CRUD_Tool"
 
+_RUN_ID_SAFE_TOKEN_PATTERN = re.compile(r"[^0-9A-Za-z._-]+")
+
+
+def _run_id_token(value: str, fallback: str) -> str:
+    token = _RUN_ID_SAFE_TOKEN_PATTERN.sub("-", str(value or "").strip()).strip("-._")
+    return token or fallback
+
+
+def build_process_from_flow_run_id(flow_path: Path, operation: str = "produce") -> str:
+    """Build a stable run-id pattern for process_from_flow runs.
+
+    Pattern:
+      pfw_<flow_code>_<flow_uuid8>_<operation>_<UTC_TIMESTAMP>
+    Example:
+      pfw_01211_3a8d74d8_produce_20260211T184500Z
+    """
+
+    stem = flow_path.stem
+    parts = [part for part in stem.split("_") if str(part).strip()]
+    flow_code = _run_id_token(parts[0] if parts else "", "flow")
+    flow_uuid_short = _run_id_token(parts[1] if len(parts) > 1 else "", "unknown")[:8]
+    operation_token = "treat" if str(operation or "").strip().lower() == "treat" else "produce"
+    return f"pfw_{flow_code}_{flow_uuid_short}_{operation_token}_{generate_run_id()}"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -861,7 +885,7 @@ def main() -> None:
         else:
             raise SystemExit("Missing --run-id and no cached run marker found for --resume.")
     else:
-        run_id = args.run_id or generate_run_id()
+        run_id = args.run_id or build_process_from_flow_run_id(args.flow, args.operation)
 
     cache_dir = ensure_run_cache_dir(run_id)
     exports_dir = ensure_run_exports_dir(run_id)
