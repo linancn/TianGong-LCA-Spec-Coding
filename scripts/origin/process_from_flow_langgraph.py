@@ -887,6 +887,7 @@ def main() -> None:
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     os.environ["TIANGONG_PFF_MCP_SNAPSHOT_DIR"] = str(snapshot_dir)
     os.environ["TIANGONG_PFF_RUN_ID"] = run_id
+    os.environ["TIANGONG_PFF_STATE_PATH"] = str(state_path)
     input_dir = _ensure_run_input_dir(run_id)
     try:
         shutil.copy2(args.flow, input_dir / args.flow.name)

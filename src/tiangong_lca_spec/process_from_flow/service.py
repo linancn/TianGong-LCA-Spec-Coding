@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import csv
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -144,6 +145,9 @@ SI_XLSX_MAX_SHEETS = 3
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FLOWPROPERTY_DIR = _REPO_ROOT / "input_data" / "flowproperties"
 _UNIT_GROUP_DIR = _REPO_ROOT / "input_data" / "units"
+_PFF_RUNTIME_STATE_PATH_ENV = "TIANGONG_PFF_STATE_PATH"
+_PFF_RUNTIME_RUN_ID_ENV = "TIANGONG_PFF_RUN_ID"
+_PFF_RUNTIME_ARTIFACTS_ROOT = Path("artifacts/process_from_flow")
 
 
 @dataclass(frozen=True, slots=True)
@@ -3656,6 +3660,7 @@ class ProcessFromFlowState(TypedDict, total=False):
     process_datasets: list[dict[str, Any]]
     source_datasets: list[dict[str, Any]]
     source_references: list[dict[str, Any]]
+    placeholder_precheck: dict[str, Any]
     placeholder_report: list[dict[str, Any]]
     placeholder_resolutions: list[dict[str, Any]]
     placeholder_resolution_applied: bool
@@ -4182,6 +4187,165 @@ def _update_step_markers(state: ProcessFromFlowState, step_name: str) -> dict[st
     markers = dict(state.get("step_markers") or {})
     markers[step_name] = True
     return markers
+
+
+def _resolve_runtime_state_path() -> Path | None:
+    explicit_path = str(os.getenv(_PFF_RUNTIME_STATE_PATH_ENV) or "").strip()
+    if explicit_path:
+        return Path(explicit_path)
+    run_id = str(os.getenv(_PFF_RUNTIME_RUN_ID_ENV) or "").strip()
+    if not run_id:
+        return None
+    return _PFF_RUNTIME_ARTIFACTS_ROOT / run_id / "cache" / "process_from_flow_state.json"
+
+
+def _persist_runtime_state(state: ProcessFromFlowState, *, reason: str) -> None:
+    state_path = _resolve_runtime_state_path()
+    if state_path is None:
+        return
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(state, ensure_ascii=False, indent=2, default=str)
+        state_path.write_text(payload, encoding="utf-8")
+        LOGGER.info("process_from_flow.runtime_state_persisted", reason=reason, path=str(state_path))
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.warning(
+            "process_from_flow.runtime_state_persist_failed",
+            reason=reason,
+            path=str(state_path),
+            error=str(exc),
+        )
+
+
+def _empty_placeholder_precheck() -> dict[str, Any]:
+    return {
+        "placeholder_total": 0,
+        "matched_placeholder_total": 0,
+        "unmatched_placeholder_total": 0,
+        "cluster_total": 0,
+        "clusters": [],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _placeholder_cluster_key(
+    exchange_name: str | None,
+    *,
+    flow_type: str | None,
+    direction: str | None,
+    unit: str | None,
+    compartment: str | None,
+) -> tuple[str, str, str, str, str]:
+    normalized_name = _normalize_exchange_label(exchange_name)
+    normalized_name = re.sub(r"[^0-9a-z]+", " ", normalized_name).strip()
+    return (
+        normalized_name,
+        str(flow_type or "").strip().lower(),
+        str(direction or "").strip().lower(),
+        str(unit or "").strip().lower(),
+        str(compartment or "").strip().lower(),
+    )
+
+
+def _build_placeholder_precheck(
+    placeholders: list[dict[str, Any]],
+    match_index: dict[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any]:
+    if not placeholders:
+        return _empty_placeholder_precheck()
+
+    clusters: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    matched_total = 0
+    unmatched_total = 0
+    for entry in placeholders:
+        matched_exchange = _match_placeholder_exchange(entry, match_index)
+        exchange_name = str(entry.get("exchange_name") or "").strip() or None
+        comment = ""
+        flow_type = None
+        direction = str(entry.get("exchange_direction") or "").strip() or None
+        unit = None
+        expected_compartment = None
+        if isinstance(matched_exchange, dict):
+            matched_total += 1
+            exchange_name = str(matched_exchange.get("exchangeName") or exchange_name or "").strip() or exchange_name
+            comment = _strip_exchange_comment_tags(matched_exchange.get("generalComment"))
+            flow_type = _normalize_flow_type(matched_exchange.get("flow_type")) or str(matched_exchange.get("flow_type") or "").strip() or None
+            direction = str(matched_exchange.get("exchangeDirection") or direction or "").strip() or None
+            unit = str(matched_exchange.get("unit") or "").strip() or None
+            expected_compartment = _infer_media_suffix(f"{exchange_name or ''} {comment}")
+        else:
+            unmatched_total += 1
+
+        cluster_key = _placeholder_cluster_key(
+            exchange_name,
+            flow_type=flow_type,
+            direction=direction,
+            unit=unit,
+            compartment=expected_compartment,
+        )
+        cluster = clusters.get(cluster_key)
+        if cluster is None:
+            cluster = {
+                "cluster_key": "|".join(cluster_key),
+                "canonical_exchange_name": exchange_name,
+                "exchange_aliases": [],
+                "expected_flow_type": flow_type,
+                "exchange_direction": direction,
+                "unit": unit,
+                "expected_compartment": expected_compartment,
+                "placeholder_count": 0,
+                "matched_count": 0,
+                "unmatched_count": 0,
+                "process_ids": [],
+                "process_uuids": [],
+                "process_names": [],
+            }
+            clusters[cluster_key] = cluster
+
+        cluster["placeholder_count"] += 1
+        if isinstance(matched_exchange, dict):
+            cluster["matched_count"] += 1
+        else:
+            cluster["unmatched_count"] += 1
+
+        aliases = cluster.get("exchange_aliases")
+        if isinstance(aliases, list):
+            for alias in (entry.get("exchange_names") or []):
+                if not isinstance(alias, str):
+                    continue
+                text = alias.strip()
+                if text and text not in aliases:
+                    aliases.append(text)
+            if exchange_name and exchange_name not in aliases:
+                aliases.append(exchange_name)
+
+        for key, field in (
+            ("process_id", "process_ids"),
+            ("process_uuid", "process_uuids"),
+            ("process_name", "process_names"),
+        ):
+            value = str(entry.get(key) or "").strip()
+            if not value:
+                continue
+            bucket = cluster.get(field)
+            if isinstance(bucket, list) and value not in bucket:
+                bucket.append(value)
+
+    cluster_list = sorted(
+        list(clusters.values()),
+        key=lambda item: (
+            -int(item.get("placeholder_count") or 0),
+            str(item.get("canonical_exchange_name") or ""),
+        ),
+    )
+    return {
+        "placeholder_total": len(placeholders),
+        "matched_placeholder_total": matched_total,
+        "unmatched_placeholder_total": unmatched_total,
+        "cluster_total": len(cluster_list),
+        "clusters": cluster_list,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _clean_string_list(values: Any) -> list[str]:
@@ -6880,7 +7044,15 @@ def _build_langgraph(
             if crud_client:
                 crud_client.close()
 
-        return {"process_datasets": results}
+        step_markers = _update_step_markers(state, "process_datasets")
+        checkpoint_state: ProcessFromFlowState = dict(state)
+        checkpoint_state["process_datasets"] = results
+        checkpoint_state["step_markers"] = step_markers
+        _persist_runtime_state(checkpoint_state, reason="after_build_process_datasets")
+        return {
+            "process_datasets": results,
+            "step_markers": step_markers,
+        }
 
     def resolve_placeholders(state: ProcessFromFlowState) -> ProcessFromFlowState:
         if state.get("placeholder_resolution_applied"):
@@ -6888,18 +7060,38 @@ def _build_langgraph(
         process_datasets = state.get("process_datasets")
         matched_process_exchanges = state.get("matched_process_exchanges")
         if not isinstance(process_datasets, list) or not isinstance(matched_process_exchanges, list):
-            return {"placeholder_resolutions": [], "placeholder_resolution_applied": True}
-        updated_datasets = copy.deepcopy(process_datasets)
-        updated_matches = copy.deepcopy(matched_process_exchanges)
-        placeholders = _collect_placeholder_entries(state, process_datasets=updated_datasets)
-        if not placeholders:
+            precheck = _empty_placeholder_precheck()
             return {
+                "placeholder_precheck": precheck,
                 "placeholder_resolutions": [],
                 "placeholder_report": [],
                 "placeholder_resolution_applied": True,
                 "step_markers": _update_step_markers(state, "placeholders"),
             }
+        updated_datasets = copy.deepcopy(process_datasets)
+        updated_matches = copy.deepcopy(matched_process_exchanges)
+        placeholders = _collect_placeholder_entries(state, process_datasets=updated_datasets)
         match_index = _index_matched_exchanges(updated_matches)
+        precheck = _build_placeholder_precheck(placeholders, match_index)
+        LOGGER.info(
+            "process_from_flow.placeholder_precheck",
+            placeholder_total=int(precheck.get("placeholder_total") or 0),
+            cluster_total=int(precheck.get("cluster_total") or 0),
+            unmatched_placeholder_total=int(precheck.get("unmatched_placeholder_total") or 0),
+        )
+        checkpoint_state: ProcessFromFlowState = dict(state)
+        checkpoint_state["process_datasets"] = updated_datasets
+        checkpoint_state["matched_process_exchanges"] = updated_matches
+        checkpoint_state["placeholder_precheck"] = precheck
+        _persist_runtime_state(checkpoint_state, reason="before_resolve_placeholders")
+        if not placeholders:
+            return {
+                "placeholder_precheck": precheck,
+                "placeholder_resolutions": [],
+                "placeholder_report": [],
+                "placeholder_resolution_applied": True,
+                "step_markers": _update_step_markers(state, "placeholders"),
+            }
         resolutions: list[dict[str, Any]] = []
         rewrite_cache: dict[str, list[str]] = {}
         for entry in placeholders:
@@ -7092,6 +7284,7 @@ def _build_langgraph(
         return {
             "matched_process_exchanges": updated_matches,
             "process_datasets": updated_datasets,
+            "placeholder_precheck": precheck,
             "placeholder_resolutions": resolutions,
             "placeholder_report": resolutions,
             "placeholder_resolution_applied": True,
