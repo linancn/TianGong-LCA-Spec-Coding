@@ -4188,6 +4188,67 @@ def _flow_dataset_version(flow_dataset: dict[str, Any]) -> str | None:
     return version or None
 
 
+def _build_reference_from_selected_flow(
+    *,
+    selected_uuid: str,
+    selected_version: str | None,
+    selected_base_name: str | None,
+    fallback_name: str,
+    crud_client: DatabaseCrudClient | None,
+    flow_cache: dict[tuple[str, str | None], dict[str, Any]],
+    translator: Translator | None = None,
+    stage: str = "process_from_flow",
+) -> tuple[GlobalReferenceTypeVariant0, FlowReferenceInfo | None, str | None]:
+    flow_uuid = str(selected_uuid or "").strip()
+    if not flow_uuid:
+        raise ValueError("Selected flow UUID is required.")
+
+    version_hint = str(selected_version).strip() if selected_version is not None else None
+    if version_hint == "":
+        version_hint = None
+
+    cache_key = (flow_uuid, version_hint)
+    cached = flow_cache.get(cache_key)
+    if cached is None:
+        flow_dataset = None
+        if crud_client:
+            try:
+                flow_dataset = crud_client.select_flow(flow_uuid, version=version_hint)
+            except Exception as exc:  # pylint: disable=broad-except
+                LOGGER.warning(
+                    "process_from_flow.flow_select_failed",
+                    flow_id=flow_uuid,
+                    version=version_hint,
+                    stage=stage,
+                    error=str(exc),
+                )
+        short_desc = _flow_short_description_from_dataset(flow_dataset) if flow_dataset else None
+        version_override = _flow_dataset_version(flow_dataset) if flow_dataset else None
+        reference_info = _flow_reference_info_from_dataset(flow_dataset)
+        cached = {
+            "short_description": short_desc,
+            "version": version_override,
+            "reference_info": reference_info,
+        }
+        flow_cache[cache_key] = cached
+
+    resolved_version = str(cached.get("version") or version_hint or "").strip() or None
+    candidate = FlowCandidate(
+        uuid=flow_uuid,
+        base_name=str(selected_base_name or fallback_name or "Unnamed flow"),
+        version=resolved_version,
+    )
+    reference = _candidate_reference(
+        candidate,
+        translator=translator,
+        short_description=cached.get("short_description"),
+    )
+    reference_info = cached.get("reference_info")
+    if not isinstance(reference_info, FlowReferenceInfo):
+        reference_info = None
+    return reference, reference_info, resolved_version
+
+
 def _update_step_markers(state: ProcessFromFlowState, step_name: str) -> dict[str, bool]:
     markers = dict(state.get("step_markers") or {})
     markers[step_name] = True
@@ -6965,43 +7026,16 @@ def _build_langgraph(
                                     selected_base_name = cand.get("base_name")
                                     break
                     if selected_uuid:
-                        flow_uuid = str(selected_uuid)
-                        selected_version_value = str(selected_version).strip() if selected_version is not None else None
-                        if selected_version_value == "":
-                            selected_version_value = None
-                        cache_key = (flow_uuid, selected_version_value)
-                        cached = flow_cache.get(cache_key)
-                        if cached is None:
-                            flow_dataset = None
-                            if crud_client:
-                                try:
-                                    flow_dataset = crud_client.select_flow(flow_uuid, version=selected_version_value)
-                                except Exception as exc:  # pylint: disable=broad-except
-                                    LOGGER.warning(
-                                        "process_from_flow.flow_select_failed",
-                                        flow_id=flow_uuid,
-                                        error=str(exc),
-                                    )
-                            short_desc = _flow_short_description_from_dataset(flow_dataset) if flow_dataset else None
-                            version_override = _flow_dataset_version(flow_dataset) if flow_dataset else None
-                            reference_info = _flow_reference_info_from_dataset(flow_dataset)
-                            cached = {
-                                "short_description": short_desc,
-                                "version": version_override,
-                                "reference_info": reference_info,
-                            }
-                            flow_cache[cache_key] = cached
-                        candidate = FlowCandidate(
-                            uuid=flow_uuid,
-                            base_name=str(selected_base_name or name),
-                            version=str(cached.get("version") or selected_version_value) if (cached.get("version") or selected_version_value) else None,
-                        )
-                        reference = _candidate_reference(
-                            candidate,
+                        reference, reference_info, _ = _build_reference_from_selected_flow(
+                            selected_uuid=str(selected_uuid),
+                            selected_version=str(selected_version).strip() if selected_version is not None else None,
+                            selected_base_name=str(selected_base_name or name),
+                            fallback_name=name,
+                            crud_client=crud_client,
+                            flow_cache=flow_cache,
                             translator=translator,
-                            short_description=cached.get("short_description"),
+                            stage="build_process_datasets",
                         )
-                        reference_info = cached.get("reference_info")
                     else:
                         reference = _placeholder_flow_reference(name, translator=translator)
                         reference_info = None
@@ -7270,11 +7304,18 @@ def _build_langgraph(
             }
         resolutions: list[dict[str, Any]] = []
         flow_search_client: FlowSearchClient | None = None
+        crud_client: DatabaseCrudClient | None = None
+        flow_reference_cache: dict[tuple[str, str | None], dict[str, Any]] = {}
         try:
             flow_search_client = FlowSearchClient(settings=settings)
         except Exception as exc:  # pylint: disable=broad-except
             LOGGER.warning("process_from_flow.placeholder_flow_search_client_failed", error=str(exc))
             flow_search_client = None
+        try:
+            crud_client = DatabaseCrudClient(settings)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning("process_from_flow.placeholder_crud_init_failed", error=str(exc))
+            crud_client = None
         try:
             for entry in placeholders:
                 matched_exchange = _match_placeholder_exchange(entry, match_index)
@@ -7351,6 +7392,7 @@ def _build_langgraph(
                 selected_reason: str | None = None
                 selected_confidence: float | None = None
                 selected_strategy: str | None = None
+                selected_version: str | None = None
                 if selection_candidates:
                     llm_uuid, llm_reason, llm_confidence = _select_placeholder_uuid_with_llm(
                         llm=llm,
@@ -7421,13 +7463,35 @@ def _build_langgraph(
                 if selected is not None:
                     flow_search["selected_uuid"] = selected.uuid
                     flow_search["selected_reason"] = selected_reason
+                    selected_version = str(selected.version or "").strip() or None
+                    if selected_version:
+                        flow_search["selected_version"] = selected_version
                 matched_exchange["flow_search"] = flow_search
 
                 if selected is not None:
                     process_index = entry.get("process_index")
                     exchange_index = entry.get("exchange_index")
                     if isinstance(process_index, int) and isinstance(exchange_index, int):
-                        reference = _candidate_reference(selected, translator=translator)
+                        try:
+                            reference, _, resolved_version = _build_reference_from_selected_flow(
+                                selected_uuid=str(selected.uuid or ""),
+                                selected_version=str(selected.version).strip() if selected.version is not None else None,
+                                selected_base_name=str(selected.base_name or exchange_name),
+                                fallback_name=exchange_name or str(entry.get("exchange_name") or "unknown_exchange"),
+                                crud_client=crud_client,
+                                flow_cache=flow_reference_cache,
+                                translator=translator,
+                                stage="resolve_placeholders",
+                            )
+                            selected_version = resolved_version or selected_version
+                        except Exception as exc:  # pylint: disable=broad-except
+                            LOGGER.warning(
+                                "process_from_flow.placeholder_reference_build_failed",
+                                exchange=exchange_name,
+                                flow_uuid=str(selected.uuid or ""),
+                                error=str(exc),
+                            )
+                            reference = _candidate_reference(selected, translator=translator)
                         reference_payload = reference.model_dump(mode="json", by_alias=True, exclude_none=True)
                         try:
                             updated_exchange = updated_datasets[process_index].get("processDataSet", {}).get("exchanges", {}).get("exchange", [])[exchange_index]
@@ -7440,6 +7504,8 @@ def _build_langgraph(
                                 exchange_index=exchange_index,
                                 error=str(exc),
                             )
+                        if selected_version:
+                            flow_search["selected_version"] = selected_version
 
                 resolutions.append(
                     {
@@ -7451,6 +7517,7 @@ def _build_langgraph(
                         "resolution_reason": selected_reason,
                         "resolution_confidence": selected_confidence,
                         "selected_uuid": selected.uuid if selected is not None else None,
+                        "selected_version": selected_version,
                         "candidate_list": candidate_list,
                         "candidate_list_raw": raw_candidate_list,
                         "filters": filter_info,
@@ -7471,6 +7538,8 @@ def _build_langgraph(
         finally:
             if flow_search_client is not None:
                 flow_search_client.close()
+            if crud_client is not None:
+                crud_client.close()
         return {
             "matched_process_exchanges": updated_matches,
             "process_datasets": updated_datasets,
