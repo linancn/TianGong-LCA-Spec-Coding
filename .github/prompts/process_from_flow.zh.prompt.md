@@ -147,10 +147,14 @@
 ### 运行要点
 - `process_from_flow_workflow.py` 不提供 `--no-llm` 参数（Step 1b/1e 需要 LLM），如需无 LLM 调试请直接使用 `process_from_flow_langgraph.py --no-llm`。
 - `--min-si-hint` 控制 SI 下载阈值（none|possible|likely），可配 `--si-max-links`/`--si-timeout`。
+- 默认 run_id 命名（未显式传 `--run-id` 时）：`pfw_<flow_code>_<flow_uuid8>_<operation>_<UTC_TIMESTAMP>`（例如 `pfw_01211_3a8d74d8_produce_20260211T105022Z`）。
 - `process_from_flow_langgraph.py` 的 `--stop-after datasets` 等价完整跑完（含占位符补全）后写出 datasets；其他值会提前停并保存 state。
+- `process_from_flow_workflow.py` 会固定写入按 run 分组的阶段日志：`artifacts/process_from_flow/<run_id>/cache/workflow_logs/*.log`，并输出计时报表 `artifacts/process_from_flow/<run_id>/cache/workflow_timing_report.json`。
+- `process_from_flow_workflow.py` 在 stderr 输出阶段进度（`stage x/y`、elapsed、ETA、log 路径）；`match_flows` 会输出 exchange 级进度（completed/total + ETA）。
 - `--allow-density-conversion` 允许 LLM 基于技术描述估计密度并进行 mass↔volume 换算（仅 product/waste flow）。
 - 占位符补全默认仅执行一次；需重跑时手动清空 `placeholder_resolution_applied`/`placeholder_resolutions` 后再 `--resume`。
 - `process_from_flow_workflow.py` 在 resume 前会清理 state 中的 `stop_after`，避免主流程被提前截断。
+- `--stop-after matches` 会在 Step 4 结束后停止，不会生成 `process_datasets`/`source_datasets`，因此也不会导出 `exports/flows`。
 
 ## 状态字段（state）
 - 输入与上下文：`flow_path`、`flow_dataset`、`flow_summary`、`operation`、`scientific_references`。
@@ -183,6 +187,11 @@
 ## 产出与调试
 - 运行输出目录：`artifacts/process_from_flow/<run_id>/`（`input/`、`cache/`、`exports/`）。
 - 状态文件：`cache/process_from_flow_state.json`。
+- 阶段日志：`cache/workflow_logs/*.log`。
+- 计时报表：`cache/workflow_timing_report.json`。
+- MCP 调用快照：`cache/mcp_snapshots/*.jsonl`。
+- Flow select 缓存：`cache/flow_select_cache.json`（同一 flow UUID/version 首次走远端 CRUD，后续优先本地命中；同 run 恢复运行时可复用）。
+- `exports/flows` 来源于最终 process 引用（`referenceToFlowDataSet`）的导出，不是所有搜索候选的全集落盘。
 - 占位符报告：`cache/placeholder_report.json`（来自 `resolve_placeholders` 或 `process_from_flow_placeholder_report.py`）。
 - 恢复/补写：`uv run python scripts/origin/process_from_flow_langgraph.py --resume --run-id <run_id>`。
 - maintenance 补写 source：`uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`。
@@ -256,11 +265,17 @@ timeout = 180
 - `process_from_flow.search_references`：文献检索成功（记录查询与结果数）。
 - `process_from_flow.search_references_failed`：文献检索失败（记录错误但不中断）。
 - `process_from_flow.mcp_client_closed`：MCP 客户端正常关闭。
+- `process_from_flow.match_flows_started`：flow 匹配开始（包含 process/exchange 总数）。
+- `process_from_flow.match_flows_progress`：逐 exchange 匹配进度（`completed/total`、elapsed、ETA）。
+- `process_from_flow.match_flows_completed`：flow 匹配结束（包含总耗时）。
+- `crud.select_flow_record_cache_hit`：flow 详情命中本地 run 缓存。
+- `crud.select_flow_cache_flushed`：flow select 缓存已落盘（`flow_select_cache.json`）。
 
 ### 性能影响
 - 每次文献检索通常约 1-2 秒（受网络与服务负载影响）。
 - Step 1b 全文拉取耗时与 DOI 数量、extK 相关。
-- 完整工作流通常增加约 3-6 秒（不含额外全文抓取时长，且会随环境波动）。
+- 端到端耗时主要受远端调用（KB 检索、flow search、CRUD select、LLM）影响，通常是分钟级；Step 4 匹配常为最长阶段。
+- 以 `cache/workflow_timing_report.json` 作为单次运行各阶段耗时的准确信息源。
 
 ### 测试
 ```bash

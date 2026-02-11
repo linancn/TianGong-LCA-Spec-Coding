@@ -140,10 +140,14 @@
 ### Run Notes
 - `process_from_flow_workflow.py` does not expose `--no-llm` (Step 1b/1e require LLM); use `process_from_flow_langgraph.py --no-llm` for deterministic debugging.
 - `--min-si-hint` controls SI download threshold (none|possible|likely), with `--si-max-links`/`--si-timeout`.
+- Default run-id naming (when `--run-id` is omitted): `pfw_<flow_code>_<flow_uuid8>_<operation>_<UTC_TIMESTAMP>` (e.g., `pfw_01211_3a8d74d8_produce_20260211T105022Z`).
 - `process_from_flow_langgraph.py --stop-after datasets` means run through dataset writeout; other values stop early and save state.
+- `process_from_flow_workflow.py` writes fixed per-run logs to `artifacts/process_from_flow/<run_id>/cache/workflow_logs/*.log` and timing summary to `artifacts/process_from_flow/<run_id>/cache/workflow_timing_report.json`.
+- `process_from_flow_workflow.py` prints stage progress in stderr (`stage x/y`, elapsed, ETA, log path); `match_flows` logs exchange-level progress with completed/total and ETA.
 - `--allow-density-conversion` enables LLM density estimates for mass<->volume mismatches (product/waste flows only).
 - Placeholder resolution runs once by default; to re-run, clear `placeholder_resolution_applied`/`placeholder_resolutions` then `--resume`.
 - `process_from_flow_workflow.py` clears `stop_after` before resuming the main pipeline.
+- `--stop-after matches` ends after Step 4 matching; it does not produce `process_datasets`/`source_datasets`, and therefore does not export `exports/flows`.
 
 ## State Fields (state)
 - Input/context: `flow_path`, `flow_dataset`, `flow_summary`, `operation`, `scientific_references`.
@@ -176,6 +180,11 @@
 ## Outputs and Debugging
 - Output root: `artifacts/process_from_flow/<run_id>/` with `input/`, `cache/`, and `exports/`.
 - State file: `cache/process_from_flow_state.json`.
+- Workflow stage logs: `cache/workflow_logs/*.log`.
+- Workflow timing report: `cache/workflow_timing_report.json`.
+- MCP call snapshots: `cache/mcp_snapshots/*.jsonl`.
+- Flow select cache: `cache/flow_select_cache.json` (first remote CRUD select per flow UUID/version, then local cache hits within and across resumed runs using the same run cache).
+- `exports/flows` is generated from final process references (`referenceToFlowDataSet`) after datasets are built/published; it is not a dump of all search candidates.
 - Placeholder report: `cache/placeholder_report.json` (from `resolve_placeholders` or `process_from_flow_placeholder_report.py`).
 - Resume: `uv run python scripts/origin/process_from_flow_langgraph.py --resume --run-id <run_id>`.
 - Maintenance backfill sources: `uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`.
@@ -244,11 +253,17 @@ If not configured or invalid, the workflow falls back to LLM common sense only.
 - `process_from_flow.search_references`: literature search succeeded (query + count)
 - `process_from_flow.search_references_failed`: literature search failed (non-blocking)
 - `process_from_flow.mcp_client_closed`: MCP client closed
+- `process_from_flow.match_flows_started`: flow matching starts with process/exchange totals
+- `process_from_flow.match_flows_progress`: per-exchange matching progress (`completed/total`, elapsed, ETA)
+- `process_from_flow.match_flows_completed`: flow matching finished with total elapsed
+- `crud.select_flow_record_cache_hit`: selected flow record served from local run cache
+- `crud.select_flow_cache_flushed`: flow select cache persisted to disk (`flow_select_cache.json`)
 
 ### Performance
 - Each literature search typically takes ~1-2 seconds (depends on network and service load).
 - Step 1b fulltext time depends on DOI count and extK.
-- Full workflow typically adds ~3-6 seconds (excluding extra fulltext retrieval; may vary by environment).
+- End-to-end runtime is usually dominated by remote calls (KB search, flow search, CRUD select, LLM) and can take minutes; Step 4 matching is often the longest stage.
+- Use `cache/workflow_timing_report.json` as the source of truth for per-stage timing in each run.
 
 ### Testing
 ```bash
