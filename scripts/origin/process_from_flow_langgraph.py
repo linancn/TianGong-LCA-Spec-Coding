@@ -700,46 +700,18 @@ def _export_referenced_flows_from_processes(
     if not refs:
         return []
 
-    from tiangong_lca_spec.core.config import get_settings
-    from tiangong_lca_spec.core.mcp_client import MCPToolClient
+    from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 
     flows_dir = exports_dir / "flows"
     flows_dir.mkdir(parents=True, exist_ok=True)
-    settings = get_settings()
-    server_name = settings.flow_search_service_name
     written: list[Path] = []
     failed: list[tuple[str, str | None, str]] = []
 
-    def _extract_flow_dataset(raw: Any) -> Mapping[str, Any] | None:
-        if not isinstance(raw, Mapping):
-            return None
-        if isinstance(raw.get("flowDataSet"), Mapping):
-            return raw.get("flowDataSet")
-        data = raw.get("data")
-        if isinstance(data, list) and data:
-            first = data[0] if isinstance(data[0], Mapping) else None
-            if isinstance(first, Mapping):
-                for key in ("json_ordered", "json"):
-                    payload = first.get(key)
-                    if isinstance(payload, Mapping) and isinstance(payload.get("flowDataSet"), Mapping):
-                        return payload.get("flowDataSet")
-        return None
-
-    with MCPToolClient(settings) as client:
+    client = DatabaseCrudClient()
+    try:
         for flow_uuid, version in refs:
-            payload: dict[str, Any] = {"operation": "select", "table": "flows", "id": flow_uuid}
-            if version:
-                payload["version"] = version
             try:
-                raw = client.invoke_json_tool(server_name, DATABASE_TOOL_NAME, payload)
-                dataset = _extract_flow_dataset(raw)
-                if dataset is None and version:
-                    raw = client.invoke_json_tool(
-                        server_name,
-                        DATABASE_TOOL_NAME,
-                        {"operation": "select", "table": "flows", "id": flow_uuid},
-                    )
-                    dataset = _extract_flow_dataset(raw)
+                dataset = client.select_flow(flow_uuid, version=version)
             except Exception as exc:  # noqa: BLE001
                 failed.append((flow_uuid, version, str(exc)))
                 continue
@@ -754,6 +726,8 @@ def _export_referenced_flows_from_processes(
             target = flows_dir / filename
             dump_json({"flowDataSet": dict(dataset)}, target)
             written.append(target)
+    finally:
+        client.close()
 
     if written:
         print(f"Fetched {len(written)} referenced flow dataset(s) via CRUD into {flows_dir}", file=sys.stderr)
@@ -853,6 +827,10 @@ def main() -> None:
         return
     if args.publish_only:
         run_id = _resolve_run_id(args.run_id)
+        cache_dir = ensure_run_cache_dir(run_id)
+        os.environ["TIANGONG_PFF_RUN_ID"] = run_id
+        os.environ["TIANGONG_PFF_STATE_PATH"] = str(cache_dir / "process_from_flow_state.json")
+        os.environ.setdefault("TIANGONG_PFF_FLOW_CACHE_PATH", str(cache_dir / "flow_select_cache.json"))
         exports_dir = ensure_run_exports_dir(run_id)
         if not args.skip_balance_check:
             _enforce_balance_quality_gate(run_id)

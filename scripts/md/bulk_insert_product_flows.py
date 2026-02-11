@@ -33,6 +33,7 @@ from typing import Any, Iterable
 from tiangong_lca_spec.core.config import get_settings
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
 from tiangong_lca_spec.product_flow_creation import ProductFlowCreateRequest, ProductFlowCreationService
+from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 
 # ---------------------------- Data structures ---------------------------- #
 
@@ -182,10 +183,12 @@ def main(argv: list[str] | None = None) -> int:
     schema_path = args.schema or (res.files("tidas_tools.tidas.schemas") / "tidas_flows_product_category.json")
 
     if args.select_id:
-        payload = {"operation": "select", "table": "flows", "id": args.select_id}
-        with MCPToolClient(settings) as client:
-            result = client.invoke_json_tool(settings.flow_search_service_name, "Database_CRUD_Tool", payload)
+        crud = DatabaseCrudClient(settings)
+        try:
+            result = crud.select_flow_record(args.select_id)
             print(json.dumps(result, ensure_ascii=False, indent=2))
+        finally:
+            crud.close()
         return 0
 
     if not args.input:
