@@ -1,147 +1,54 @@
-# Product Flow Insert Quickrun / 产品流快速入库指引
+# Product Flow Manual Insert Guide (Manual Adapter)
 
-本文总结了使用 `tiangong_lca_remote` 的 `Database_CRUD_Tool` 直接入库单条产品流的最简流程，避免不必要的重试和循环。每次仅调用一次 MCP，确认成功后再处理下一条。
+This document is the runbook for creating/publishing **new product flows** manually or semi-automatically.  
+It maps to the unified architecture as `manual_insert_adapter`, not the `process_from_flow` main pipeline.
 
-## 步骤（中文）
-1. 准备环境  
-   - 确认 `.secrets/secrets.toml` 中已配置 `[tiangong_lca_remote]`（url/service_name/tool_name/api_key）。  
-   - 所有 Python 命令都用 `uv run python ...`。
-2. 查分类路径（避免人工找错）  
-   ```bash
-   uv run python - <<'PY'
-   import json, importlib.resources as res
-   from dataclasses import dataclass
-   from collections import defaultdict
+## Scope
+- In scope: manual new-flow creation and controlled update/insert operations.
+- Out of scope: `process_from_flow` orchestration, Stage3 alignment flow, JSON-LD extraction pipeline.
 
-   target = "01132"  # 替换为目标 class_id
-   path = res.files("tidas_tools.tidas.schemas") / "tidas_flows_product_category.json"
-   doc = json.loads(path.read_text())
+## Relation to other files
+- This file: rule source (what must be true before publish).
+- `scripts/md/bulk_insert_product_flows.py`: current batch execution adapter.
+- `scripts/product_flow/product_flow_sdk_insert.py`: classification-driven adapter.
+- `src/tiangong_lca_spec/product_flow_creation/service.py`: shared `ProductFlowCreationService` (single builder for ILCD assembly + `tidas_sdk` validation).
+- `src/tiangong_lca_spec/product_flow_creation/dedup.py`: shared `FlowDedupService` for pre-publish action decisions (`insert`/`update`/`reuse`), currently used by the `FlowPublisher` publish path.
+- `src/tiangong_lca_spec/publishing/crud.py` and `src/tiangong_lca_spec/workflow/artifacts.py`: wired to the same builder for publish/export chains; publish path uses dedup decisions.
+- `scripts/origin/process_from_flow_langgraph.py`: process-from-flow mainline (different task).
 
-   @dataclass
-   class Entry: level:int; code:str; desc:str
-   entries=[]
-   for item in doc.get("oneOf", []):
-       props=item.get("properties", {})
-       code = next((props.get(k, {}).get("const") for k in ("@classId","@catId","@code") if props.get(k)), None)
-       level = props.get("@level", {}).get("const")
-       desc = props.get("#text", {}).get("const","")
-       if code and level is not None:
-           entries.append(Entry(int(level), str(code), str(desc)))
-   child_map=defaultdict(list); roots=[]; last={}
-   for e in entries:
-       if e.level==0:
-           roots.append(e); child_map[""].append(e)
-       else:
-           t=e.level-1; parent=None
-           while t>=0 and parent is None:
-               parent=last.get(t); t-=1
-           if parent: child_map[parent.code].append(e)
-       last[e.level]=e
-   def find(node):
-       if node.code==target: return [node]
-       for c in child_map.get(node.code, []):
-           r=find(c)
-           if r: return [node]+r
-   for r in roots:
-       path_seq=find(r)
-       if path_seq:
-           for n in path_seq: print(f"{n.level} {n.code} {n.desc}")
-           break
-   PY
-   ```
-3. 填写名称/同义词/注释  
-   - baseName 中英各一条；可用 `leaf_name`/`leaf_name_zh` 作为默认名称。treatment/mix 选最贴合的技术表述。  
-   - `common:synonyms` 英/中文各一条，避免空数组。  
-   - `common:generalComment` 使用来源描述，保持英文。  
-   - 默认流属性用 Mass（UUID `93a60a56-a3c8-11da-a746-0800200b9a66`），`meanValue` 设为 1.0。
-4. 构造并调用 MCP（单次执行）  
-   ```bash
-   uv run python - <<'PY'
-   import json
-   from uuid import uuid4
-   from datetime import datetime, timezone
-   from tiangong_lca_spec.core.config import get_settings
-   from tiangong_lca_spec.core.constants import build_dataset_format_reference
-   from tiangong_lca_spec.core.uris import build_local_dataset_uri
-   from tiangong_lca_spec.core.mcp_client import MCPToolClient
+## Hard constraints
+1. Classification path must come from `tidas_flows_product_category.json` (no guessing).
+2. `classificationInformation` is mandatory.
+3. `common:synonyms` must include both EN and ZH entries; fallback to `baseName` if missing.
+4. Default flow property is Mass (`93a60a56-a3c8-11da-a746-0800200b9a66`, `meanValue=1.0`).
+5. Current `bulk_insert_product_flows.py --commit` behavior is direct `insert`; if you need `reuse/update`, run `--select-id` first or publish through the `FlowPublisher` path.
+6. One publish action per record; fix payload before retrying. No blind retry loops.
 
-   def lang(text, lang="en"): return {"@xml:lang": lang, "#text": text}
-   def contact_ref():
-       uuid="f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"; ver="01.00.000"
-       return {"@type":"contact data set","@refObjectId":uuid,"@uri":build_local_dataset_uri("contact data set",uuid,ver),"@version":ver,"common:shortDescription":[lang("Tiangong LCA Data Working Group","en"),lang("天工LCA数据团队","zh")]}
-   def compliance_ref():
-       uuid="d92a1a12-2545-49e2-a585-55c259997756"; ver="20.20.002"
-       return {"common:referenceToComplianceSystem":{"@refObjectId":uuid,"@type":"source data set","@uri":build_local_dataset_uri("source",uuid,ver),"@version":ver,"common:shortDescription":lang("ILCD Data Network - Entry-level","en")},"common:approvalOfOverallCompliance":"Fully compliant"}
+## Current execution entry
+`scripts/md/bulk_insert_product_flows.py`
 
-   settings=get_settings()
-   flow_uuid=str(uuid4()); version="01.01.000"; ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-   classification=[  # 替换为上一步的路径
-       {"@level":"0","@classId":"0","#text":"Agriculture, forestry and fishery products"},
-       {"@level":"1","@classId":"01","#text":"Products of agriculture, horticulture and market gardening"},
-       {"@level":"2","@classId":"011","#text":"Cereals"},
-       {"@level":"3","@classId":"0113","#text":"Rice"},
-       {"@level":"4","@classId":"01132","#text":"Rice paddy, other (not husked)"},
-   ]
-   description=("This subclass includes:\\n- rice, species of Oryza, mainly Oryza sativa, not husked\\n"
-                "This subclass does not include:\\n- rice grown specifically for seed purposes, cf. 01131\\n"
-                "- semi-milled or wholly milled rice, whether or not polished or glazed, cf. 23161\\n"
-                "- broken rice, cf. 23161\\n- husked rice, cf. 23162")
-   flow_dataset={
-       "@xmlns":"http://lca.jrc.it/ILCD/Flow","@xmlns:common":"http://lca.jrc.it/ILCD/Common",
-       "@xmlns:ecn":"http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber","@xmlns:xsi":"http://www.w3.org/2001/XMLSchema-instance",
-       "@locations":"../ILCDLocations.xml","@version":"1.1","@xsi:schemaLocation":"http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
-       "flowInformation":{"dataSetInformation":{
-           "common:UUID":flow_uuid,
-           "name":{"baseName":[lang("Rice paddy, other (not husked)","en"),lang("稻谷（未脱壳，其他）","zh")],
-                   "treatmentStandardsRoutes":[lang("Unhusked paddy rice, field harvested","en")],
-                   "mixAndLocationTypes":[lang("Production mix, at farm gate","en")]},
-           "common:synonyms":[lang("Paddy rice; Unhusked rice; Raw rice grain","en"),lang("稻谷; 未脱壳稻米","zh")],
-           "common:generalComment":[lang(description,"en")],
-           "classificationInformation":{"common:classification":{"common:class":classification}},
-       },"quantitativeReference":{"referenceToReferenceFlowProperty":"0"}},
-       "modellingAndValidation":{"LCIMethod":{"typeOfDataSet":"Product flow"},"complianceDeclarations":compliance_ref()},
-       "administrativeInformation":{"dataEntryBy":{"common:timeStamp":ts,"common:referenceToDataSetFormat":build_dataset_format_reference(),"common:referenceToPersonOrEntityEnteringTheData":contact_ref()},
-           "publicationAndOwnership":{"common:dataSetVersion":version,"common:referenceToOwnershipOfDataSet":contact_ref()}},
-       "flowProperties":{"flowProperty":{"@dataSetInternalID":"0","meanValue":"1.0","referenceToFlowPropertyDataSet":{"@type":"flow property data set","@refObjectId":"93a60a56-a3c8-11da-a746-0800200b9a66","@uri":"../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml","@version":"03.00.003","common:shortDescription":lang("Mass","en")}}}
-   }
-   payload={"operation":"insert","table":"flows","id":flow_uuid,"jsonOrdered":{"flowDataSet":flow_dataset}}
+- Technical route: convert input into `ProductFlowCreateRequest`, then call `ProductFlowCreationService` for ILCD assembly and `tidas_sdk.create_flow(validate=True)` normalization before CRUD publish (no unvalidated raw JSON direct-post).
 
-   client=None
-   try:
-       client=MCPToolClient(settings)
-       result=client.invoke_json_tool(settings.flow_search_service_name,"Database_CRUD_Tool",payload)
-       print(json.dumps({"status":"success","id":flow_uuid,"version":version,"result":result},ensure_ascii=False,indent=2))
-   finally:
-       if client: client.close()
-   PY
-   ```
-5. 单条校验（可选）  
-   - 若需确认，可再用一次 `operation=select` 查询刚插入的 `id`。  
-   - 避免反复 insert 同一 UUID；重复插入会触发更新逻辑，若需改写请显式走 `update`。
-
-### 批量执行（`scripts/md/bulk_insert_product_flows.py`）
-- 输入：JSON/JSONL 数组，字段支持 `class_id`、`leaf_name`、`leaf_name_zh`、`desc`，可选 `base_en`、`base_zh`、`en_synonyms`、`zh_synonyms`、`treatment`、`mix`、`comment`。  
-- 运行（默认 dry-run）：  
+- Input:
+  - Required: `class_id`, `leaf_name`
+  - Recommended: `leaf_name_zh`, `desc`
+  - Optional overrides: `base_en`, `base_zh`, `en_synonyms`, `zh_synonyms`, `treatment`, `mix`, `comment`
+- Run:
   ```bash
-  uv run python scripts/md/bulk_insert_product_flows.py --input flow_class_with_desc.json
-  ```  
-  实际入库加 `--commit`，日志写入 `artifacts/bulk_insert_product_flows_log.csv`。
-  如需查询已入库：`--select-id <uuid>`。
+  uv run python scripts/md/bulk_insert_product_flows.py --input <json_or_jsonl>
+  uv run python scripts/md/bulk_insert_product_flows.py --input <json_or_jsonl> --commit
+  ```
+- Query:
+  ```bash
+  uv run python scripts/md/bulk_insert_product_flows.py --select-id <uuid>
+  ```
 
-## Steps (English)
-1. Prepare env: ensure `.secrets/secrets.toml` has `tiangong_lca_remote` creds; run Python via `uv run`.  
-2. Get classification path with the snippet above; never guess codes manually.  
-3. Populate names/synonyms/comment: bilingual `baseName` (fallback to `leaf_name`/`leaf_name_zh`), meaningful treatment/mix, English generalComment from source text; keep Mass property (UUID `93a60a56-a3c8-11da-a746-0800200b9a66`, meanValue `1.0`).  
-4. Build one payload and call `Database_CRUD_Tool` once using the Python template; do not loop or retry unless the call fails.  
-5. Optional: run a `select` by `id` to confirm. Use `update` only when changing an existing UUID; otherwise generate a new UUID per flow.
+## Pre-publish checklist
+- Classification path is complete and level-ordered.
+- `baseName` / `treatment` / `mix` are clear and semicolon-free.
+- EN/ZH synonyms are both present and non-empty.
+- `common:generalComment` is traceable to evidence.
+- Action is explicit (`insert` vs `update`) to avoid duplicate UUID misuse.
 
-### Batch mode (`scripts/md/bulk_insert_product_flows.py`)
-- Input JSON/JSONL supports `class_id`, `leaf_name`, `leaf_name_zh`, `desc`, optional `base_en`, `base_zh`, `en_synonyms`, `zh_synonyms`, `treatment`, `mix`, `comment`.  
-- Dry-run: `uv run python scripts/md/bulk_insert_product_flows.py --input flow_class_with_desc.json`  
-  Add `--commit` to publish; log at `artifacts/bulk_insert_product_flows_log.csv`.  
-  Use `--select-id <uuid>` to fetch an existing record.
-
-## 常见避免项 / Avoid
-- 不要在失败后盲目重跑同一 insert；先检查 creds、payload 结构或 UUID 冲突。  
-- 不要在 Stage 3 流程里触发 alignment，这里只做直接入库。  
-- 不要留空 `common:synonyms` 或 `classificationInformation`，否则校验/发布会失败。
+## Migration note
+This adapter remains a task entry, while core build logic is centralized in `ProductFlowCreationService` and reused by `FlowPublisher`/`artifacts`; dedup/action decisions are currently enforced in `FlowPublisher` and can be adopted by manual adapters in a follow-up step.

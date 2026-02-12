@@ -38,6 +38,47 @@ TECH_DESCRIPTION_PROMPT = (
     "}\n"
 )
 
+INTENDED_APPLICATIONS_PROMPT = (
+    "You are writing the intended applications field for an ILCD process dataset.\n"
+    "Use the provided technical description, scope, and assumptions to summarize the intended application(s) "
+    "of the data collection and modelling.\n"
+    "\n"
+    "Rules:\n"
+    "- Base your answer strictly on the provided inputs; do NOT invent claims.\n"
+    "- Provide both English and Chinese versions.\n"
+    "- Keep 1..3 concise sentences per language.\n"
+    "- Avoid marketing language and avoid repeating the input verbatim.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "intended_applications": {\n'
+    '    "en": "...",\n'
+    '    "zh": "..."\n'
+    "  }\n"
+    "}\n"
+)
+
+DATA_CUTOFF_COMPLETENESS_PROMPT = (
+    "You are writing dataCutOffAndCompletenessPrinciples for an ILCD process dataset.\n"
+    "Use the provided summary of exchange completeness, placeholders, unit conversions, density conversions, "
+    "and balance review checks.\n"
+    "\n"
+    "Rules:\n"
+    "- Describe cut-off/completeness based only on the provided summary.\n"
+    "- Provide both English and Chinese versions.\n"
+    "- Mention missing amounts or unresolved placeholders when present.\n"
+    "- Mention unit/density conversions and remaining unit mismatches when present.\n"
+    "- Keep 1..3 concise sentences per language.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "data_cut_off_and_completeness_principles": {\n'
+    '    "en": "...",\n'
+    '    "zh": "..."\n'
+    "  }\n"
+    "}\n"
+)
+
 PROCESS_SPLIT_PROMPT = (
     "You are selecting/using the route options and decomposing each route into unit processes (single operations).\n"
     "Input context includes the reference flow summary, the route options from Step 1, and any technical description.\n"
@@ -126,6 +167,8 @@ EXCHANGES_PROMPT = (
     "or waterborne pollutants (e.g., nitrate, phosphate, pesticides) when relevant.\n"
     "- For labor, split by activity if multiple (e.g., 'Labor, harvesting' and 'Labor, post-harvest handling').\n"
     "- Add flow_type for each exchange: product | elementary | waste | service.\n"
+    "- In generalComment, append machine-readable tags using EXACT keys: [tg_io_kind_tag=<flow_type>] [tg_io_uom_tag=<unit>].\n"
+    "- Do NOT use ambiguous tag keys such as classification/category/typeOfDataSet.\n"
     "- Add material_role for each exchange: raw_material | auxiliary | catalyst | energy | emission | product | waste | service | unknown.\n"
     "- Use auxiliary/catalyst for inputs that are not embodied in the main product; set balance_exclude=true for those.\n"
     "- Provide role_reason to justify the material_role choice when it is not obvious.\n"
@@ -273,6 +316,57 @@ REFERENCE_CLUSTER_PROMPT = (
     "  ],\n"
     '  "primary_cluster_id": "C1",\n'
     '  "selection_guidance": "..."'
+    "}\n"
+)
+
+PLACEHOLDER_QUERY_BUILDER_PROMPT = (
+    "You are building a single structured flow-search query for one unmatched LCA exchange.\n"
+    "\n"
+    "Goal:\n"
+    "- Generate ONE precise query payload that preserves the exchange semantics.\n"
+    "- Do not broaden the exchange scope.\n"
+    "- Keep direction, flow_type, unit, and compartment constraints consistent with the input.\n"
+    "\n"
+    "Rules:\n"
+    "- Use exchange_name + general_comment as primary context.\n"
+    "- If CAS exists, return one CAS number in standard format (e.g., 64-17-5).\n"
+    "- classification_hints should be short canonical nouns/phrases (max 6 items).\n"
+    "- flow_type must be one of: product | elementary | waste | service | null.\n"
+    "- direction must be Input | Output | null.\n"
+    "- compartment must be air | water | soil | null.\n"
+    "- If information is missing, return null instead of guessing.\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "exchange_name": "...",\n'
+    '  "description": "...",\n'
+    '  "cas": "xx-xx-x" | null,\n'
+    '  "classification_hints": ["...", "..."],\n'
+    '  "flow_type": "product|elementary|waste|service" | null,\n'
+    '  "direction": "Input|Output" | null,\n'
+    '  "unit": "kg|m3|MJ|kWh|unit|..." | null,\n'
+    '  "compartment": "air|water|soil" | null\n'
+    "}\n"
+)
+
+PLACEHOLDER_UUID_SELECTOR_PROMPT = (
+    "You are selecting the best flow UUID from retrieved flow candidates for one unmatched exchange.\n"
+    "\n"
+    "Goal:\n"
+    "- Choose at most one UUID from candidates, or null if none is appropriate.\n"
+    "\n"
+    "Rules:\n"
+    "- The selected UUID MUST be from the provided candidates list.\n"
+    "- Prefer semantic consistency with exchange_name/description and constraints: flow_type, direction, unit, compartment.\n"
+    "- If CAS is provided in the query and candidate CAS exists, prefer exact CAS match.\n"
+    "- If no candidate is clearly valid, return null.\n"
+    "- Keep reason concise (1 sentence).\n"
+    "\n"
+    "Return strict JSON:\n"
+    "{\n"
+    '  "selected_uuid": "<uuid>" | null,\n'
+    '  "reason": "...",\n'
+    '  "confidence": 0.0\n'
     "}\n"
 )
 

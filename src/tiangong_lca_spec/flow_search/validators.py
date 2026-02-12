@@ -56,5 +56,7 @@ def hydrate_candidate(candidate: dict[str, Any]) -> FlowCandidate:
         general_comment=candidate.get("general_comment"),
         geography=candidate.get("geography"),
         classification=candidate.get("classification"),
+        cas=candidate.get("cas"),
+        category_path=candidate.get("category_path"),
         reasoning=candidate.get("reasoning", ""),
     )

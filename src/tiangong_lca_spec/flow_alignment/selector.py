@@ -221,9 +221,11 @@ class LLMCandidateSelector:
                     "uuid": candidate.uuid,
                     "flow_type": candidate.flow_type,
                     "version": candidate.version,
+                    "cas": candidate.cas,
                     "geography": candidate.geography,
                     "classification": candidate.classification,
                     "classification_path": self._classification_path(candidate.classification),
+                    "category_path": candidate.category_path,
                     "general_comment": candidate.general_comment,
                     "flow_property_short_descriptions": self._flow_property_short_descriptions(candidate.flow_properties),
                 }

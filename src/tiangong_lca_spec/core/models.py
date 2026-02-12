@@ -25,6 +25,8 @@ class FlowCandidate:
     general_comment: str | None = None
     geography: Mapping[str, Any] | None = None
     classification: list[Mapping[str, Any]] | None = None
+    cas: str | None = None
+    category_path: str | None = None
     reasoning: str = ""
 
 

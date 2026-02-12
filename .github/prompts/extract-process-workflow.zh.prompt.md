@@ -129,10 +129,13 @@ class FlowCandidate:
     treatment_standards_routes: str | None = None
     mix_and_location_types: str | None = None
     flow_properties: str | None = None
+    flow_type: str | None = None
     version: str | None = None
     general_comment: str | None = None
     geography: Mapping[str, Any] | None = None
     classification: list[Mapping[str, Any]] | None = None
+    cas: str | None = None
+    category_path: str | None = None
     reasoning: str = ""
 
 @dataclass(slots=True)
@@ -159,10 +162,17 @@ class WorkflowResult:
 
 ## 4. Flow Search
 - `FlowSearchClient` 使用 `MCPToolClient.invoke_json_tool` 访问远程 `Search_flows_Tool`，根据 `FlowQuery` 自动构造检索上下文（仅包含 `exchange_name` 与 `FlowSearch hints`）。
+- `FlowSearchClient` 在候选扁平化时同步提取 `flow_type`、`cas`、`category_path`，后续排序会使用这些字段（特别是 elementary flow 的 CAS 与 compartment 对齐）。
 - `FlowQuery.description` 直接来自 Stage 2 `exchange.generalComment` 的 `FlowSearch hints` 字符串；保持字段顺序与分隔符一致，便于 QueryFlow Service 提取多语言同义词和物性信息。
 - 远程 `tiangong_lca_remote` 工具内部已接入 LLM，会基于整段 `generalComment` 自动扩展同义词并执行全文 + 语义混合检索，因此无需在 Stage 3 手动再造额外提示。
 - 只要 `generalComment` 内容完整且精炼，就可以信任 `tiangong_lca_remote` 返回的候选；重点是从结果中挑选最贴合的流并补写必要说明。
 - `stage3_align_flows.py` 是唯一入口：不要在 Stage 2 直接拼接 `referenceToFlowDataSet`，而是让 Stage 3 读取 Stage 2 的 `process_blocks` 并触发检索。
+- 检索路径按 `flow_type` 分流：
+  - `elementary`：优先走 CAS + compartment 约束检索，自动生成别名变体（例如 `Methane` → `CH4` + CAS `74-82-8`），并对 CAS 冲突候选做硬过滤。
+  - `non-elementary`：先常规检索，再做规则化 query 变体（去掉 end-use 修饰词，如 `for pigs`；补同义词，如 `drinking water` → `tap water`/`water supply`）并重排。
+- 判定优先级：若描述里已有显式 `flow_type=product/waste/service`，不得仅因 `compartment=water/air/soil` 误判为 elementary。
+- `resolve_placeholders` 阶段新增“仅 unresolved 触发”的 LLM query rewrite：第二轮仍未选中候选时，再让 LLM 生成最多 5 个 `query_variants` 做补检，避免把 LLM 开销扩散到全部 exchange。
+- placeholder 二次补检会在 `flow_search` 节点记录 `llm_rewrite_variants` 与 `llm_rewrite_queries`，便于复盘“为什么没命中/为什么最终命中”。
 - 运行 Stage 3 前先快速抽样核查：选 1~2 个交换量搭建 `FlowQuery` 调试，确认服务是否返回候选（避免整批跑空）。如遇不到匹配，优先检查 `FlowSearch hints` 是否完整——Stage 3 现在只依赖 `exchange_name` 与该字符串进行搜索。
 - 每个交换量至少发起一次 MCP 检索；如果 3 次以内仍失败，才将该交换标记为 `UnmatchedFlow` 并写入原因。
 - 采用指数退避重试；捕获 `httpx.HTTPStatusError` / `McpError`，必要时剥离上下文以规避 413/5xx。
@@ -174,6 +184,7 @@ class WorkflowResult:
 - 每个流程块的交换量在独立线程提交检索任务，聚合 `matched_flows` 与 `origin_exchanges`；未命中只在日志中计数提醒。
 - Stage 3 脚本会按 §0 的 `FlowSearch hints` 规范校验 Stage 2 产物，必要时从同义词字段推断缺失名称，避免缺乏语义标签的交换直接进入 MCP 检索。
 - 匹配成功时写回 `referenceToFlowDataSet`，失败则保留原始交换量并记录原因。
+- LLM 候选选择上下文已包含 `cas` 与 `category_path`，用于区分看似同名但语义不同（尤其是 elementary）候选。
 - 对于命中的流，Stage 3 必须将 `referenceToFlowDataSet.common:shortDescription` 写成 `baseName; treatmentStandardsRoutes; mixAndLocationTypes; flowProperties` 的拼接字符串（缺失字段填 `-`），确保流程交换量中可以直接读出名称、处理/路线、位置/场合以及数量信息。
 - 过程中输出 `flow_alignment.start`、`flow_alignment.exchange_failed` 等结构化日志，便于诊断。
 
@@ -206,6 +217,16 @@ class WorkflowResult:
 - 单元测试优先覆盖：`json_utils` 清洗、`FlowSearchService` 过滤/缓存、`FlowAlignmentService` 降级处理、流程抽取各阶段的错误分支与 `merge_results` 容错。
 - 集成验证：使用最小论文样例依次执行 `stage1`→`stage3`，核对产物 schema、命中统计与校验报告；如需复核发布负载，可额外手动运行 `stage4_publish`，当前工作流在校验通过后会自动入库。
 - 观测：启用 `configure_logging` JSON 输出并筛选 `flow_alignment.exchange_failed`、`process_extraction.parents_uncovered` 等关键事件，快速定位异常阶段。
+- 对 `process_from_flow` 结果建议额外核查 `balance_review_summary`：重点看 `mass_core_check_processes`、`unit_mismatch_total`、`mapping_conflict_total`、`role_missing_total`。这些指标异常时，不应直接新建/发布未核对流。
+
+## 9.1 process_from_flow 质量门（新增）
+- exchange `generalComment` 中的机器标签为主数据来源：`[tg_io_kind_tag=...]`、`[tg_io_uom_tag=...]`。质量平衡与单位推断优先读取这些标签，再回退到 flow reference unit group。
+- `balance_review` 不用于“硬阻断所有流程”，而是用于在发布前给出可执行的检查信号：
+  - 核心质量平衡：`raw_material/product/waste` 主干项的 Input/Output 比值；
+  - 单位风险：`unit_mismatch`、`unit_assumption`、`density_estimate`；
+  - 映射冲突：输入流误复用参照输出 UUID（`mapping_conflicts`）。
+- process 级 `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataTreatmentAndExtrapolationsPrinciples` 应在 `balance_review` 之后统一回写，且与 `balance_review_summary` 的关键计数（`mass_core_check_processes`、`unit_mismatch_total`、`mapping_conflict_total`、`role_missing_total`）保持一致。
+- 建议执行策略：先修正上述 check 项，再发布；若 unresolved 仍存在，优先回到 `resolve_placeholders` 补充 hints 或触发 LLM rewrite，而不是立即新建。
 
 ## 10. 分类与地理辅助资源 
 - `tidas_processes_category.json` (`src/tidas/schemas/tidas_processes_category.json`) 是流程分类的权威来源，覆盖 ISIC 树的各级代码与描述。若 Codex 需要确认分类路径，先使用 `uv run python scripts/list_process_category_children.py <code>` 逐层展开（`<code>` 为空时输出顶层，例如 `uv run python scripts/list_process_category_children.py 01`）。必要时可通过 `tiangong_lca_spec.tidas.get_schema_repository().resolve_with_references("tidas_processes_category.json")` 读取局部节点，再将相关分支文本粘贴到对 Codex 的提问里，帮助其在有限上下文里挑选正确的 `@classId` / `#text`。

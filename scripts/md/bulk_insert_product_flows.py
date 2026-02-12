@@ -15,6 +15,7 @@ Interface:
       --schema    Override product flow category schema (default: packaged tidas_flows_product_category.json).
 
 The script runs sequentially, one MCP call per flow, no implicit retries.
+Flow payloads are validated/normalised via tidas_sdk before optional CRUD publish.
 """
 
 from __future__ import annotations
@@ -26,15 +27,13 @@ import json
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
-from uuid import uuid4
 
 from tiangong_lca_spec.core.config import get_settings
-from tiangong_lca_spec.core.constants import build_dataset_format_reference
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
-from tiangong_lca_spec.core.uris import build_local_dataset_uri
+from tiangong_lca_spec.product_flow_creation import ProductFlowCreateRequest, ProductFlowCreationService
+from tiangong_lca_spec.publishing.crud import DatabaseCrudClient
 
 # ---------------------------- Data structures ---------------------------- #
 
@@ -56,41 +55,8 @@ class FlowInput:
 
 # ---------------------------- Helpers ---------------------------- #
 
-
-def _lang_entry(text: str, lang: str = "en") -> dict[str, Any]:
-    return {"@xml:lang": lang, "#text": text}
-
-
-def _contact_reference() -> dict[str, Any]:
-    uuid_value = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
-    version = "01.00.000"
-    return {
-        "@type": "contact data set",
-        "@refObjectId": uuid_value,
-        "@uri": build_local_dataset_uri("contact data set", uuid_value, version),
-        "@version": version,
-        "common:shortDescription": [
-            _lang_entry("Tiangong LCA Data Working Group", "en"),
-            _lang_entry("天工LCA数据团队", "zh"),
-        ],
-    }
-
-
-def _compliance_block() -> dict[str, Any]:
-    uuid_value = "d92a1a12-2545-49e2-a585-55c259997756"
-    version = "20.20.002"
-    return {
-        "compliance": {
-            "common:referenceToComplianceSystem": {
-                "@refObjectId": uuid_value,
-                "@type": "source data set",
-                "@uri": build_local_dataset_uri("source", uuid_value, version),
-                "@version": version,
-                "common:shortDescription": _lang_entry("ILCD Data Network - Entry-level", "en"),
-            },
-            "common:approvalOfOverallCompliance": "Fully compliant",
-        }
-    }
+DEFAULT_TREATMENT = "Unspecified treatment"
+DEFAULT_MIX = "Production mix, at plant"
 
 
 def _ensure_list(value: Any) -> list[str]:
@@ -189,87 +155,6 @@ def build_classification_path(target_code: str, schema_path: Any) -> list[dict[s
     raise ValueError(f"Classification code not found: {target_code}")
 
 
-def build_flow_dataset(entry: FlowInput, classification: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
-    base_en = (entry.base_en or entry.leaf_name).strip()
-    base_zh = (entry.base_zh or entry.leaf_name_zh or base_en).strip()
-    treatment = (entry.treatment or "Unspecified treatment").strip()
-    mix = (entry.mix or "Production mix, at plant").strip()
-    en_synonyms = _ensure_list(entry.en_synonyms) or [base_en]
-    zh_synonyms = _ensure_list(entry.zh_synonyms) or [base_zh]
-    comment = entry.comment or entry.desc or entry.leaf_name
-
-    flow_uuid = str(uuid4())
-    version = "01.01.000"
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    dataset = {
-        "@xmlns": "http://lca.jrc.it/ILCD/Flow",
-        "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
-        "@xmlns:ecn": "http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber",
-        "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-        "@locations": "../ILCDLocations.xml",
-        "@version": "1.1",
-        "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
-        "flowInformation": {
-            "dataSetInformation": {
-                "common:UUID": flow_uuid,
-                "name": {
-                    "baseName": [
-                        _lang_entry(base_en, "en"),
-                        _lang_entry(base_zh, "zh"),
-                    ],
-                    "treatmentStandardsRoutes": [
-                        _lang_entry(treatment, "en"),
-                    ],
-                    "mixAndLocationTypes": [
-                        _lang_entry(mix, "en"),
-                    ],
-                },
-                "common:synonyms": [
-                    _lang_entry("; ".join(en_synonyms), "en"),
-                    _lang_entry("; ".join(zh_synonyms), "zh"),
-                ],
-                "common:generalComment": [
-                    _lang_entry(str(comment), "en"),
-                ],
-                "classificationInformation": {"common:classification": {"common:class": classification}},
-            },
-            "quantitativeReference": {
-                "referenceToReferenceFlowProperty": "0",
-            },
-        },
-        "modellingAndValidation": {
-            "LCIMethod": {"typeOfDataSet": "Product flow"},
-            "complianceDeclarations": _compliance_block(),
-        },
-        "administrativeInformation": {
-            "dataEntryBy": {
-                "common:timeStamp": timestamp,
-                "common:referenceToDataSetFormat": build_dataset_format_reference(),
-                "common:referenceToPersonOrEntityEnteringTheData": _contact_reference(),
-            },
-            "publicationAndOwnership": {
-                "common:dataSetVersion": version,
-                "common:referenceToOwnershipOfDataSet": _contact_reference(),
-            },
-        },
-        "flowProperties": {
-            "flowProperty": {
-                "@dataSetInternalID": "0",
-                "meanValue": "1.0",
-                "referenceToFlowPropertyDataSet": {
-                    "@type": "flow property data set",
-                    "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
-                    "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
-                    "@version": "03.00.003",
-                    "common:shortDescription": _lang_entry("Mass", "en"),
-                },
-            }
-        },
-    }
-    return flow_uuid, dataset
-
-
 def write_log(log_path: Path, rows: Iterable[dict[str, str]]) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["class_id", "leaf_name", "uuid", "status", "message"]
@@ -298,10 +183,12 @@ def main(argv: list[str] | None = None) -> int:
     schema_path = args.schema or (res.files("tidas_tools.tidas.schemas") / "tidas_flows_product_category.json")
 
     if args.select_id:
-        payload = {"operation": "select", "table": "flows", "id": args.select_id}
-        with MCPToolClient(settings) as client:
-            result = client.invoke_json_tool(settings.flow_search_service_name, "Database_CRUD_Tool", payload)
+        crud = DatabaseCrudClient(settings)
+        try:
+            result = crud.select_flow_record(args.select_id)
             print(json.dumps(result, ensure_ascii=False, indent=2))
+        finally:
+            crud.close()
         return 0
 
     if not args.input:
@@ -314,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
 
     log_rows: list[dict[str, str]] = []
     successes = failures = 0
+    flow_builder = ProductFlowCreationService()
 
     client: MCPToolClient | None = None
     try:
@@ -321,20 +209,33 @@ def main(argv: list[str] | None = None) -> int:
         for entry in entries:
             try:
                 classification = build_classification_path(entry.class_id, schema_path)
-                flow_uuid, dataset = build_flow_dataset(entry, classification)
+                request = ProductFlowCreateRequest(
+                    class_id=entry.class_id,
+                    classification=classification,
+                    base_name_en=(entry.base_en or entry.leaf_name).strip(),
+                    base_name_zh=(entry.base_zh or entry.leaf_name_zh or entry.base_en or entry.leaf_name).strip(),
+                    treatment_en=(entry.treatment or DEFAULT_TREATMENT).strip(),
+                    mix_en=(entry.mix or DEFAULT_MIX).strip(),
+                    comment_en=str(entry.comment or entry.desc or entry.leaf_name),
+                    synonyms_en=_ensure_list(entry.en_synonyms),
+                    synonyms_zh=_ensure_list(entry.zh_synonyms),
+                )
+                result = flow_builder.build(request)
+                flow_uuid = result.flow_uuid
+                version = result.version
                 payload = {
                     "operation": "insert",
                     "table": "flows",
                     "id": flow_uuid,
-                    "jsonOrdered": {"flowDataSet": dataset},
+                    "jsonOrdered": result.payload,
                 }
                 if args.commit and client:
-                    result = client.invoke_json_tool(settings.flow_search_service_name, "Database_CRUD_Tool", payload)
-                    message = f"inserted version {dataset['administrativeInformation']['publicationAndOwnership']['common:dataSetVersion']}"
+                    db_result = client.invoke_json_tool(settings.flow_search_service_name, "Database_CRUD_Tool", payload)
+                    message = f"inserted version {version}"
                     status = "success"
                     print(f"[OK] {entry.class_id} {entry.leaf_name} -> {flow_uuid}")
                     successes += 1
-                    _ = result  # silence lint; result available for future use
+                    _ = db_result  # silence lint; result available for future use
                 else:
                     status = "dry-run"
                     message = "payload prepared; not sent (use --commit to publish)"

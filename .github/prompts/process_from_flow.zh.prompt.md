@@ -22,11 +22,14 @@
 - Step 3b enrich exchange amounts：从正文/SI 抽取或估算量值。
 - Step 4 match flows：flow 搜索 + 候选选择，回填 uuid/shortDescription。
 - Step 4b align exchange units：校验 flow unit group 兼容性；同量纲自动换算到 flow 参考单位并回写 amount/unit，跨量纲标记为待复核。
-- Step 4c density conversion（可选）：仅对 product/waste flow 且 mass↔volume 不匹配时，使用 LLM 依据技术描述/过程上下文进行密度估计并换算，保留原始值与假设，写入 dataTreatmentAndExtrapolationsPrinciples。
+- Step 4c density conversion（可选）：仅对 product/waste flow 且 mass↔volume 不匹配时，使用 LLM 依据技术描述/过程上下文进行密度估计并换算，保留原始值与假设到 exchange 字段，process 级 dataTreatment 在 Step 8 统一回写。
 - Step 1f build sources：生成 source 数据集与引用。
+- Step 5a intended applications：基于 technical_description/scope/assumptions 由 LLM 生成 intendedApplications，写入 administrativeInformation.common:commissionerAndGoal.common:intendedApplications。
 - Step 5 build process datasets：输出最终 ILCD process 数据集。
 - Step 6 resolve placeholders：对占位符 exchange 进行二次检索与筛选，回填匹配结果并输出占位符报告。
 - Step 7 balance review：对每个 process 的 mass/energy 进行平衡校验，生成 review 报告（不拦截流程）。
+- Step 7b balance auto revise（可选）：启用 `--auto-balance-revise` 时，在首次平衡校验后对严重失衡（`mass_core.status=check`）过程的非参考流核心 exchange 做保守数值修订，并重算平衡结果。
+- Step 8 data cut-off & completeness：在占位符补全与平衡校验后汇总缺失/占位符/换算信息，优先由 LLM 生成 dataCutOffAndCompletenessPrinciples（失败回退规则文本），并统一回写 process 级 dataTreatment。
 
 ## LangGraph 核心工作流（ProcessFromFlowService）
 ### 入口与依赖
@@ -57,7 +60,9 @@
 - `EXCHANGES_PROMPT` 生成交换清单，`is_reference_flow` 与 `reference_flow_name` 对齐；生产用 Output，处置/处理用 Input。
 - Exchange 名称必须可搜索且不复合；补全 unit/amount（缺失用占位符）。
 - 对排放类自动补充介质标签（`to air`/`to water`/`to soil`），并标注 `flow_type` 与 `search_hints`。
-- 为每条 exchange 标注 `material_role`（`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`），对不进入产品的辅料/催化剂输入设置 `balance_exclude=true`。
+- 每条 exchange 的 `generalComment` 需追加机器可读标签：`[tg_io_kind_tag=<flow_type>] [tg_io_uom_tag=<unit>]`。
+- 标签键名禁止使用 `classification`/`category`/`typeOfDataSet` 等易歧义命名。
+- 为每条 exchange 标注 `material_role`（`raw_material|auxiliary|catalyst|energy|emission|product|waste|service|unknown`）；`balance_exclude` 为可选显式标记（若未设置，`balance_review` 仍会按 `material_role` 对 auxiliary/catalyst 做排除）。
 - 每条 exchange 写入 `data_source`/`evidence`，推断项标记 `source_type=expert_judgement`。
 - 可用文献时会额外检索交换证据，写入 `scientific_references.step3`。
 
@@ -67,7 +72,7 @@
 - 可缩放 exchange 依据 `basis_*` 进行换算并追加说明。
 
 4) match_flows
-- 对每个 exchange 执行 flow 搜索（候选最多 10 条），LLM 选择器挑选，禁止相似度兜底。
+- 对每个 exchange 执行 flow 搜索（候选最多 10 条）；默认使用 LLM 选择器并禁相似度兜底，无 LLM 时回退 SimilarityCandidateSelector。
 - 写入 `flow_search.query/candidates/selected_uuid/selected_reason/selector/unmatched`，并回填 uuid/shortDescription。
 - 仅补充匹配信息，不覆盖 `data_source`/`evidence`。
 
@@ -79,11 +84,15 @@
 - 仅当 `allow_density_conversion=true` 或 CLI 传入 `--allow-density-conversion` 时启用。
 - 触发条件：unit_check 为 mass↔volume mismatch，且 flow_type 为 product/waste。
 - LLM 输出 `density_value`/`density_unit`/`assumptions`（`source_type=expert_judgement`），换算后标记 `unit_check.status=converted_by_density` 并记录 `density_used`，保留原始值以便回溯。
-- 生成的密度假设与换算说明写入 process 的 `dataTreatmentAndExtrapolationsPrinciples`。
+- 生成的密度假设与换算说明保留在 exchange 的 `flow_search.unit_check` 与 `density_used` 字段，process 级汇总在 Step 8 统一回写。
 
 1f) build_sources
 - 基于检索结果生成 ILCD source 数据集（`tidas_sdk.create_source`），写入 `source_datasets` 与 `source_references`。
 - 按 `usage_tagging`/Step 1c summaries/Step 1b usability/industry_average 推断用途，过滤保留被使用文献（非 `background_only`）。
+
+5a) intended_applications
+- 在 `build_process_datasets` 前为每个 process 单独调用 LLM，输入该 process 的 `description`/`boundary`/`assumptions`（若缺失则回退到全局 `technical_description`/`scope`/`assumptions`）生成 intended applications（中英文各一条）。
+- 写入 `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`。
 
 5) build_process_datasets
 - 生成 ILCD process 数据集（`operation` 决定参考流方向；可选 Translator 补充中文多语字段）。
@@ -91,6 +100,7 @@
 - 尝试 `DatabaseCrudClient.select_flow` 补齐 flow 版本/shortDescription 与 flowProperty/unit group。
 - 强制参考流交换；空量值回退 `"1.0"`；`tidas_sdk.create_process` 做校验（失败仅记录警告）。
 - exchange 的 `referencesToDataSource` 优先使用 `value_citations`/`value_evidence` 匹配，其余 evidence 聚合到 process 层。
+- `build_process_datasets` 阶段不再预写 process 级 `dataTreatmentAndExtrapolationsPrinciples`；该字段由 Step 8 在 `balance_review` 后统一生成，避免前后不一致。
 
 6) resolve_placeholders（占位符补全，后处理）
 - 仅在 `build_process_datasets` 之后运行：扫描 `referenceToFlowDataSet.unmatched:placeholder=true` 的 exchange。
@@ -105,32 +115,51 @@
 - 输出 `balance_review`/`balance_review_summary`，标记 `ok|check|insufficient` 并记录 warning；不改写 exchange 数值。
 - 同时记录 `unit_mismatches` 与 `density_estimates` 以便人工复核。
 
+7b) balance_auto_revise（可选，后处理）
+- 仅在 state/CLI 启用 `auto_balance_revise`（`--auto-balance-revise`）时触发，且每次 run 最多执行一次（`balance_revise_applied` 防重复）。
+- 基于首次 `balance_review` 的 `mass_core` 结果，对 `status=check` 的过程在失衡方向（Input/Output）选择可修订的核心质量 exchange（排除参考流、辅助/催化剂、显式 `balance_exclude=true`）。
+- 采用保守比例修订：仅缩减失衡侧总量，不放大另一侧；回写 `matched_process_exchanges[*].exchanges[*].amount`，并同步 `process_datasets` 中对应 exchange 的 `meanAmount/resultingAmount`。
+- 修订完成后自动重算 `balance_review`，并保留首次结果到 `balance_review_initial`/`balance_review_summary_initial`，修订统计写入 `balance_revise_summary`。
+
+8) dataCutOffAndCompletenessPrinciples
+- 在 `resolve_placeholders`/`balance_review` 之后为每个 process 汇总缺失量值、占位符、单位换算/密度换算等信息。
+- `dataCutOffAndCompletenessPrinciples` 按 process 写入 `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`：优先使用已有 state/LLM 结果，缺失时回退规则文本并补齐中英文。
+- 同一阶段会基于最终 `balance_review` + `balance_review_summary` 二次回写 process 级 `dataTreatmentAndExtrapolationsPrinciples`，确保与发布前质量门指标一致。
+
 ## Origin 编排工作流（scripts/origin）
 ### 目标与顺序
 - 目标：在 Step 1-3 前写回 SI/用途标注，保证提示词能读取 SI 证据。
 - 编排顺序：
-  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 4b → Step 4c → Step 1f → Step 5 → Step 6
+  Step 0 → Step 1a → Step 1b → 1b-usability → Step 1c → Step 1d → Step 1e → Step 1 → Step 2 → Step 3 → Step 3b → Step 4 → Step 4b → Step 4c → Step 1f → Step 5a → Step 5 → Step 6 → Step 7 → Step 8
 
-### 核心脚本与工具
+### 核心脚本（主链）
 - `process_from_flow_workflow.py`：主编排脚本，负责前置 1b-usability/1d/1e 并 resume 主流程。
 - `process_from_flow_langgraph.py`：LangGraph CLI（run/resume/cleanup/publish），支持 `--stop-after` 与 `--publish/--commit`。
 - `process_from_flow_reference_usability.py`：Step 1b 可用性筛选（LCIA vs LCI）。
-- `process_from_flow_download_si.py`：下载 SI 原件并写回元数据。
+- `process_from_flow_download_si.py`：下载 SI 原件并写回元数据（支持 `--doi/--cluster/--recommendation` 过滤，`--dry-run` 仅列链接，`--no-update-state` 不写回 state）。
 - `mineru_for_process_si.py`：解析 PDF/图像 SI 为 JSON 结构。
-- `process_from_flow_reference_usage_tagging.py`：标注文献用途 `usage_tagging`。
+- `process_from_flow_reference_usage_tagging.py`：标注文献用途 `usage_tagging`（会回写到 `step_1c_reference_clusters.reference_summaries`）。
+### Maintenance 工具（非主链，离线补写/重算）
 - `process_from_flow_build_sources.py`：从缓存 state 补写 source 数据集。
 - `process_from_flow_placeholder_report.py`：生成占位符补全报告（默认写入 `cache/placeholder_report.json` 并更新 state）。
+- `product_flow_sdk_insert.py`：已迁移到 `scripts/product_flow/product_flow_sdk_insert.py`，不属于 process_from_flow 主链。
 
 ### 运行要点
-- `process_from_flow_workflow.py` 不支持 `--no-llm`（Step 1b/1e 需要 LLM）。
+- `process_from_flow_workflow.py` 不提供 `--no-llm` 参数（Step 1b/1e 需要 LLM），如需无 LLM 调试请直接使用 `process_from_flow_langgraph.py --no-llm`。
 - `--min-si-hint` 控制 SI 下载阈值（none|possible|likely），可配 `--si-max-links`/`--si-timeout`。
+- 默认 run_id 命名（未显式传 `--run-id` 时）：`pfw_<flow_code>_<flow_uuid8>_<operation>_<UTC_TIMESTAMP>`（例如 `pfw_01211_3a8d74d8_produce_20260211T105022Z`）。
 - `process_from_flow_langgraph.py` 的 `--stop-after datasets` 等价完整跑完（含占位符补全）后写出 datasets；其他值会提前停并保存 state。
+- `process_from_flow_workflow.py` 会固定写入按 run 分组的阶段日志：`artifacts/process_from_flow/<run_id>/cache/workflow_logs/*.log`，并输出计时报表 `artifacts/process_from_flow/<run_id>/cache/workflow_timing_report.json`。
+- `process_from_flow_workflow.py` 在 stderr 输出阶段进度（`stage x/y`、elapsed、ETA、log 路径）；`match_flows` 会输出 exchange 级进度（completed/total + ETA）。
 - `--allow-density-conversion` 允许 LLM 基于技术描述估计密度并进行 mass↔volume 换算（仅 product/waste flow）。
 - 占位符补全默认仅执行一次；需重跑时手动清空 `placeholder_resolution_applied`/`placeholder_resolutions` 后再 `--resume`。
+- `process_from_flow_workflow.py` 在 resume 前会清理 state 中的 `stop_after`，避免主流程被提前截断。
+- `--stop-after matches` 会在 Step 4 结束后停止，不会生成 `process_datasets`/`source_datasets`，因此也不会导出 `exports/flows`。
 
 ## 状态字段（state）
 - 输入与上下文：`flow_path`、`flow_dataset`、`flow_summary`、`operation`、`scientific_references`。
 - 路线与过程：`technology_routes`、`process_routes`、`selected_route_id`、`technical_description`、`assumptions`、`scope`、`processes`。
+- 目标用途与完整性：`intended_applications`、`data_cut_off_and_completeness_principles`、`data_cutoff_principles_applied`、`data_cutoff_summary`、`data_treatment_and_extrapolations_principles`、`data_treatment_principles_applied`、`data_treatment_summary`。
 - 交换与匹配：`process_exchanges`、`exchange_value_candidates`、`exchange_values_applied`、`matched_process_exchanges`。
 - 产出：`process_datasets`、`source_datasets`、`source_references`。
 - 评估与标记：`coverage_metrics`、`coverage_history`、`stop_rule_decision`、`step_markers`、`stop_after`。
@@ -145,24 +174,40 @@
 - Step 3b：`EXCHANGE_VALUE_PROMPT` 读取 `fulltext_references` + `si_snippets`。
 - Step 4/Step 5 不直接读取 SI。
 - SI 必须在 Step 1 前写回 `process_from_flow_state.json`，否则需回跑 Step 1-3。
+- `si_snippets` 来源于 MinerU 解析输出 + 直接解析的文本型 SI（`docx/xlsx/csv/tsv/txt/md`），优先 primary cluster DOI；按来源优先级 `docx > tabular(xlsx/csv/tsv) > text > mineru` 排序，最多 3 个 DOI、每个 DOI 取 1 段，单段截断到 2000 字符。
+
+## 文案字段来源（实现细节）
+- `processInformation.dataSetInformation.common:generalComment`：来自 Step 2 `process.description`，缺失时回退 `technical_description`。
+- `exchanges.exchange.generalComment`：来自 Step 3 `exchange.generalComment` + evidence 汇总，并强制追加 `tg_io_kind_tag` 与 `tg_io_uom_tag`。
+- `processInformation.technology.technologyDescriptionAndIncludedProcesses`：拼接 `technical_description` + `process.description` + **全局** `assumptions`（不是单个 process 的 `structure.assumptions`）。
+- `administrativeInformation.common:commissionerAndGoal.common:intendedApplications`：Step 5a 基于每个 process 的 `description`/`boundary`/`assumptions` 生成；缺失时回退全局。
+- `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataCutOffAndCompletenessPrinciples`：Step 8 按 process 汇总占位符/缺失量值/换算信息后生成。
+- `modellingAndValidation.dataSourcesTreatmentAndRepresentativeness.dataTreatmentAndExtrapolationsPrinciples`：Step 8 在 `balance_review` 后统一回写，内容与 `balance_review_summary` 指标对齐（含 `mass_core_check_processes` / `unit_mismatch_total` / `mapping_conflict_total` / `role_missing_total`）。
 
 ## 产出与调试
 - 运行输出目录：`artifacts/process_from_flow/<run_id>/`（`input/`、`cache/`、`exports/`）。
 - 状态文件：`cache/process_from_flow_state.json`。
+- 阶段日志：`cache/workflow_logs/*.log`。
+- 计时报表：`cache/workflow_timing_report.json`。
+- MCP 调用快照：`cache/mcp_snapshots/*.jsonl`。
+- Flow select 缓存：`cache/flow_select_cache.json`（同一 flow UUID/version 首次走远端 CRUD，后续优先本地命中；同 run 恢复运行时可复用）。
+- `exports/flows` 来源于最终 process 引用（`referenceToFlowDataSet`）的导出，不是所有搜索候选的全集落盘。
 - 占位符报告：`cache/placeholder_report.json`（来自 `resolve_placeholders` 或 `process_from_flow_placeholder_report.py`）。
 - 恢复/补写：`uv run python scripts/origin/process_from_flow_langgraph.py --resume --run-id <run_id>`。
-- 补写 source：`uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`。
-- 生成占位符报告：`uv run python scripts/origin/process_from_flow_placeholder_report.py --run-id <run_id>`（`--no-update-state` 可避免写回 state）。
+- maintenance 补写 source：`uv run python scripts/origin/process_from_flow_build_sources.py --run-id <run_id>`。
+- maintenance 生成占位符报告：`uv run python scripts/origin/process_from_flow_placeholder_report.py --run-id <run_id>`（`--no-update-state` 可避免写回 state）。
 - 仅发布已有 run：`uv run python scripts/origin/process_from_flow_langgraph.py --publish-only --run-id <run_id> [--publish-flows] [--commit]`。
 - 清理旧 run：`uv run python scripts/origin/process_from_flow_langgraph.py --cleanup-only --retain-runs 3`。
 
 ## 发布流程（Flow/Source/Process）
-发布顺序建议：flows → sources → processes，避免引用缺失。
+`process_from_flow_langgraph.py` 实际发布顺序：
+- 启用 `--publish-flows` 时为 `flows → sources → processes`；
+- 未启用 `--publish-flows` 时为 `sources → processes`。
 
 ### 依赖与配置
 - 入口类：`FlowPublisher` / `ProcessPublisher` / `DatabaseCrudClient`。
 - MCP 服务：`.secrets/secrets.toml` 配置 `tiangong_lca_remote`（`Database_CRUD_Tool`）。
-- LLM：用于 flow 类型与产品分类推断，并在新建 flow 时补全/翻译必填中英文字段；无 LLM 或 LLM 失败时回退到现有拼装逻辑并记录日志。
+- LLM：用于 flow 类型/产品分类推断，以及新建 flow 时的中英字段补全；无 LLM 或 LLM 失败时回退规则默认值并记录日志。
 
 ### Step 0：发布 sources（可选但推荐）
 - `--publish/--publish-only` 会在发布 process 前先发布 sources。
@@ -174,11 +219,12 @@
 - 可补充 `matchingDetail.selectedCandidate`（由 `flow_search` 结果映射）以便分类与流属性选择。
 
 ### Step 2：发布/更新 flows
-- Flow 数据集由 `tidas_sdk.create_flow` 构建与校验（失败则降级为非校验构建并记录日志）。
+- Flow 数据集由 `FlowPublisher` 内部统一调用 `ProductFlowCreationService` 构建，并走 `tidas_sdk.create_flow` 校验（允许 validation fallback，失败会记录日志）。
 - `FlowPublisher.prepare_from_alignment()` 生成 `FlowPublishPlan`：
   - 占位 `referenceToFlowDataSet` → insert。
   - 已匹配但缺少 flow property → update（版本自动 +1）。
   - Elementary flow 不新建；Product/Waste flow 生成 ILCD flow。
+- `FlowPublisher.publish()` 发布时会再调用 `FlowDedupService` 检查远端是否已存在同 UUID，并在 `insert/update/reuse` 间切换；最终动作可能与 plan mode 不同。
 - LLM 辅助字段补全/翻译（新建 flow 必做）：
   - `baseName`/`treatmentStandardsRoutes`/`mixAndLocationTypes`/`common:synonyms`/`common:generalComment` 需中英文成对输出。
   - 仅有单语时，LLM 翻译补齐另一语种；两种语言都缺失时，LLM 依据 exchange/FlowSearch hints/候选信息生成简短字段。
@@ -219,11 +265,17 @@ timeout = 180
 - `process_from_flow.search_references`：文献检索成功（记录查询与结果数）。
 - `process_from_flow.search_references_failed`：文献检索失败（记录错误但不中断）。
 - `process_from_flow.mcp_client_closed`：MCP 客户端正常关闭。
+- `process_from_flow.match_flows_started`：flow 匹配开始（包含 process/exchange 总数）。
+- `process_from_flow.match_flows_progress`：逐 exchange 匹配进度（`completed/total`、elapsed、ETA）。
+- `process_from_flow.match_flows_completed`：flow 匹配结束（包含总耗时）。
+- `crud.select_flow_record_cache_hit`：flow 详情命中本地 run 缓存。
+- `crud.select_flow_cache_flushed`：flow select 缓存已落盘（`flow_select_cache.json`）。
 
 ### 性能影响
-- 每次文献检索约 1-2 秒。
+- 每次文献检索通常约 1-2 秒（受网络与服务负载影响）。
 - Step 1b 全文拉取耗时与 DOI 数量、extK 相关。
-- 完整工作流增加约 3-6 秒（不含额外全文抓取时长）。
+- 端到端耗时主要受远端调用（KB 检索、flow search、CRUD select、LLM）影响，通常是分钟级；Step 4 匹配常为最长阶段。
+- 以 `cache/workflow_timing_report.json` 作为单次运行各阶段耗时的准确信息源。
 
 ### 测试
 ```bash
@@ -234,12 +286,13 @@ uv run python test/test_scientific_references.py
 - 可选步骤：判断 Step 1b 全文是否足以支撑路径拆分/交换生成。
 - 若全文仅包含 LCIA 影响指标（如 ADP/AP/GWP/EP/PED/RI）或单位为 `kg CO2 eq`/`kg SO2 eq`/`kg Sb eq`/`kg PO4 eq` 等，而没有任何 LCI 物理清单行（kg、g、t、m2、m3、pcs、kWh、MJ），一律标记为 `unusable`。
 - 当正文提示 Supporting Information/Appendix 可能包含清单表时，记录 `si_hint`（`likely|possible|none`）与 `si_reason`；若正文本身无 LCI 表，仍保持 `decision=unusable`。
+- 若 LLM 返回 `si_hint=none` 且无 `si_reason`，脚本会自动扫描正文关键词补充 `likely/possible` 并写回。
 - Prompt 模板：`src/tiangong_lca_spec/process_from_flow/prompts.py` 中的 `REFERENCE_USABILITY_PROMPT`。
 - 脚本：`uv run python scripts/origin/process_from_flow_reference_usability.py --run-id <run_id>`。
 - 输出：`process_from_flow_state.json` 的 `scientific_references.usability`。
 
 ## 使用建议
-- 确保 LLM 配置有效；`process_from_flow_workflow.py` 不支持 `--no-llm`。
+- 确保 LLM 配置有效；`process_from_flow_workflow.py` 本身不提供 `--no-llm` 参数。
 - 自定义 `flow_search_fn` 或选择器时保持协议一致（`FlowQuery` → `(candidates, unmatched)`）。
 - CLI 默认补充中文翻译，可用 `--no-translate-zh` 跳过。
 

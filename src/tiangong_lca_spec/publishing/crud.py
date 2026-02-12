@@ -2,26 +2,33 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import os
 import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
 
-from tidas_sdk import create_flow
-
 from tiangong_lca_spec.core.config import Settings, get_settings
-from tiangong_lca_spec.core.constants import build_dataset_format_reference
 from tiangong_lca_spec.core.exceptions import SpecCodingError
 from tiangong_lca_spec.core.json_utils import parse_json_response
 from tiangong_lca_spec.core.logging import get_logger
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
-from tiangong_lca_spec.core.uris import build_local_dataset_uri, build_portal_uri
-from tiangong_lca_spec.tidas.flow_property_registry import FlowPropertyRegistry, get_default_registry
-from tiangong_lca_spec.workflow.artifacts import flow_compliance_declarations
+from tiangong_lca_spec.core.uris import build_portal_uri
+from tiangong_lca_spec.product_flow_creation import (
+    FlowDedupService,
+    ProductFlowCreateRequest,
+    ProductFlowCreationService,
+)
+from tiangong_lca_spec.tidas.flow_property_registry import (
+    DEFAULT_FLOW_PROPERTY_VERSION,
+    FLOW_PROPERTY_VERSION_OVERRIDES,
+    FlowPropertyRegistry,
+    get_default_registry,
+)
 
 LOGGER = get_logger(__name__)
 
@@ -44,11 +51,6 @@ FLOW_TEXT_PROMPT = (
     "- Avoid semicolons; use commas if needed.\n"
     "- Output must be valid JSON; do not add extra keys."
 )
-
-
-def _utc_timestamp() -> str:
-    """Return ISO timestamp in the format required by Supabase validator."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _coerce_text(value: Any) -> str:
@@ -474,12 +476,16 @@ class FlowProductCategorySelector:
                     line = raw_line.strip()
                     if not line:
                         continue
-                    if "\t" in line:
-                        cat_code, desc = line.split("\t", 1)
-                    else:
-                        parts = line.split(None, 1)
-                        cat_code = parts[0]
-                        desc = parts[1] if len(parts) > 1 else ""
+                    # Hierarchy helper scripts print data rows as "<code>\\t<description>".
+                    # Informational lines like "No direct children found for <code>" must be ignored.
+                    if "\t" not in line:
+                        LOGGER.debug(
+                            "flow_publish.product_category_skip_non_data_line",
+                            code=code,
+                            line=line,
+                        )
+                        continue
+                    cat_code, desc = line.split("\t", 1)
                     cat_code = cat_code.strip()
                     desc = desc.strip()
                     if cat_code:
@@ -719,6 +725,14 @@ class FlowPublishPlan:
 class DatabaseCrudClient:
     """Client wrapper over Database_CRUD_Tool for flows/processes CRUD."""
 
+    _FLOW_SELECT_CACHE_VALUES: dict[str, dict[str, Any]] = {}
+    _FLOW_SELECT_RECORD_CACHE: dict[str, dict[str, Any]] = {}
+    _FLOW_SELECT_CACHE_MISSES: set[str] = set()
+    _FLOW_SELECT_RECORD_MISSES: set[str] = set()
+    _FLOW_SELECT_CACHE_PATH: Path | None = None
+    _FLOW_SELECT_CACHE_LOADED: bool = False
+    _FLOW_SELECT_CACHE_DIRTY: bool = False
+
     def __init__(
         self,
         settings: Settings | None = None,
@@ -728,6 +742,7 @@ class DatabaseCrudClient:
         self._settings = settings or get_settings()
         self._mcp = mcp_client or MCPToolClient(self._settings)
         self._server_name = self._settings.flow_search_service_name
+        self._ensure_flow_select_cache_loaded()
 
     def insert_flow(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
         root_key = "flowDataSet" if "flowDataSet" in dataset else None
@@ -776,37 +791,83 @@ class DatabaseCrudClient:
         uuid_value = _coerce_text(flow_uuid)
         if not uuid_value:
             return None
-        payload = {"operation": "select", "table": "flows", "id": uuid_value}
-        version_value = _coerce_text(version)
-        if version_value:
-            payload["version"] = version_value
-        raw = self._invoke(payload)
-        if isinstance(raw, dict):
-            if isinstance(raw.get("flowDataSet"), dict):
-                return raw.get("flowDataSet")
-            data = raw.get("data")
-            if isinstance(data, list) and data:
-                record = data[0] if isinstance(data[0], dict) else None
-                if isinstance(record, dict):
-                    for key in ("json_ordered", "json"):
-                        payload = record.get(key)
-                        if isinstance(payload, dict) and isinstance(payload.get("flowDataSet"), dict):
-                            return payload.get("flowDataSet")
-        return None
+        version_value = _coerce_text(version) or None
+
+        cached = self._flow_select_cache_get(uuid_value, version_value)
+        if cached is not None:
+            LOGGER.debug("crud.select_flow_cache_hit", flow_uuid=uuid_value, version=version_value or "*")
+            return cached
+
+        if version_value and not self._flow_select_cache_is_miss(uuid_value, version_value):
+            raw = self._invoke(
+                {
+                    "operation": "select",
+                    "table": "flows",
+                    "id": uuid_value,
+                    "version": version_value,
+                }
+            )
+            dataset = self._extract_flow_dataset(raw)
+            if dataset is not None:
+                self._flow_select_cache_store(uuid_value, dataset, requested_version=version_value)
+                return copy.deepcopy(dataset)
+            self._flow_select_cache_mark_miss(uuid_value, version_value)
+
+        if self._flow_select_cache_is_miss(uuid_value, None):
+            return None
+
+        raw = self._invoke({"operation": "select", "table": "flows", "id": uuid_value})
+        dataset = self._extract_flow_dataset(raw)
+        if dataset is None:
+            self._flow_select_cache_mark_miss(uuid_value, None)
+            return None
+
+        self._flow_select_cache_store(uuid_value, dataset, requested_version=version_value)
+        return copy.deepcopy(dataset)
 
     def select_flow_record(self, flow_uuid: str) -> dict[str, Any] | None:
         uuid_value = _coerce_text(flow_uuid)
         if not uuid_value:
             return None
+        cached = self._FLOW_SELECT_RECORD_CACHE.get(uuid_value)
+        if isinstance(cached, dict):
+            LOGGER.debug("crud.select_flow_record_cache_hit", flow_uuid=uuid_value)
+            return copy.deepcopy(cached)
+        if uuid_value in self._FLOW_SELECT_RECORD_MISSES:
+            return None
+
         raw = self._invoke({"operation": "select", "table": "flows", "id": uuid_value})
-        if isinstance(raw, dict):
-            data = raw.get("data")
-            if isinstance(data, list) and data:
-                record = data[0]
-                if isinstance(record, dict):
-                    return record
-            if isinstance(raw.get("flowDataSet"), dict):
-                return {"json": {"flowDataSet": raw.get("flowDataSet")}}
+        if not isinstance(raw, dict):
+            self._FLOW_SELECT_RECORD_MISSES.add(uuid_value)
+            self._FLOW_SELECT_CACHE_DIRTY = True
+            return None
+
+        data = raw.get("data")
+        if isinstance(data, list) and data:
+            record = data[0]
+            if isinstance(record, dict):
+                self._FLOW_SELECT_RECORD_CACHE[uuid_value] = copy.deepcopy(record)
+                self._FLOW_SELECT_CACHE_DIRTY = True
+                dataset = None
+                for key in ("json_ordered", "json"):
+                    payload = record.get(key)
+                    if isinstance(payload, Mapping) and isinstance(payload.get("flowDataSet"), Mapping):
+                        dataset = payload.get("flowDataSet")
+                        break
+                if isinstance(dataset, Mapping):
+                    self._flow_select_cache_store(uuid_value, dataset)
+                return copy.deepcopy(record)
+
+        if isinstance(raw.get("flowDataSet"), dict):
+            dataset = raw.get("flowDataSet")
+            self._flow_select_cache_store(uuid_value, dataset)
+            record = {"json": {"flowDataSet": dataset}}
+            self._FLOW_SELECT_RECORD_CACHE[uuid_value] = copy.deepcopy(record)
+            self._FLOW_SELECT_CACHE_DIRTY = True
+            return copy.deepcopy(record)
+
+        self._FLOW_SELECT_RECORD_MISSES.add(uuid_value)
+        self._FLOW_SELECT_CACHE_DIRTY = True
         return None
 
     def insert_process(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
@@ -825,6 +886,95 @@ class DatabaseCrudClient:
                 "jsonOrdered": json_payload,
             }
         )
+
+    def select_process(self, process_uuid: str, *, version: str | None = None) -> dict[str, Any] | None:
+        uuid_value = _coerce_text(process_uuid)
+        if not uuid_value:
+            return None
+        version_value = _coerce_text(version) or None
+        if version_value:
+            raw = self._invoke(
+                {
+                    "operation": "select",
+                    "table": "processes",
+                    "id": uuid_value,
+                    "version": version_value,
+                }
+            )
+            dataset = self._extract_process_dataset(raw)
+            if dataset is not None:
+                return copy.deepcopy(dataset)
+        raw = self._invoke({"operation": "select", "table": "processes", "id": uuid_value})
+        dataset = self._extract_process_dataset(raw)
+        if dataset is None:
+            return None
+        return copy.deepcopy(dataset)
+
+    def insert_source(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
+        root_key = "sourceDataSet" if "sourceDataSet" in dataset else None
+        source_root = _resolve_dataset_root(dataset, root_key=root_key, dataset_kind="source")
+        uuid_value = _require_uuid(
+            _get_nested(source_root, ("sourceInformation", "dataSetInformation", "common:UUID")),
+            "source",
+        )
+        json_payload = dataset if root_key else {"sourceDataSet": source_root}
+        return self._invoke(
+            {
+                "operation": "insert",
+                "table": "sources",
+                "id": uuid_value,
+                "jsonOrdered": json_payload,
+            }
+        )
+
+    def update_source(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
+        root_key = "sourceDataSet" if "sourceDataSet" in dataset else None
+        source_root = _resolve_dataset_root(dataset, root_key=root_key, dataset_kind="source")
+        uuid_value = _require_uuid(
+            _get_nested(source_root, ("sourceInformation", "dataSetInformation", "common:UUID")),
+            "source",
+        )
+        version_candidate = _coerce_text(
+            _get_nested(
+                source_root,
+                ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"),
+            )
+        )
+        if not version_candidate:
+            version_candidate = "01.01.000"
+        json_payload = dataset if root_key else {"sourceDataSet": source_root}
+        return self._invoke(
+            {
+                "operation": "update",
+                "table": "sources",
+                "id": uuid_value,
+                "version": version_candidate,
+                "jsonOrdered": json_payload,
+            }
+        )
+
+    def select_source(self, source_uuid: str, *, version: str | None = None) -> dict[str, Any] | None:
+        uuid_value = _coerce_text(source_uuid)
+        if not uuid_value:
+            return None
+        version_value = _coerce_text(version) or None
+        if version_value:
+            raw = self._invoke(
+                {
+                    "operation": "select",
+                    "table": "sources",
+                    "id": uuid_value,
+                    "version": version_value,
+                }
+            )
+            dataset = self._extract_source_dataset(raw)
+            if dataset is not None:
+                return copy.deepcopy(dataset)
+        raw = self._invoke({"operation": "select", "table": "sources", "id": uuid_value})
+        dataset = self._extract_source_dataset(raw)
+        if dataset is None:
+            return None
+        return copy.deepcopy(dataset)
 
     def update_process(self, dataset: Mapping[str, Any]) -> dict[str, Any]:
         root_key = "processDataSet" if "processDataSet" in dataset else None
@@ -872,7 +1022,230 @@ class DatabaseCrudClient:
         raise SpecCodingError("Unexpected payload returned from Database_CRUD_Tool")
 
     def close(self) -> None:
+        self._flush_flow_select_cache()
         self._mcp.close()
+
+    @classmethod
+    def _flow_cache_key(cls, flow_uuid: str, version: str | None) -> str:
+        version_key = version or "*"
+        return f"{flow_uuid}@{version_key}"
+
+    @staticmethod
+    def _extract_flow_dataset(raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        if isinstance(raw.get("flowDataSet"), dict):
+            return raw.get("flowDataSet")
+        data = raw.get("data")
+        if isinstance(data, list) and data:
+            record = data[0] if isinstance(data[0], dict) else None
+            if isinstance(record, dict):
+                for key in ("json_ordered", "json"):
+                    payload = record.get(key)
+                    if isinstance(payload, dict) and isinstance(payload.get("flowDataSet"), dict):
+                        return payload.get("flowDataSet")
+        return None
+
+    @staticmethod
+    def _extract_process_dataset(raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        if isinstance(raw.get("processDataSet"), dict):
+            return raw.get("processDataSet")
+        data = raw.get("data")
+        if isinstance(data, list) and data:
+            record = data[0] if isinstance(data[0], dict) else None
+            if isinstance(record, dict):
+                for key in ("json_ordered", "json"):
+                    payload = record.get(key)
+                    if isinstance(payload, dict) and isinstance(payload.get("processDataSet"), dict):
+                        return payload.get("processDataSet")
+        return None
+
+    @staticmethod
+    def _extract_source_dataset(raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        if isinstance(raw.get("sourceDataSet"), dict):
+            return raw.get("sourceDataSet")
+        data = raw.get("data")
+        if isinstance(data, list) and data:
+            record = data[0] if isinstance(data[0], dict) else None
+            if isinstance(record, dict):
+                for key in ("json_ordered", "json"):
+                    payload = record.get(key)
+                    if isinstance(payload, dict) and isinstance(payload.get("sourceDataSet"), dict):
+                        return payload.get("sourceDataSet")
+        return None
+
+    @staticmethod
+    def _extract_flow_dataset_version(dataset: Mapping[str, Any]) -> str | None:
+        admin = dataset.get("administrativeInformation")
+        if not isinstance(admin, Mapping):
+            return None
+        pub = admin.get("publicationAndOwnership")
+        if not isinstance(pub, Mapping):
+            return None
+        version = _coerce_text(pub.get("common:dataSetVersion"))
+        return version or None
+
+    @classmethod
+    def _resolve_flow_select_cache_path(cls) -> Path | None:
+        explicit = os.environ.get("TIANGONG_PFF_FLOW_CACHE_PATH")
+        if explicit:
+            return Path(explicit)
+
+        run_id = _coerce_text(os.environ.get("TIANGONG_PFF_RUN_ID"))
+        if run_id:
+            return PROJECT_ROOT / "artifacts" / "process_from_flow" / run_id / "cache" / "flow_select_cache.json"
+
+        state_path = _coerce_text(os.environ.get("TIANGONG_PFF_STATE_PATH"))
+        if state_path:
+            return Path(state_path).resolve().parent / "flow_select_cache.json"
+        return None
+
+    @classmethod
+    def _ensure_flow_select_cache_loaded(cls) -> None:
+        cache_path = cls._resolve_flow_select_cache_path()
+        if cls._FLOW_SELECT_CACHE_LOADED and cls._FLOW_SELECT_CACHE_PATH == cache_path:
+            return
+
+        if cls._FLOW_SELECT_CACHE_LOADED and cls._FLOW_SELECT_CACHE_DIRTY:
+            cls._flush_flow_select_cache()
+
+        cls._FLOW_SELECT_CACHE_VALUES = {}
+        cls._FLOW_SELECT_RECORD_CACHE = {}
+        cls._FLOW_SELECT_CACHE_MISSES = set()
+        cls._FLOW_SELECT_RECORD_MISSES = set()
+        cls._FLOW_SELECT_CACHE_PATH = cache_path
+        cls._FLOW_SELECT_CACHE_LOADED = True
+        cls._FLOW_SELECT_CACHE_DIRTY = False
+
+        if cache_path is None or not cache_path.exists():
+            return
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("crud.select_flow_cache_load_failed", path=str(cache_path), error=str(exc))
+            return
+
+        values_raw = payload.get("values") if isinstance(payload, dict) else None
+        if isinstance(values_raw, dict):
+            for key, value in values_raw.items():
+                if isinstance(key, str) and isinstance(value, dict):
+                    cls._FLOW_SELECT_CACHE_VALUES[key] = value
+
+        records_raw = payload.get("records") if isinstance(payload, dict) else None
+        if isinstance(records_raw, dict):
+            for key, value in records_raw.items():
+                if isinstance(key, str) and isinstance(value, dict):
+                    cls._FLOW_SELECT_RECORD_CACHE[key] = value
+
+        misses_raw = payload.get("misses") if isinstance(payload, dict) else None
+        if isinstance(misses_raw, list):
+            cls._FLOW_SELECT_CACHE_MISSES = {key for key in misses_raw if isinstance(key, str) and key.strip()}
+
+        record_misses_raw = payload.get("record_misses") if isinstance(payload, dict) else None
+        if isinstance(record_misses_raw, list):
+            cls._FLOW_SELECT_RECORD_MISSES = {key for key in record_misses_raw if isinstance(key, str) and key.strip()}
+
+        LOGGER.debug(
+            "crud.select_flow_cache_loaded",
+            path=str(cache_path),
+            cached=len(cls._FLOW_SELECT_CACHE_VALUES),
+            misses=len(cls._FLOW_SELECT_CACHE_MISSES),
+            records=len(cls._FLOW_SELECT_RECORD_CACHE),
+            record_misses=len(cls._FLOW_SELECT_RECORD_MISSES),
+        )
+
+    @classmethod
+    def _flush_flow_select_cache(cls) -> None:
+        if not cls._FLOW_SELECT_CACHE_LOADED or not cls._FLOW_SELECT_CACHE_DIRTY:
+            return
+        cache_path = cls._FLOW_SELECT_CACHE_PATH
+        if cache_path is None:
+            cls._FLOW_SELECT_CACHE_DIRTY = False
+            return
+
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "values": cls._FLOW_SELECT_CACHE_VALUES,
+                "records": cls._FLOW_SELECT_RECORD_CACHE,
+                "misses": sorted(cls._FLOW_SELECT_CACHE_MISSES),
+                "record_misses": sorted(cls._FLOW_SELECT_RECORD_MISSES),
+            }
+            temp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            temp_path.replace(cache_path)
+            cls._FLOW_SELECT_CACHE_DIRTY = False
+            LOGGER.debug(
+                "crud.select_flow_cache_flushed",
+                path=str(cache_path),
+                cached=len(cls._FLOW_SELECT_CACHE_VALUES),
+                misses=len(cls._FLOW_SELECT_CACHE_MISSES),
+                records=len(cls._FLOW_SELECT_RECORD_CACHE),
+                record_misses=len(cls._FLOW_SELECT_RECORD_MISSES),
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("crud.select_flow_cache_flush_failed", path=str(cache_path), error=str(exc))
+
+    @classmethod
+    def _flow_select_cache_get(cls, flow_uuid: str, version: str | None) -> dict[str, Any] | None:
+        exact_key = cls._flow_cache_key(flow_uuid, version)
+        cached = cls._FLOW_SELECT_CACHE_VALUES.get(exact_key)
+        if isinstance(cached, dict):
+            return copy.deepcopy(cached)
+
+        if version:
+            latest_key = cls._flow_cache_key(flow_uuid, None)
+            latest = cls._FLOW_SELECT_CACHE_VALUES.get(latest_key)
+            if isinstance(latest, dict):
+                return copy.deepcopy(latest)
+        return None
+
+    @classmethod
+    def _flow_select_cache_is_miss(cls, flow_uuid: str, version: str | None) -> bool:
+        key = cls._flow_cache_key(flow_uuid, version)
+        return key in cls._FLOW_SELECT_CACHE_MISSES
+
+    @classmethod
+    def _flow_select_cache_mark_miss(cls, flow_uuid: str, version: str | None) -> None:
+        key = cls._flow_cache_key(flow_uuid, version)
+        if key not in cls._FLOW_SELECT_CACHE_MISSES:
+            cls._FLOW_SELECT_CACHE_MISSES.add(key)
+            cls._FLOW_SELECT_CACHE_DIRTY = True
+
+    @classmethod
+    def _flow_select_cache_store(
+        cls,
+        flow_uuid: str,
+        dataset: Mapping[str, Any],
+        *,
+        requested_version: str | None = None,
+    ) -> None:
+        dataset_copy = copy.deepcopy(dict(dataset))
+        keys = {cls._flow_cache_key(flow_uuid, None)}
+        if requested_version:
+            keys.add(cls._flow_cache_key(flow_uuid, requested_version))
+        actual_version = cls._extract_flow_dataset_version(dataset_copy)
+        if actual_version:
+            keys.add(cls._flow_cache_key(flow_uuid, actual_version))
+
+        changed = False
+        for key in keys:
+            previous = cls._FLOW_SELECT_CACHE_VALUES.get(key)
+            if previous != dataset_copy:
+                cls._FLOW_SELECT_CACHE_VALUES[key] = copy.deepcopy(dataset_copy)
+                changed = True
+            if key in cls._FLOW_SELECT_CACHE_MISSES:
+                cls._FLOW_SELECT_CACHE_MISSES.discard(key)
+                changed = True
+        if flow_uuid in cls._FLOW_SELECT_RECORD_MISSES:
+            cls._FLOW_SELECT_RECORD_MISSES.discard(flow_uuid)
+            changed = True
+        if changed:
+            cls._FLOW_SELECT_CACHE_DIRTY = True
 
 
 class FlowPublisher:
@@ -900,6 +1273,8 @@ class FlowPublisher:
         self._llm = llm
         self._flow_type_classifier = flow_type_classifier or FlowTypeClassifier(llm)
         self._product_category_selector = product_category_selector or FlowProductCategorySelector(llm)
+        self._flow_creation = ProductFlowCreationService()
+        self._flow_dedup = FlowDedupService(self._crud)
         self._prepared: list[FlowPublishPlan] = []
 
     def _resolve_default_property(self, requested: str | None) -> str:
@@ -945,7 +1320,9 @@ class FlowPublisher:
                             mean_value,
                             candidate=None,
                             mode="insert",
-                            existing_ref=None,
+                            # Keep placeholder UUID stable across retries so we do not
+                            # mint a fresh flow UUID for the same unresolved exchange.
+                            existing_ref=ref,
                         )
                     else:
                         if candidate is None:
@@ -981,10 +1358,82 @@ class FlowPublisher:
                 )
                 continue
             payload = {"flowDataSet": plan.dataset}
-            if plan.mode == "update":
-                result = self._crud.update_flow(payload)
-            else:
-                result = self._crud.insert_flow(payload)
+            version = (
+                _coerce_text(
+                    _get_nested(
+                        plan.dataset,
+                        ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"),
+                    )
+                )
+                or "01.01.000"
+            )
+            decision = self._flow_dedup.decide(
+                flow_uuid=plan.uuid,
+                version=version,
+                preferred_action=plan.mode if plan.mode in {"insert", "update"} else "auto",
+            )
+            if decision.action == "reuse":
+                LOGGER.info(
+                    "flow_publish.reuse_existing",
+                    exchange=plan.exchange_name,
+                    process=plan.process_name,
+                    uuid=plan.uuid,
+                    reason=decision.reason,
+                )
+                continue
+
+            actions: list[str] = [decision.action]
+            if decision.action == "update":
+                actions.append("insert")
+            elif decision.action == "insert":
+                actions.append("update")
+
+            result: dict[str, Any] | None = None
+            last_error: Exception | None = None
+            for action in actions:
+                try:
+                    if action == "update":
+                        result = self._crud.update_flow(payload)
+                    else:
+                        result = self._crud.insert_flow(payload)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    LOGGER.warning(
+                        "flow_publish.action_failed",
+                        exchange=plan.exchange_name,
+                        process=plan.process_name,
+                        uuid=plan.uuid,
+                        action=action,
+                        error=str(exc),
+                    )
+
+            if result is None:
+                existing = None
+                try:
+                    existing = self._crud.select_flow(plan.uuid, version=version) or self._crud.select_flow(plan.uuid)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning(
+                        "flow_publish.reuse_check_failed",
+                        exchange=plan.exchange_name,
+                        process=plan.process_name,
+                        uuid=plan.uuid,
+                        error=str(exc),
+                    )
+                if isinstance(existing, Mapping):
+                    LOGGER.warning(
+                        "flow_publish.reuse_existing_after_error",
+                        exchange=plan.exchange_name,
+                        process=plan.process_name,
+                        uuid=plan.uuid,
+                    )
+                    results.append({"id": plan.uuid, "action": "reuse"})
+                    continue
+                if isinstance(last_error, Exception):
+                    raise SpecCodingError(
+                        f"Failed to publish flow '{plan.exchange_name}' ({plan.uuid}) after insert/update attempts."
+                    ) from last_error
+                raise SpecCodingError(f"Failed to publish flow '{plan.exchange_name}' ({plan.uuid}).")
             results.append(result)
         return results
 
@@ -1119,9 +1568,22 @@ class FlowPublisher:
             comment_en=text_fields.get("comment_en"),
             comment_zh=text_fields.get("comment_zh"),
         )
-        flow_property_block = self._registry.build_flow_property_block(
-            property_uuid,
-            mean_value=mean_value or "1.0",
+        name_block = self._build_name_block(
+            candidate,
+            hints,
+            en_name,
+            zh_name,
+            treatment_en=text_fields.get("treatment_en"),
+            treatment_zh=text_fields.get("treatment_zh"),
+            mix_en=text_fields.get("mix_en"),
+            mix_zh=text_fields.get("mix_zh"),
+        )
+        synonyms_block = self._build_synonyms(
+            hints,
+            en_name,
+            zh_name,
+            synonyms_en=text_fields.get("synonyms_en"),
+            synonyms_zh=text_fields.get("synonyms_zh"),
         )
         unit = _resolve_unit(exchange)
         if unit and property_uuid == self._default_flow_property_uuid and property_uuid == "93a60a56-a3c8-11da-a746-0800200b9a66" and unit.lower() in {"kwh", "mj", "gj"}:
@@ -1131,54 +1593,48 @@ class FlowPublisher:
                 note="Flow property defaults to mass; please update energy reference manually.",
             )
 
-        dataset = {
-            "@xmlns": "http://lca.jrc.it/ILCD/Flow",
-            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
-            "@xmlns:ecn": "http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber",
-            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-            "@locations": "../ILCDLocations.xml",
-            "@version": "1.1",
-            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
-            "flowInformation": {
-                "dataSetInformation": {
-                    "common:UUID": uuid_value,
-                    "name": self._build_name_block(
-                        candidate,
-                        hints,
-                        en_name,
-                        zh_name,
-                        treatment_en=text_fields.get("treatment_en"),
-                        treatment_zh=text_fields.get("treatment_zh"),
-                        mix_en=text_fields.get("mix_en"),
-                        mix_zh=text_fields.get("mix_zh"),
-                    ),
-                    "common:synonyms": self._build_synonyms(
-                        hints,
-                        en_name,
-                        zh_name,
-                        synonyms_en=text_fields.get("synonyms_en"),
-                        synonyms_zh=text_fields.get("synonyms_zh"),
-                    ),
-                    "common:generalComment": comment_entries,
-                    "classificationInformation": classification,
-                },
-                "quantitativeReference": {
-                    "referenceToReferenceFlowProperty": "0",
-                },
-            },
-            "modellingAndValidation": self._build_modelling_section(flow_type),
-            "administrativeInformation": self._build_administrative_section(version),
-            "flowProperties": flow_property_block,
-        }
-        dataset["administrativeInformation"]["publicationAndOwnership"]["common:permanentDataSetURI"] = build_portal_uri("flow", uuid_value, version)
+        class_entries = self._extract_classification_entries(classification)
+        if not class_entries:
+            class_entries = self._extract_classification_entries(_default_product_classification())
 
-        dataset = self._finalize_flow_dataset(
-            dataset,
-            exchange_name=exchange_name,
-            process_name=process_name,
+        flow_property = self._registry.get(property_uuid)
+        property_version = FLOW_PROPERTY_VERSION_OVERRIDES.get(flow_property.uuid, DEFAULT_FLOW_PROPERTY_VERSION)
+        request = ProductFlowCreateRequest(
+            class_id=str(class_entries[-1].get("@classId") or ""),
+            classification=class_entries,
+            base_name_en=en_name,
+            base_name_zh=zh_name,
+            treatment_en=self._extract_language_text(name_block.get("treatmentStandardsRoutes"), "en") or en_name,
+            treatment_zh=self._extract_language_text(name_block.get("treatmentStandardsRoutes"), "zh") or None,
+            mix_en=self._extract_language_text(name_block.get("mixAndLocationTypes"), "en") or en_name,
+            mix_zh=self._extract_language_text(name_block.get("mixAndLocationTypes"), "zh") or None,
+            comment_en=self._extract_language_text(comment_entries, "en") or exchange_name,
+            comment_zh=self._extract_language_text(comment_entries, "zh") or None,
+            synonyms_en=self._split_synonyms(self._extract_language_text(synonyms_block, "en")),
+            synonyms_zh=self._split_synonyms(self._extract_language_text(synonyms_block, "zh")),
+            flow_type=flow_type,
+            flow_uuid=uuid_value,
+            version=version,
+            mean_value=mean_value or "1.0",
+            flow_property_uuid=flow_property.uuid,
+            flow_property_version=property_version,
+            flow_property_name_en=flow_property.name,
         )
-        uuid_value = _coerce_text(_get_nested(dataset, ("flowInformation", "dataSetInformation", "common:UUID"))) or uuid_value
-        version = _coerce_text(_get_nested(dataset, ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"))) or version
+
+        try:
+            built = self._flow_creation.build(request, allow_validation_fallback=True)
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning(
+                "flow_publish.flow_validation_failed",
+                exchange=exchange_name,
+                process=process_name,
+                error=str(exc),
+            )
+            return None
+
+        dataset = dict(built.dataset)
+        uuid_value = built.flow_uuid
+        version = built.version
         publication = _get_nested(dataset, ("administrativeInformation", "publicationAndOwnership"))
         if isinstance(publication, Mapping):
             publication["common:permanentDataSetURI"] = build_portal_uri("flow", uuid_value, version)
@@ -1192,51 +1648,6 @@ class FlowPublisher:
             "common:shortDescription": _language_entry(exchange_name),
         }
         return dataset, exchange_ref
-
-    def _finalize_flow_dataset(
-        self,
-        dataset: Mapping[str, Any],
-        *,
-        exchange_name: str,
-        process_name: str,
-    ) -> dict[str, Any]:
-        payload = {"flowDataSet": dataset}
-        validated_on_init = False
-        try:
-            entity = create_flow(payload, validate=True)
-            validated_on_init = True
-        except Exception as exc:  # pylint: disable=broad-except
-            LOGGER.warning(
-                "flow_publish.flow_validation_failed",
-                exchange=exchange_name,
-                process=process_name,
-                error=str(exc),
-            )
-            entity = create_flow(payload, validate=False)
-
-        if validated_on_init:
-            errors = entity.last_validation_error()
-            if errors:
-                LOGGER.warning(
-                    "flow_publish.flow_not_valid",
-                    exchange=exchange_name,
-                    process=process_name,
-                    error=str(errors),
-                )
-        else:
-            valid = entity.validate(mode="pydantic")
-            if not valid:
-                errors = entity.last_validation_error()
-                LOGGER.warning(
-                    "flow_publish.flow_not_valid",
-                    exchange=exchange_name,
-                    process=process_name,
-                    error=str(errors),
-                )
-
-        flow_payload = entity.model.model_dump(mode="json", by_alias=True, exclude_none=True)
-        flow_dataset = _resolve_dataset_root(flow_payload, root_key="flowDataSet", dataset_kind="flow")
-        return dict(flow_dataset)
 
     @staticmethod
     def _resolve_flow_uuid(
@@ -1470,6 +1881,64 @@ class FlowPublisher:
         return name_block
 
     @staticmethod
+    def _extract_classification_entries(classification: Mapping[str, Any]) -> list[dict[str, str]]:
+        payload = classification.get("common:classification")
+        if not isinstance(payload, Mapping):
+            return []
+        classes = payload.get("common:class")
+        if isinstance(classes, Mapping):
+            classes = [classes]
+        if not isinstance(classes, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for index, item in enumerate(classes):
+            if not isinstance(item, Mapping):
+                continue
+            level = _coerce_text(item.get("@level")) or str(index)
+            text = _coerce_text(item.get("#text"))
+            if not text:
+                continue
+            entry: dict[str, str] = {"@level": level, "#text": text}
+            class_id = _coerce_text(item.get("@classId"))
+            if class_id:
+                entry["@classId"] = class_id
+            normalized.append(entry)
+        return normalized
+
+    @staticmethod
+    def _extract_language_text(entries: Any, lang: str) -> str:
+        if isinstance(entries, Mapping):
+            entries = [entries]
+        if not isinstance(entries, list):
+            return ""
+        fallback = ""
+        target = (lang or "").strip().lower()
+        for item in entries:
+            if not isinstance(item, Mapping):
+                continue
+            text = _normalize_text(item.get("#text"))
+            if not text:
+                continue
+            item_lang = _coerce_text(item.get("@xml:lang")).lower()
+            if item_lang == target:
+                return text
+            if not fallback:
+                fallback = text
+        return fallback
+
+    @staticmethod
+    def _split_synonyms(text: str) -> list[str]:
+        normalized = _normalize_text(text)
+        if not normalized:
+            return []
+        parts: list[str] = []
+        for chunk in normalized.replace("；", ";").split(";"):
+            value = chunk.strip()
+            if value:
+                parts.append(value)
+        return parts
+
+    @staticmethod
     def _build_synonyms(
         hints: Mapping[str, list[str] | str],
         en_name: str,
@@ -1500,43 +1969,6 @@ class FlowPublisher:
             _language_entry(en_synonyms, "en"),
             _language_entry(zh_synonyms, "zh"),
         ]
-
-    @staticmethod
-    def _build_modelling_section(flow_type: str) -> dict[str, Any]:
-        modelling_section: dict[str, Any] = {
-            "LCIMethod": {
-                "typeOfDataSet": flow_type,
-            },
-        }
-        compliance_block = flow_compliance_declarations()
-        if compliance_block:
-            modelling_section["complianceDeclarations"] = compliance_block
-        return modelling_section
-
-    @staticmethod
-    def _build_administrative_section(version: str) -> dict[str, Any]:
-        def _default_contact_reference() -> dict[str, Any]:
-            contact_uuid = "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"
-            contact_version = "01.00.000"
-            return {
-                "@type": "contact data set",
-                "@refObjectId": contact_uuid,
-                "@uri": build_local_dataset_uri("contact data set", contact_uuid, contact_version),
-                "@version": contact_version,
-                "common:shortDescription": [_language_entry("Tiangong LCA Data Working Group")],
-            }
-
-        return {
-            "dataEntryBy": {
-                "common:timeStamp": _utc_timestamp(),
-                "common:referenceToDataSetFormat": build_dataset_format_reference(),
-                "common:referenceToPersonOrEntityEnteringTheData": _default_contact_reference(),
-            },
-            "publicationAndOwnership": {
-                "common:dataSetVersion": version,
-                "common:referenceToOwnershipOfDataSet": _default_contact_reference(),
-            },
-        }
 
 
 def _bump_version(version: str) -> str:
@@ -1583,16 +2015,69 @@ class ProcessPublisher:
             name_block = process_info.get("dataSetInformation", {}).get("name", {})
             process_name = _coerce_text(name_block.get("baseName"))
             uuid_value = _coerce_text(process_info.get("dataSetInformation", {}).get("common:UUID"))
+            version_value = _coerce_text(
+                _get_nested(
+                    process_payload,
+                    ("administrativeInformation", "publicationAndOwnership", "common:dataSetVersion"),
+                )
+            ) or "01.01.000"
             if self._dry_run:
                 LOGGER.info("process_publish.dry_run", name=process_name)
                 continue
+            existing = None
             try:
-                result = self._crud.insert_process(payload)
-            except SpecCodingError:
+                existing = self._crud.select_process(uuid_value, version=version_value) or self._crud.select_process(uuid_value)
+            except Exception as exists_exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "process_publish.precheck_failed",
+                    name=process_name,
+                    uuid=uuid_value,
+                    error=str(exists_exc),
+                )
+
+            actions: list[str] = ["update", "insert"] if isinstance(existing, Mapping) else ["insert", "update"]
+            result: dict[str, Any] | None = None
+            errors: list[Exception] = []
+            for action in actions:
                 try:
-                    result = self._crud.update_process(payload)
-                except SpecCodingError as exc:  # pragma: no cover - network errors bubbled up
-                    raise SpecCodingError(f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})") from exc
+                    if action == "update":
+                        result = self._crud.update_process(payload)
+                    else:
+                        result = self._crud.insert_process(payload)
+                    break
+                except SpecCodingError as exc:
+                    errors.append(exc)
+                    LOGGER.warning(
+                        "process_publish.action_failed",
+                        name=process_name,
+                        uuid=uuid_value,
+                        action=action,
+                        error=str(exc),
+                    )
+
+            if result is None:
+                final_existing = existing
+                if final_existing is None:
+                    try:
+                        final_existing = self._crud.select_process(uuid_value, version=version_value) or self._crud.select_process(uuid_value)
+                    except Exception as exists_exc:  # noqa: BLE001
+                        LOGGER.warning(
+                            "process_publish.reuse_check_failed",
+                            name=process_name,
+                            uuid=uuid_value,
+                            error=str(exists_exc),
+                        )
+                if isinstance(final_existing, Mapping):
+                    LOGGER.warning(
+                        "process_publish.reuse_existing_after_error",
+                        name=process_name,
+                        uuid=uuid_value,
+                    )
+                    results.append({"id": uuid_value, "action": "reuse"})
+                    continue
+                if errors:
+                    raise SpecCodingError(f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})") from errors[-1]
+                raise SpecCodingError(f"Failed to publish process '{process_name or uuid_value}' ({uuid_value})")
             results.append(result)
         return results
 

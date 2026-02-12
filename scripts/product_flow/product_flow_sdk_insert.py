@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Create ILCD product flows with tidas_sdk and optionally insert via Database_CRUD_Tool.
+Create ILCD product flows via ProductFlowCreationService and optionally insert via Database_CRUD_Tool.
 
 Defaults:
 - Input: input_data/origin/manual_flows/flow_class_with_desc.json (array of {class_id, leaf_name, desc, leaf_name_zh})
@@ -9,25 +9,21 @@ Defaults:
 - Flow property: Mass (UUID 93a60a56-a3c8-11da-a746-0800200b9a66) version 03.00.003, meanValue 1.0; timestamp in UTC (YYYY-MM-DDTHH:MM:SSZ)
 
 Usage examples:
-  uv run python scripts/origin/product_flow_sdk_insert.py --limit 2              # dry-run, writes files
-  uv run python scripts/origin/product_flow_sdk_insert.py --commit --class-id 01142 01151
+  uv run python scripts/product_flow/product_flow_sdk_insert.py --limit 2              # dry-run, writes files
+  uv run python scripts/product_flow/product_flow_sdk_insert.py --commit --class-id 01142 01151
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import tomllib
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
-
-from tidas_sdk import create_flow
 
 from tiangong_lca_spec.core.config import get_settings
 from tiangong_lca_spec.core.mcp_client import MCPToolClient
+from tiangong_lca_spec.product_flow_creation import ProductFlowCreateRequest, ProductFlowCreationService
 from tiangong_lca_spec.tidas.level_hierarchy import HierarchyNavigator, get_product_flow_category_navigator
 from tiangong_lca_spec.utils.translate import Translator
 
@@ -57,52 +53,9 @@ MIX_ZH_MAP = {
 }
 
 
-def _lang_entry(text: str, lang: str = "en") -> dict[str, str]:
-    return {"@xml:lang": lang, "#text": text}
-
-
 def _replace_semicolons(text: str) -> str:
     """Enforce name fields avoid semicolons by replacing with commas (ASCII + full-width)."""
     return text.replace("；", "，").replace(";", ",")
-
-
-CONTACT_REF = {
-    "@type": "contact data set",
-    "@refObjectId": "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8",
-    "@uri": "../contacts/f4b4c314-8c4c-4c83-968f-5b3c7724f6a8_01.00.000.xml",
-    "@version": "01.00.000",
-    "common:shortDescription": [
-        _lang_entry("Tiangong LCA Data Working Group", "en"),
-        _lang_entry("天工LCA数据团队", "zh"),
-    ],
-}
-
-COMPLIANCE_REF = {
-    "common:referenceToComplianceSystem": {
-        "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
-        "@type": "source data set",
-        "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756_20.20.002.xml",
-        "@version": "20.20.002",
-        "common:shortDescription": [_lang_entry("ILCD Data Network - Entry-level", "en")],
-    },
-    "common:approvalOfOverallCompliance": "Fully compliant",
-}
-
-FORMAT_REF = {
-    "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
-    "@type": "source data set",
-    "@uri": "../sources/a97a0155-0234-4b87-b4ce-a45da52f2a40_03.00.003.xml",
-    "@version": "03.00.003",
-    "common:shortDescription": [_lang_entry("ILCD format", "en")],
-}
-
-FLOW_PROPERTY_REF = {
-    "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
-    "@type": "flow property data set",
-    "@uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66_03.00.003.xml",
-    "@version": "03.00.003",
-    "common:shortDescription": [_lang_entry("Mass", "en")],
-}
 
 
 def load_entries(path: Path) -> list[dict[str, Any]]:
@@ -118,14 +71,14 @@ def build_class_path(navigator: HierarchyNavigator, target: str) -> list[dict[st
     return [{"@level": str(entry.level), "@classId": entry.code, "#text": entry.description} for entry in path_entries]
 
 
-def build_dataset(
+def build_request(
     entry: dict[str, Any],
     class_nav: HierarchyNavigator,
     *,
     llm_model: str | None = None,
     translator: Translator | None = None,
     llm_suggestions: list[dict[str, Any]] | None = None,
-) -> tuple[str, dict[str, Any]]:
+) -> ProductFlowCreateRequest:
     code = str(entry["class_id"]).strip()
     base_en_raw = str(entry.get("leaf_name") or code).strip()
     base_zh_raw = str(entry.get("leaf_name_zh") or base_en_raw).strip() or base_en_raw
@@ -133,20 +86,6 @@ def build_dataset(
     base_zh = _replace_semicolons(base_zh_raw)
     desc_en = str(entry.get("desc") or f"Flow for {base_en}").strip()
     class_path = build_class_path(class_nav, code)
-    flow_uuid = str(uuid4())
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    def has_kw(text: str, keywords: set[str]) -> bool:
-        lowered = text.lower()
-        tokens = re.findall(r"[a-zA-Z]+", lowered)
-        for kw in keywords:
-            if " " in kw:
-                if kw.lower() in lowered:
-                    return True
-            else:
-                if kw.lower() in tokens or f"{kw.lower()}s" in tokens:
-                    return True
-        return False
 
     def call_llm_treatment_mix(model: str | None) -> tuple[str | None, str | None, str | None, str | None]:
         try:
@@ -266,65 +205,18 @@ def build_dataset(
             if translated_zh:
                 zh_comment = _replace_semicolons(translated_zh)
 
-    flow_dataset = {
-        "@xmlns": "http://lca.jrc.it/ILCD/Flow",
-        "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
-        "@xmlns:ecn": "http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber",
-        "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-        "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
-        "@version": "1.1",
-        "@locations": "../ILCDLocations.xml",
-        "flowInformation": {
-            "dataSetInformation": {
-                "common:UUID": flow_uuid,
-                "name": {
-                    "baseName": [
-                        _lang_entry(base_en, "en"),
-                        _lang_entry(base_zh, "zh"),
-                    ],
-                    "treatmentStandardsRoutes": [
-                        _lang_entry(treatment_en, "en"),
-                        _lang_entry(treatment_zh, "zh"),
-                    ],
-                    "mixAndLocationTypes": [
-                        _lang_entry(mix_en, "en"),
-                        _lang_entry(mix_zh, "zh"),
-                    ],
-                },
-                "classificationInformation": {"common:classification": {"common:class": class_path}},
-                "common:generalComment": [
-                    _lang_entry(en_comment, "en"),
-                    _lang_entry(zh_comment, "zh"),
-                ],
-            },
-            "quantitativeReference": {"referenceToReferenceFlowProperty": "0"},
-        },
-        "modellingAndValidation": {
-            "LCIMethod": {"typeOfDataSet": "Product flow"},
-            "complianceDeclarations": {"compliance": COMPLIANCE_REF},
-        },
-        "administrativeInformation": {
-            "dataEntryBy": {
-                "common:timeStamp": ts,
-                "common:referenceToDataSetFormat": FORMAT_REF,
-                "common:referenceToPersonOrEntityEnteringTheData": CONTACT_REF,
-            },
-            "publicationAndOwnership": {
-                "common:dataSetVersion": "01.01.000",
-                "common:referenceToOwnershipOfDataSet": CONTACT_REF,
-            },
-        },
-        "flowProperties": {
-            "flowProperty": [
-                {
-                    "@dataSetInternalID": "0",
-                    "meanValue": "1.0",
-                    "referenceToFlowPropertyDataSet": FLOW_PROPERTY_REF,
-                }
-            ]
-        },
-    }
-    return flow_uuid, flow_dataset
+    return ProductFlowCreateRequest(
+        class_id=code,
+        classification=class_path,
+        base_name_en=base_en,
+        base_name_zh=base_zh,
+        treatment_en=treatment_en,
+        treatment_zh=treatment_zh,
+        mix_en=mix_en,
+        mix_zh=mix_zh,
+        comment_en=en_comment,
+        comment_zh=zh_comment,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -355,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     llm_rules_log = args.output_dir / "llm_mix_rules.jsonl"
     settings = get_settings()
     translator = Translator() if args.translate_desc else None
+    flow_builder = ProductFlowCreationService()
 
     results = []
     llm_suggestions: list[dict[str, Any]] = []
@@ -362,40 +255,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for entry in entries:
             try:
-                flow_uuid, dataset = build_dataset(
+                request = build_request(
                     entry,
                     class_nav,
                     llm_model=args.llm_model,
                     translator=translator,
                     llm_suggestions=llm_suggestions,
                 )
-                flow = create_flow({"flowDataSet": dataset}, validate=True)
-                payload = flow.to_json(by_alias=True, exclude_none=True)
-
-                def normalize_ts(value: Any) -> str:
-                    if isinstance(value, datetime):
-                        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    if isinstance(value, str):
-                        try:
-                            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                            return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                        except Exception:
-                            return value
-                    try:
-                        return datetime.fromisoformat(str(value)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    except Exception:
-                        return str(value)
-
-                ts_val = payload["flowDataSet"]["administrativeInformation"]["dataEntryBy"]["common:timeStamp"]
-                payload["flowDataSet"]["administrativeInformation"]["dataEntryBy"]["common:timeStamp"] = normalize_ts(ts_val)
-
-                version = payload["flowDataSet"]["administrativeInformation"]["publicationAndOwnership"]["common:dataSetVersion"]
+                built = flow_builder.build(request)
+                flow_uuid = built.flow_uuid
+                version = built.version
+                payload = built.payload
                 class_id = str(entry["class_id"]).strip()
                 basename = f"{class_id}_{flow_uuid}_{version}"
                 json_path = args.output_dir / f"{basename}.json"
                 xml_path = args.output_dir / f"{basename}.xml"
                 json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-                xml_path.write_text(flow.to_xml(), encoding="utf-8")
+                xml_path.write_text(built.xml, encoding="utf-8")
 
                 resp_id = None
                 if client:
